@@ -1,0 +1,60 @@
+# Raisebook reverse proxy (SPEC §11). Caddy gets and renews TLS certificates by itself once
+# DNS points at this host (docs/DEPLOY.md). Hosts come from the environment so self-hosters
+# can use their own domains:
+#   WEB_HOST  (default raisebook.org)       → web:3000
+#   API_HOST  (default api.raisebook.org)   → api:8000, including the MCP endpoint /mcp
+#   www.WEB_HOST                            → permanent redirect to WEB_HOST
+
+{
+	# Admin API stays inside the container.
+	admin off
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+		-Server
+		-X-Powered-By
+	}
+}
+
+{$WEB_HOST:raisebook.org} {
+	import security_headers
+	encode zstd gzip
+	header {
+		# Self plus the API origin, nothing else: no analytics, no CDNs, no third-party fonts.
+		# 'unsafe-inline' is needed for Next.js bootstrap scripts and the theme pre-paint script.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://{$API_HOST:api.raisebook.org}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		X-Frame-Options "DENY"
+	}
+	reverse_proxy web:3000
+}
+
+www.{$WEB_HOST:raisebook.org} {
+	import security_headers
+	redir https://{$WEB_HOST:raisebook.org}{uri} permanent
+}
+
+{$API_HOST:api.raisebook.org} {
+	import security_headers
+	header {
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		X-Frame-Options "DENY"
+	}
+
+	# MCP (streamable HTTP): never buffer, so streamed responses reach the agent immediately.
+	@mcp path /mcp /mcp/*
+	handle @mcp {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy api:8000
+	}
+}

@@ -28,3 +28,10 @@ deploy/.env
 # Local data
 *.sqlite
 *.log
+
+# Backups and coverage
+*.dump
+*.dump.partial
+.coverage
+htmlcov/
+coverage/

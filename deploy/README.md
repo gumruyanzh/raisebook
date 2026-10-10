@@ -1,0 +1,69 @@
+# Self-hosting Raisebook
+
+Raisebook runs as five containers on one machine: Postgres 17, a one-shot migration job,
+the API (REST under `/v1` and the MCP server at `/mcp`), the web app, and Caddy for HTTPS.
+Any Linux host with Docker and 1 GB of RAM is enough for a team.
+
+The production setup for raisebook.org (DigitalOcean, DNS records, backups) is in
+[`docs/DEPLOY.md`](../docs/DEPLOY.md). This page is the short version for your own domain.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `api.Dockerfile` | API image (Python 3.12, uv, non-root uid 10001). Build context `backend/`. |
+| `web.Dockerfile` | Web image (Next.js standalone, Node 22, non-root). Build context `web/`. |
+| `docker-compose.yml` | `postgres`, `migrate`, `api`, `web`, `caddy`. Only Caddy publishes ports (80, 443). |
+| `Caddyfile` | `WEB_HOST` → web, `www.WEB_HOST` → redirect, `API_HOST` → API and `/mcp` (unbuffered). Security headers and a self-only CSP. |
+| `.env.example` | Every setting. Copy to `deploy/.env` (git-ignored). |
+| `backup.sh` | Nightly `pg_dump` with a 14-day retention limit. |
+
+## Run it
+
+1. Point two DNS records at the machine: `WEB_HOST` (for example `crm.example.com`) and
+   `API_HOST` (for example `api.crm.example.com`). They must share a parent domain, which
+   goes in `RAISEBOOK_SESSION_COOKIE_DOMAIN` (`example.com` here), so the sign-in cookie
+   reaches both.
+2. Configure:
+   ```bash
+   git clone https://github.com/gumruyanzh/raisebook && cd raisebook
+   cp deploy/.env.example deploy/.env
+   # Fill in WEB_HOST, API_HOST, POSTGRES_PASSWORD, RAISEBOOK_SESSION_SECRET,
+   # RAISEBOOK_SESSION_COOKIE_DOMAIN and the SMTP settings.
+   ```
+3. Start:
+   ```bash
+   docker compose -f deploy/docker-compose.yml up -d --build
+   docker compose -f deploy/docker-compose.yml ps        # migrate exits 0, the rest are healthy
+   curl -s https://$API_HOST/healthz/ready               # {"status":"ok","db":"ok"}
+   ```
+4. Sign in at `https://$WEB_HOST/signin`. The sign-in link arrives by email, so SMTP must
+   work. To check email without a provider, set `RAISEBOOK_EMAIL_BACKEND=log` and read the
+   link from `docker compose logs api`, then switch back.
+
+## Updating
+
+```bash
+git pull
+docker compose -f deploy/docker-compose.yml up -d --build   # migrate runs before the API starts
+```
+
+## Operations
+
+```bash
+dc="docker compose -f deploy/docker-compose.yml"
+$dc exec api rbctl --help                          # admin CLI
+$dc exec api rbctl seed-demo --email you@example.com   # fictional sample workspace
+$dc exec api rbctl housekeeping                    # expired tokens and old rate-limit windows
+$dc logs -f api                                    # JSON logs; no request bodies, emails or investor data
+```
+
+Run `rbctl housekeeping` daily from cron. Back up with `deploy/backup.sh` (see the header of
+the script). Restore a dump into an empty database with
+`pg_restore --clean --if-exists --no-owner -d raisebook <file>`.
+
+## Local check without a domain
+
+Caddy needs real DNS for certificates, and the session cookie needs a shared parent domain,
+so the compose stack is meant for a real host. To try Raisebook on your laptop, run the API
+and the web app directly as described in `CLAUDE.md` (no Docker needed).
