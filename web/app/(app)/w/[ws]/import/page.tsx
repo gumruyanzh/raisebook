@@ -1,6 +1,33 @@
-// STUB by Foundation-web. Owner: Import-Export+Ops (docs/OWNERSHIP.md) — replace freely.
-import { Stub } from "@/app/_stub/Stub";
+import type { Metadata } from "next";
 
-export default function Page() {
-  return <Stub title="Import investors" subline="CSV or a Raisebook prototype JSON file." owner="Import-Export+Ops" />;
+import { ImportFlow } from "@/components/data/ImportFlow";
+import { PageHeader, TextLink } from "@/components/ui";
+
+export const metadata: Metadata = { title: "Import investors" };
+
+/** Import (SYSTEM §4.10). `?round=<slug>` preselects the round (from a pipeline's empty state). */
+export default async function ImportPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ ws: string }>;
+  searchParams: Promise<{ round?: string | string[] }>;
+}) {
+  const { ws } = await params;
+  const sp = await searchParams;
+  const round = Array.isArray(sp.round) ? sp.round[0] : sp.round;
+  return (
+    <>
+      <PageHeader
+        title="Import investors"
+        subline={
+          <>
+            A CSV from any spreadsheet, or a Raisebook prototype JSON file. You see every row before anything is
+            written. <TextLink href={`/w/${ws}/settings/data`}>Import history and exports</TextLink>
+          </>
+        }
+      />
+      <ImportFlow initialRound={round} />
+    </>
+  );
 }

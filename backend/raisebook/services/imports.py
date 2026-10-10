@@ -853,7 +853,7 @@ def _plan_participation(
         return PlannedParticipation(rnd, True, st, initial, p.notes, pv)
     # Already in the round (in the workspace, or added by an earlier row of this file).
     if mode == "skip":
-        return PlannedParticipation(rnd, False, None, {}, [], pv)
+        return PlannedParticipation(rnd, False, None, {}, [], _unchanged(rnd))
     changes: dict[str, Any] = {}
     for f, v in values.items():
         cur = snap.get(f)
@@ -867,7 +867,14 @@ def _plan_participation(
         move = stage
         snap["stage_id"] = stage.id
     snap.update(changes)
-    return PlannedParticipation(rnd, False, move, changes, p.notes if (changes or move) else [], pv)
+    if not changes and move is None:
+        return PlannedParticipation(rnd, False, None, {}, [], _unchanged(rnd))
+    return PlannedParticipation(rnd, False, move, changes, p.notes, pv)
+
+
+def _unchanged(rnd: Round) -> RowParticipant:
+    """Preview for a participant that stays as it is (only the round is shown)."""
+    return RowParticipant(round=str(rnd.slug))
 
 
 # --- preview ------------------------------------------------------------------------------
