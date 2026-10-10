@@ -1,0 +1,56 @@
+/**
+ * Raisebook UI kit (design/SYSTEM.md §3). Presentational, token-themed, keyboard-accessible.
+ * No data fetching here: pages and components/app/* pass data in through props.
+ * The live inventory is /design (dev, or NEXT_PUBLIC_ENABLE_DESIGN=1).
+ */
+export { ActorName, AgentMarker } from "./ActorName";
+export { Board, BoardCard, BoardColumn } from "./Board";
+export type { BoardCardProps, BoardColumnProps } from "./Board";
+export { Button, ButtonLink, TextLink, buttonClasses } from "./Button";
+export type { ButtonProps, ButtonSize, ButtonVariant } from "./Button";
+export { Chip, FollowUpChip, MoneyChip, PriorityChip } from "./Chip";
+export type { ChipTone } from "./Chip";
+export { CodeBlock, CopyButton } from "./CodeBlock";
+export type { CodeLang, CodeTab } from "./CodeBlock";
+export { DefList } from "./DefList";
+export type { DefItem } from "./DefList";
+export { ConfirmDialog, Dialog } from "./Dialog";
+export type { DialogProps } from "./Dialog";
+export { EmptyState } from "./EmptyState";
+export { Checkbox, Field, Input, Radio, SearchInput, Select, Textarea } from "./Field";
+export type { FieldError } from "./Field";
+export { FileDrop } from "./FileDrop";
+export { FitMeter } from "./FitMeter";
+export { FunnelBar } from "./FunnelBar";
+export type { FunnelSegment } from "./FunnelBar";
+export { Kbd } from "./Kbd";
+export { Ledger, ledgerFromSummary } from "./Ledger";
+export type { LedgerDue, LedgerProps } from "./Ledger";
+export { LinkButtons } from "./LinkButtons";
+export { Menu } from "./Menu";
+export type { MenuEntry } from "./Menu";
+export { Meter } from "./Meter";
+export { PageHeader, SaveState, SectionLabel } from "./PageHeader";
+export { Pagination } from "./Pagination";
+export { RoundPicker } from "./RoundPicker";
+export type { RoundPickerItem } from "./RoundPicker";
+export { SecretReveal } from "./SecretReveal";
+export { CloseButton, Sheet } from "./Sheet";
+export { Loading, Skeleton } from "./Skeleton";
+export { STAGE_BG, STAGE_TEXT, StageDot, StagePill, StageSelector, stageVar } from "./Stage";
+export type { StageOption } from "./Stage";
+export { Segmented } from "./Segmented";
+export type { SegmentedOption } from "./Segmented";
+export { Table, TableScroll, TBody, Td, Th, THead, Tr } from "./Table";
+export { TabLinks, Tabs, tabPanelId } from "./Tabs";
+export type { TabItem } from "./Tabs";
+export { ThemeToggle } from "./ThemeToggle";
+export { Timeline, activitySentence, matchesTimelineFilter } from "./Timeline";
+export type { TimelineFilter } from "./Timeline";
+export { ToastProvider, useToast } from "./Toast";
+export type { ToastAction } from "./Toast";
+export { Tooltip } from "./Tooltip";
+export { AppShell, TopBar } from "./TopBar";
+export type { TopBarNavItem, TopBarProps, TopBarWorkspace } from "./TopBar";
+export { useFocusTrap } from "./useFocusTrap";
+export { Wordmark } from "./Wordmark";

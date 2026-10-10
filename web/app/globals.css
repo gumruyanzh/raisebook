@@ -1,0 +1,586 @@
+@import "tailwindcss";
+
+/* =====================================================================
+   Raisebook "The Desk" tokens. Binding spec: design/SYSTEM.md §1.
+   Hex values live here and nowhere else. Components use the Tailwind
+   utilities mapped below (bg-surface, text-muted, bg-stage-teal …).
+   Tailwind's default palette does not exist (--color-*: initial).
+
+   Spacing unit is 1px: p-14 = 14px, gap-6 = 6px, h-32 = 32px.
+   ===================================================================== */
+
+:root,
+[data-theme="light"] {
+  --canvas: #f3f5f8;
+  --surface: #ffffff;
+  --sunk: #e8ecf2;
+  --line: #d5dce6;
+  --fg: #16202e;
+  --muted: #5b6778;
+  /* faint is ~3:1. Placeholders, disabled, decorative dots only; never meaningful text. */
+  --faint: #8994a5;
+  --accent: #2f55d4;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3e9fb;
+
+  --hot: #c2410c;
+  --hot-soft: #fde7db;
+  --warm: #b7791f;
+  --warm-soft: #fbf0d5;
+  --maybe: #6b7a8f;
+  --maybe-soft: #e9edf2;
+  --good: #15803d;
+  --good-soft: #dcf3e3;
+  --bad: #b42318;
+  --bad-soft: #fbe1de;
+  /* Orchid = an agent did this. Nothing else may use it. */
+  --agent: #a1307a;
+  --agent-soft: #f8e4f0;
+
+  --stage-slate: #8994a5;
+  --stage-violet: #7c5cd6;
+  --stage-cobalt: #2f55d4;
+  --stage-teal: #0e8a9e;
+  --stage-amber: #b7791f;
+  --stage-orange: #c2410c;
+  --stage-green: #15803d;
+  --stage-gray: #9aa3b0;
+  --stage-olive: #65731a;
+  --stage-sky: #0369a1;
+  /* Text on a funnel segment: white in light mode, canvas in dark mode. */
+  --on-stage: #ffffff;
+
+  --scrim: rgb(10 15 25 / 0.35);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #0f141c;
+    --surface: #171e29;
+    --sunk: #1d2532;
+    --line: #2a3444;
+    --fg: #e6ebf2;
+    --muted: #9aa6b8;
+    --faint: #6e7a8c;
+    --accent: #7c9bff;
+    --accent-ink: #0f141c;
+    --accent-soft: #1f2a4a;
+
+    --hot: #ff8a5b;
+    --hot-soft: #3a2218;
+    --warm: #f0b54e;
+    --warm-soft: #33291a;
+    --maybe: #a3afc0;
+    --maybe-soft: #232b38;
+    --good: #4ade80;
+    --good-soft: #15301f;
+    --bad: #f87171;
+    --bad-soft: #3a1c1c;
+    --agent: #f08bc8;
+    --agent-soft: #3a1e31;
+
+    --stage-slate: #8c98aa;
+    --stage-violet: #a78bfa;
+    --stage-cobalt: #7c9bff;
+    --stage-teal: #38c6da;
+    --stage-amber: #f0b54e;
+    --stage-orange: #ff8a5b;
+    --stage-green: #4ade80;
+    --stage-gray: #5e6878;
+    --stage-olive: #b5c752;
+    --stage-sky: #56b6f0;
+    --on-stage: #0f141c;
+
+    --scrim: rgb(0 0 0 / 0.55);
+    color-scheme: dark;
+  }
+}
+
+/* :root[data-theme="dark"] is the user's explicit choice; [data-theme="dark"] on any element
+   lets /design render a dark specimen next to a light one. */
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  --canvas: #0f141c;
+  --surface: #171e29;
+  --sunk: #1d2532;
+  --line: #2a3444;
+  --fg: #e6ebf2;
+  --muted: #9aa6b8;
+  --faint: #6e7a8c;
+  --accent: #7c9bff;
+  --accent-ink: #0f141c;
+  --accent-soft: #1f2a4a;
+
+  --hot: #ff8a5b;
+  --hot-soft: #3a2218;
+  --warm: #f0b54e;
+  --warm-soft: #33291a;
+  --maybe: #a3afc0;
+  --maybe-soft: #232b38;
+  --good: #4ade80;
+  --good-soft: #15301f;
+  --bad: #f87171;
+  --bad-soft: #3a1c1c;
+  --agent: #f08bc8;
+  --agent-soft: #3a1e31;
+
+  --stage-slate: #8c98aa;
+  --stage-violet: #a78bfa;
+  --stage-cobalt: #7c9bff;
+  --stage-teal: #38c6da;
+  --stage-amber: #f0b54e;
+  --stage-orange: #ff8a5b;
+  --stage-green: #4ade80;
+  --stage-gray: #5e6878;
+  --stage-olive: #b5c752;
+  --stage-sky: #56b6f0;
+  --on-stage: #0f141c;
+
+  --scrim: rgb(0 0 0 / 0.55);
+  color-scheme: dark;
+}
+
+/* Theme-independent tokens. CodeBlock is dark in both themes (SYSTEM 3.20). */
+:root {
+  --code-bg: #0f141c;
+  --code-fg: #e6ebf2;
+  --code-muted: #9aa6b8;
+  --code-line: #2a3444;
+  --code-raise: #1d2532;
+  --code-str: #9fd3a6;
+  --code-key: #7c9bff;
+
+  --r-xs: 2px;
+  --r-kbd: 4px;
+  --r-sm: 6px;
+  --r-card: 7px;
+  --r: 8px;
+  --r-pill: 999px;
+
+  --ease-sheet: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ---------- Tailwind theme: only Raisebook tokens exist ---------- */
+@theme {
+  --color-*: initial;
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --text-shadow-*: initial;
+  --radius-*: initial;
+  --text-*: initial;
+  --blur-*: initial;
+  --font-*: initial;
+
+  --spacing: 1px;
+
+  --radius-xs: 2px;
+  --radius-kbd: 4px;
+  --radius-sm: 6px;
+  --radius-card: 7px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+
+  --text-2xs: 10.5px;
+  --text-2xs--line-height: 1.3;
+  --text-xs: 11px;
+  --text-xs--line-height: 1.3;
+  --text-micro: 11.5px;
+  --text-micro--line-height: 1.4;
+  --text-sm: 12.5px;
+  --text-sm--line-height: 1.4;
+  --text-13: 13px;
+  --text-13--line-height: 1.45;
+  --text-base: 14px;
+  --text-base--line-height: 1.45;
+  --text-lg: 16px;
+  --text-lg--line-height: 1.6;
+  --text-xl: 18px;
+  --text-xl--line-height: 1.2;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 1.15;
+  --text-3xl: 28px;
+  --text-3xl--line-height: 1.1;
+  --text-4xl: 36px;
+  --text-4xl--line-height: 1.08;
+  --text-5xl: 56px;
+  --text-5xl--line-height: 1.02;
+
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 860px;
+  --breakpoint-lg: 900px;
+  --breakpoint-xl: 1024px;
+  --breakpoint-2xl: 1280px;
+
+  --container-app: 1600px;
+  --container-site: 1120px;
+  --container-read: 680px;
+  --container-auth: 400px;
+  --container-flow: 560px;
+
+  --shadow-drag: 0 6px 16px rgb(0 0 0 / 0.12);
+  --shadow-menu: 0 8px 24px rgb(10 15 25 / 0.14);
+  --shadow-dialog: 0 20px 50px rgb(10 15 25 / 0.25);
+  --shadow-pill: 0 1px 2px rgb(0 0 0 / 0.08);
+
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-sunk: var(--sunk);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-hot: var(--hot);
+  --color-hot-soft: var(--hot-soft);
+  --color-warm: var(--warm);
+  --color-warm-soft: var(--warm-soft);
+  --color-maybe: var(--maybe);
+  --color-maybe-soft: var(--maybe-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-agent: var(--agent);
+  --color-agent-soft: var(--agent-soft);
+  --color-stage-slate: var(--stage-slate);
+  --color-stage-violet: var(--stage-violet);
+  --color-stage-cobalt: var(--stage-cobalt);
+  --color-stage-teal: var(--stage-teal);
+  --color-stage-amber: var(--stage-amber);
+  --color-stage-orange: var(--stage-orange);
+  --color-stage-green: var(--stage-green);
+  --color-stage-gray: var(--stage-gray);
+  --color-stage-olive: var(--stage-olive);
+  --color-stage-sky: var(--stage-sky);
+  --color-on-stage: var(--on-stage);
+  --color-scrim: var(--scrim);
+  --color-code-bg: var(--code-bg);
+  --color-code-fg: var(--code-fg);
+  --color-code-muted: var(--code-muted);
+  --color-code-line: var(--code-line);
+  --color-code-raise: var(--code-raise);
+  --color-code-str: var(--code-str);
+  --color-code-key: var(--code-key);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --font-display: var(--f-display), "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: var(--f-body), "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-mono: var(--f-mono), "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* ---------- base ---------- */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body,
+  [data-theme] {
+    background: var(--canvas);
+    color: var(--fg);
+  }
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--faint);
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  p {
+    margin: 0;
+  }
+}
+
+/* ---------- type roles (SYSTEM §1.4). Use these, not ad-hoc sizes, for display type. ---------- */
+@utility t-display-xl {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+  font-variation-settings: "opsz" 96;
+  @media (width >= 640px) {
+    font-size: 56px;
+  }
+}
+@utility t-display-l {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  font-variation-settings: "opsz" 72;
+  @media (width >= 640px) {
+    font-size: 36px;
+  }
+}
+@utility t-display-m {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variation-settings: "opsz" 48;
+}
+@utility t-amount {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  font-variation-settings: "opsz" 48;
+}
+@utility t-display-s {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1.15;
+  text-wrap: balance;
+  font-variation-settings: "opsz" 32;
+}
+@utility t-display-xs {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1.2;
+  font-variation-settings: "opsz" 24;
+}
+@utility t-body-l {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+}
+@utility t-body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+}
+@utility t-body-s {
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+@utility t-chip {
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 11.5px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+@utility t-label {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+@utility t-th {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+@utility t-data {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+@utility t-micro {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+@utility measure {
+  max-width: 68ch;
+}
+@utility link {
+  color: var(--accent);
+  text-decoration: none;
+  &:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+@utility gutter {
+  padding-inline: 16px;
+  @media (width >= 1024px) {
+    padding-inline: 24px;
+  }
+}
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+/* Agent marker glyph: a 7px orchid diamond (SYSTEM §2.5). */
+@utility agent-diamond {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: var(--agent);
+  transform: rotate(45deg);
+}
+
+/* ---------- motion (SYSTEM §1.7) ---------- */
+@keyframes rb-sheet-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes rb-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@utility anim-sheet {
+  animation: rb-sheet-in 180ms var(--ease-sheet);
+}
+@utility anim-fade {
+  animation: rb-fade-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Native <dialog> backdrop uses the scrim token. */
+dialog::backdrop {
+  background: var(--scrim);
+}
+
+/* Select chevron (SYSTEM 3.2): a CSS-drawn caret, no icon. */
+.rb-select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-size:
+    4px 4px,
+    4px 4px;
+  background-repeat: no-repeat;
+}
+
+/* Tooltip (CSS only, see components/ui/Tooltip.tsx). */
+.rb-tip {
+  position: relative;
+  display: inline-flex;
+}
+.rb-tip > [role="tooltip"] {
+  position: absolute;
+  z-index: 60;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  background: var(--fg);
+  color: var(--canvas);
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.35;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+  max-width: 280px;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 120ms ease-out,
+    visibility 0s linear 120ms;
+}
+.rb-tip[data-side="bottom"] > [role="tooltip"] {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+.rb-tip[data-align="end"] > [role="tooltip"] {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+.rb-tip[data-align="start"] > [role="tooltip"] {
+  left: 0;
+  transform: none;
+}
+.rb-tip:hover > [role="tooltip"],
+.rb-tip:focus-within > [role="tooltip"] {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 300ms, 300ms;
+}

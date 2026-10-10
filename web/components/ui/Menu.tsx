@@ -1,0 +1,291 @@
+"use client";
+
+import Link from "next/link";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+
+import { cn } from "@/lib/cn";
+
+export type MenuEntry =
+  | {
+      type?: "item";
+      label: ReactNode;
+      /** Text for typeahead when `label` is not a string. */
+      textValue?: string;
+      onSelect?: () => void;
+      href?: string;
+      disabled?: boolean;
+      /** Right-aligned muted hint (a role, a count, a shortcut). */
+      hint?: ReactNode;
+      /** Marks the current choice (workspace, stage) with aria-checked. */
+      selected?: boolean;
+      danger?: boolean;
+      /** Left slot (a StageDot). */
+      icon?: ReactNode;
+    }
+  | { type: "separator" }
+  | { type: "label"; label: ReactNode };
+
+type ItemEntry = Extract<MenuEntry, { label: ReactNode; type?: "item" }>;
+
+const ITEM_SELECTOR = '[role^="menuitem"]:not([aria-disabled="true"])';
+
+function menuItems(root: HTMLElement | null): HTMLElement[] {
+  return Array.from(root?.querySelectorAll<HTMLElement>(ITEM_SELECTOR) ?? []);
+}
+
+function isItem(e: MenuEntry): e is ItemEntry {
+  return e.type === undefined || e.type === "item";
+}
+
+/**
+ * Popover list (SYSTEM 3.23): surface, 1px line, radius 8, menu shadow. Keyboard: ↑/↓, Home/End,
+ * Enter/Space, Esc (returns focus to the trigger), Tab closes, typeahead on letters.
+ * Uncontrolled by default; pass `open` + `onOpenChange` to open it from elsewhere (the board's
+ * "M" key opens a card's "Move to…" menu).
+ */
+export function Menu({
+  label,
+  trigger,
+  triggerClassName,
+  items,
+  align = "start",
+  open: controlledOpen,
+  onOpenChange,
+  className,
+  minWidth = 200,
+}: {
+  /** Accessible name of the menu ("Workspace", "Move to"). */
+  label: string;
+  /** Trigger button content. Omit for a controlled menu anchored to its wrapper. */
+  trigger?: ReactNode;
+  triggerClassName?: string;
+  items: MenuEntry[];
+  align?: "start" | "end";
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  className?: string;
+  minWidth?: number;
+}) {
+  const [innerOpen, setInnerOpen] = useState(false);
+  const open = controlledOpen ?? innerOpen;
+  const setOpen = useCallback(
+    (v: boolean) => {
+      if (controlledOpen === undefined) setInnerOpen(v);
+      onOpenChange?.(v);
+    },
+    [controlledOpen, onOpenChange],
+  );
+  const wrap = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  const typed = useRef({ text: "", at: 0 });
+
+  const focusables = () => menuItems(list.current);
+
+  const focusAt = (i: number) => {
+    const els = focusables();
+    if (!els.length) return;
+    els[(i + els.length) % els.length]?.focus();
+  };
+
+  // Focus the selected (or first) item when opening.
+  useEffect(() => {
+    if (!open) return;
+    const els = menuItems(list.current);
+    const sel = els.findIndex((el) => el.getAttribute("aria-checked") === "true");
+    (els[sel >= 0 ? sel : 0] ?? list.current)?.focus();
+  }, [open]);
+
+  // Fixed positioning from the wrapper's rect, so scroll containers never clip the menu.
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const place = () => {
+      const r = wrap.current?.getBoundingClientRect();
+      if (!r) return;
+      const vw = document.documentElement.clientWidth;
+      const top = r.bottom + 4;
+      if (align === "end") setPos({ top, right: Math.max(8, vw - r.right) });
+      else setPos({ top, left: Math.max(8, Math.min(r.left, vw - minWidth - 8)) });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, align, minWidth]);
+
+  // Close on outside pointer down.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open, setOpen]);
+
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) btn.current?.focus();
+  };
+
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const els = focusables();
+    const i = els.indexOf(document.activeElement as HTMLElement);
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        focusAt(i + 1);
+        return;
+      case "ArrowUp":
+        e.preventDefault();
+        focusAt(i - 1);
+        return;
+      case "Home":
+        e.preventDefault();
+        focusAt(0);
+        return;
+      case "End":
+        e.preventDefault();
+        focusAt(els.length - 1);
+        return;
+      case "Escape":
+        e.preventDefault();
+        e.stopPropagation();
+        close(true);
+        return;
+      case "Tab":
+        close(false);
+        return;
+    }
+    if (e.key.length === 1 && /\S/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const now = Date.now();
+      typed.current.text = now - typed.current.at > 600 ? e.key : typed.current.text + e.key;
+      typed.current.at = now;
+      const q = typed.current.text.toLowerCase();
+      const hit = els.findIndex((el) => (el.dataset.text ?? el.textContent ?? "").trim().toLowerCase().startsWith(q));
+      if (hit >= 0) els[hit]?.focus();
+    }
+  };
+
+  return (
+    <div ref={wrap} className={cn("relative inline-flex", className)}>
+      {trigger !== undefined ? (
+        <button
+          ref={btn}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-controls={open ? menuId : undefined}
+          onClick={() => setOpen(!open)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown" && !open) {
+              e.preventDefault();
+              setOpen(true);
+            }
+          }}
+          className={triggerClassName}
+        >
+          {trigger}
+        </button>
+      ) : null}
+      {open ? (
+        <div
+          ref={list}
+          id={menuId}
+          role="menu"
+          aria-label={label}
+          tabIndex={-1}
+          onKeyDown={onKey}
+          className={cn(
+            "anim-fade fixed z-[45] max-h-[min(420px,70vh)] overflow-y-auto rounded-md border border-line bg-surface py-4 shadow-menu",
+            !pos && "invisible",
+          )}
+          style={{ minWidth, ...pos }}
+        >
+          {items.map((entry, idx) => {
+            if (entry.type === "separator") {
+              return <div key={idx} role="separator" className="my-4 border-t border-line" />;
+            }
+            if (entry.type === "label") {
+              return (
+                <div key={idx} className="t-label px-12 pt-6 pb-4" role="presentation">
+                  {entry.label}
+                </div>
+              );
+            }
+            if (!isItem(entry)) return null;
+            const role = entry.selected !== undefined ? "menuitemradio" : "menuitem";
+            const cls = cn(
+              "flex w-full items-center gap-8 border-0 bg-transparent px-12 py-6 text-left text-base whitespace-nowrap outline-none",
+              "focus-visible:bg-accent-soft hover:bg-accent-soft focus:bg-accent-soft",
+              entry.danger ? "text-bad" : "text-fg",
+              entry.disabled && "cursor-not-allowed opacity-50",
+            );
+            const text = entry.textValue ?? (typeof entry.label === "string" ? entry.label : undefined);
+            const inner = (
+              <>
+                {entry.icon}
+                <span className={cn("min-w-0 flex-1 truncate", entry.selected && "font-semibold")}>{entry.label}</span>
+                {entry.hint ? <span className="t-micro text-muted">{entry.hint}</span> : null}
+              </>
+            );
+            const common = {
+              role,
+              tabIndex: -1,
+              "aria-checked": entry.selected,
+              "aria-disabled": entry.disabled || undefined,
+              "data-text": text,
+              className: cls,
+            } as const;
+            if (entry.href && !entry.disabled) {
+              return (
+                <Link
+                  key={idx}
+                  href={entry.href}
+                  {...common}
+                  onClick={() => {
+                    entry.onSelect?.();
+                    close(false);
+                  }}
+                >
+                  {inner}
+                </Link>
+              );
+            }
+            return (
+              <button
+                key={idx}
+                type="button"
+                {...common}
+                onClick={() => {
+                  if (entry.disabled) return;
+                  close(true);
+                  entry.onSelect?.();
+                }}
+              >
+                {inner}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
