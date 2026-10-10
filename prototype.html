@@ -1,0 +1,440 @@
+<title>Raisebook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a fundraising desk. Ledger strip of the round on top, then a pipeline board (or table) of investors; a side sheet opens each investor's file. */
+:root {
+  --bg: #F3F5F8; --surface: #FFFFFF; --sunk: #E8ECF2; --line: #D5DCE6;
+  --fg: #16202E; --muted: #5B6778; --faint: #8994A5;
+  --accent: #2F55D4; --accent-ink: #FFFFFF; --accent-soft: #E3E9FB;
+  --hot: #C2410C; --hot-soft: #FDE7DB; --warm: #B7791F; --warm-soft: #FBF0D5; --maybe: #6B7A8F; --maybe-soft: #E9EDF2;
+  --good: #15803D; --good-soft: #DCF3E3; --bad: #B42318; --bad-soft: #FBE1DE;
+  --s-new: #8994A5; --s-research: #7C5CD6; --s-contacted: #2F55D4; --s-replied: #0E8A9E; --s-meeting: #B7791F; --s-dd: #C2410C; --s-committed: #15803D; --s-passed: #9AA3B0;
+  --f-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 8px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0F141C; --surface: #171E29; --sunk: #1D2532; --line: #2A3444;
+  --fg: #E6EBF2; --muted: #9AA6B8; --faint: #6E7A8C;
+  --accent: #7C9BFF; --accent-ink: #0F141C; --accent-soft: #1F2A4A;
+  --hot: #FF8A5B; --hot-soft: #3A2218; --warm: #F0B54E; --warm-soft: #33291A; --maybe: #A3AFC0; --maybe-soft: #232B38;
+  --good: #4ADE80; --good-soft: #15301F; --bad: #F87171; --bad-soft: #3A1C1C;
+  --s-new: #8C98AA; --s-research: #A78BFA; --s-contacted: #7C9BFF; --s-replied: #38C6DA; --s-meeting: #F0B54E; --s-dd: #FF8A5B; --s-committed: #4ADE80; --s-passed: #5E6878;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0F141C; --surface: #171E29; --sunk: #1D2532; --line: #2A3444;
+  --fg: #E6EBF2; --muted: #9AA6B8; --faint: #6E7A8C;
+  --accent: #7C9BFF; --accent-ink: #0F141C; --accent-soft: #1F2A4A;
+  --hot: #FF8A5B; --hot-soft: #3A2218; --warm: #F0B54E; --warm-soft: #33291A; --maybe: #A3AFC0; --maybe-soft: #232B38;
+  --good: #4ADE80; --good-soft: #15301F; --bad: #F87171; --bad-soft: #3A1C1C;
+  --s-new: #8C98AA; --s-research: #A78BFA; --s-contacted: #7C9BFF; --s-replied: #38C6DA; --s-meeting: #F0B54E; --s-dd: #FF8A5B; --s-committed: #4ADE80; --s-passed: #5E6878;
+  color-scheme: dark }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--f-body); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { padding-inline: 16px; padding-block: 16px 40px; max-width: 1600px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+
+header.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px; }
+.brand { font: 700 28px/1 var(--f-display); letter-spacing: -0.02em; }
+.brand small { font: 500 12px var(--f-mono); color: var(--muted); letter-spacing: 0.04em; margin-left: 6px; }
+.round-pick { display: inline-flex; background: var(--sunk); border-radius: 999px; padding: 3px; gap: 2px; }
+.round-pick button { border: 0; background: transparent; padding: 5px 12px; border-radius: 999px; color: var(--muted); font-weight: 500; }
+.round-pick button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
+.spacer { flex: 1; }
+.status { font: 12px var(--f-mono); color: var(--muted); }
+
+/* ledger */
+.ledger { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr); gap: 18px; }
+@media (max-width: 860px) { .ledger { grid-template-columns: minmax(0, 1fr); } }
+.raise .lbl, .k-lbl { font: 500 11px var(--f-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.raise .amt { font: 700 30px/1.1 var(--f-display); font-variant-numeric: tabular-nums; margin-top: 4px; }
+.raise .amt span { color: var(--muted); font-weight: 500; font-size: 18px; }
+.meter { height: 8px; background: var(--sunk); border-radius: 999px; overflow: hidden; margin-top: 10px; }
+.meter i { display: block; height: 100%; background: var(--good); width: 0; transition: width .4s; }
+.raise .sub { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; color: var(--muted); font-size: 12.5px; }
+.raise .sub b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.raise .tgt { display: inline-flex; align-items: center; gap: 6px; }
+.raise .tgt input { width: 92px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 12px var(--f-mono); }
+.funnel { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.funnel-bar { display: flex; height: 26px; border-radius: 6px; overflow: hidden; background: var(--sunk); }
+.funnel-bar button { border: 0; padding: 0; min-width: 0; color: #fff; font: 500 11px var(--f-mono); white-space: nowrap; overflow: hidden; }
+.funnel-keys { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.funnel-keys button { border: 0; background: none; padding: 0; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+.funnel-keys button b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.due-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.due-strip .chip { cursor: pointer; }
+
+/* toolbar */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toolbar input[type=search] { flex: 1 1 220px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.toolbar select { padding: 7px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); max-width: 100%; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: transparent; padding: 7px 12px; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.count { font: 12px var(--f-mono); color: var(--muted); }
+
+/* chips */
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 999px; font: 500 11.5px/1.6 var(--f-body); white-space: nowrap; border: 1px solid transparent; }
+.p-hot { background: var(--hot-soft); color: var(--hot); }
+.p-warm { background: var(--warm-soft); color: var(--warm); }
+.p-maybe { background: var(--maybe-soft); color: var(--maybe); }
+.p-none { background: var(--sunk); color: var(--faint); }
+.t-chip { background: var(--accent-soft); color: var(--accent); }
+.ind-chip { background: var(--sunk); color: var(--muted); }
+.due-chip { background: var(--bad-soft); color: var(--bad); }
+.soon-chip { background: var(--warm-soft); color: var(--warm); }
+.fit { display: inline-flex; gap: 2px; align-items: center; font: 500 11px var(--f-mono); color: var(--muted); }
+.fit i { width: 6px; height: 10px; border-radius: 2px; background: var(--line); display: block; }
+.fit i.on { background: var(--good); }
+
+/* board */
+.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(250px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 8px; min-height: 60vh; }
+.col { background: var(--sunk); border-radius: var(--r); display: flex; flex-direction: column; min-width: 0; max-height: 78vh; }
+.col.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.col-h { display: flex; align-items: center; gap: 8px; padding: 10px 10px 8px; font: 600 13px var(--f-body); position: sticky; top: 0; }
+.col-h .n { font: 12px var(--f-mono); color: var(--muted); margin-left: auto; }
+.col-b { overflow-y: auto; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 6px; min-height: 40px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; display: flex; flex-direction: column; gap: 5px; cursor: grab; text-align: left; width: 100%; }
+.card:hover { border-color: var(--accent); }
+.card.dragging { opacity: .5; }
+.card .r1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.card .nm { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .firm { color: var(--muted); font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .r3 { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.card .ev { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.more { border: 0; background: none; color: var(--accent); font-size: 12.5px; padding: 6px; }
+
+/* table */
+.tbl-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+table { border-collapse: collapse; width: 100%; min-width: 980px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 11px var(--f-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); background: var(--surface); position: sticky; top: 0; cursor: pointer; white-space: nowrap; }
+th[aria-sort] { color: var(--fg); }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--accent-soft); }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--f-mono); font-size: 12.5px; }
+.stage-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
+
+/* sheet */
+.scrim { position: fixed; inset: 0; background: rgb(10 15 25 / .35); z-index: 20; }
+.sheet { position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100%); background: var(--surface); border-left: 1px solid var(--line); z-index: 21; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.sheet-h { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: flex-start; }
+.sheet-h h2 { font: 700 22px/1.15 var(--f-display); margin: 0; text-wrap: balance; }
+.sheet-h .who { color: var(--muted); margin-top: 3px; }
+.x { margin-left: auto; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; width: 32px; height: 32px; flex: none; }
+.sheet-b { overflow-y: auto; padding: 14px 18px 24px; display: flex; flex-direction: column; gap: 16px; }
+.stages { display: flex; flex-wrap: wrap; gap: 5px; }
+.stages button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 10px; display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; }
+.stages button[aria-pressed="true"] { border-color: var(--fg); background: var(--fg); color: var(--bg); }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.fields input, .fields select, textarea { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); width: 100%; }
+textarea { min-height: 96px; resize: vertical; line-height: 1.45; }
+.facts { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 6px 10px; font-size: 13px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.links { display: flex; flex-wrap: wrap; gap: 6px; }
+.links a, .links .copy { border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; text-decoration: none; color: var(--accent); font-size: 12.5px; background: var(--surface); }
+.bio { font-size: 13px; color: var(--muted); white-space: pre-wrap; max-width: 65ch; }
+.log { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.log div { display: flex; gap: 8px; color: var(--muted); }
+.log time { font-family: var(--f-mono); font-size: 11.5px; flex: none; }
+.sect { font: 500 11px var(--f-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 6px; }
+.saved { font: 12px var(--f-mono); color: var(--good); min-height: 1em; }
+
+.empty { background: var(--surface); border: 1px dashed var(--line); border-radius: var(--r); padding: 28px; text-align: center; color: var(--muted); }
+.empty b { color: var(--fg); display: block; font: 700 18px var(--f-display); margin-bottom: 4px; }
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 30; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">Raisebook<small>SF Tech Week 2026</small></div>
+    <div class="round-pick" role="group" aria-label="Round">
+      <button id="r-qenzo" aria-pressed="true">Qenzo seed</button>
+      <button id="r-elixion" aria-pressed="false">Elixion</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="status" id="status">Connecting…</div>
+  </header>
+
+  <section class="ledger" aria-label="Round summary">
+    <div class="raise">
+      <div class="lbl" id="raise-lbl">Qenzo · committed toward the round</div>
+      <div class="amt" id="raise-amt">$0 <span>of $2,000,000</span></div>
+      <div class="meter"><i id="raise-meter"></i></div>
+      <div class="sub">
+        <span><b id="s-active">0</b> in conversation</span>
+        <span><b id="s-meet">0</b> meetings+</span>
+        <span class="tgt"><label for="tgt">Target $</label><input id="tgt" inputmode="numeric" value="2000000"></span>
+      </div>
+    </div>
+    <div class="funnel">
+      <div class="k-lbl">Pipeline</div>
+      <div class="funnel-bar" id="funnel-bar"></div>
+      <div class="funnel-keys" id="funnel-keys"></div>
+      <div class="due-strip" id="due-strip"></div>
+    </div>
+  </section>
+
+  <div class="toolbar">
+    <input type="search" id="q" placeholder="Search name, firm, focus, notes…" aria-label="Search">
+    <select id="f-prio" aria-label="Priority"><option value="">Any priority</option><option value="hot">Hot (fit 5)</option><option value="warm">Warm+ (fit ≥ 4)</option><option value="maybe">Maybe+ (fit ≥ 3)</option></select>
+    <select id="f-type" aria-label="Investor type"><option value="">All types</option></select>
+    <select id="f-ind" aria-label="Industry"><option value="">All industries</option></select>
+    <select id="f-due" aria-label="Follow-ups"><option value="">Any follow-up</option><option value="due">Due or overdue</option><option value="week">Due in 7 days</option><option value="none">No follow-up set</option></select>
+    <div class="seg" role="group" aria-label="View">
+      <button id="v-board" aria-pressed="true">Board</button>
+      <button id="v-table" aria-pressed="false">Table</button>
+    </div>
+    <span class="count" id="count"></span>
+  </div>
+
+  <main id="view">
+    <div class="empty" id="empty"><b>Your investors appear here</b>Loading the pipeline. Each investor from your Tech Week events gets a card you can drag between stages.</div>
+  </main>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="sheet" id="sheet" hidden aria-label="Investor file"></aside>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const STAGES = [
+  ["new", "New", "--s-new"], ["research", "Researching", "--s-research"], ["contacted", "Contacted", "--s-contacted"],
+  ["replied", "Replied", "--s-replied"], ["meeting", "Meeting", "--s-meeting"], ["dd", "Diligence", "--s-dd"],
+  ["committed", "Committed", "--s-committed"], ["passed", "Passed", "--s-passed"]
+];
+const STAGE = Object.fromEntries(STAGES.map(([k, l, c]) => [k, { label: l, color: `var(${c})` }]));
+const ACTIVE = new Set(["contacted", "replied", "meeting", "dd", "committed"]);
+const st = { round: "qenzo", view: "board", rows: [], q: "", prio: "", type: "", ind: "", due: "", sort: ["fit", -1], open: null, show: {}, settings: { qenzo: { target: 2000000 }, elixion: { target: 1500000 } } };
+let db = null, canWrite = true;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = (n) => "$" + Math.round(n || 0).toLocaleString("en-US");
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+try { const s = JSON.parse(localStorage.getItem("rb-ui") || "{}"); if (s.round) st.round = s.round; if (s.view) st.view = s.view; } catch {}
+const saveUi = () => { try { localStorage.setItem("rb-ui", JSON.stringify({ round: st.round, view: st.view })); } catch {} };
+
+// per-round fields live in r.p[round] = {stage, followUp, amount, notes, log}
+const P = (r) => (r.p && r.p[st.round]) || {};
+const stageOf = (r) => P(r).stage || "new";
+const fitOf = (r) => st.round === "qenzo" ? (r.qFit || 0) : (r.eFit || 0);
+const prioOf = (r) => { const f = fitOf(r); return f >= 5 ? "hot" : f >= 4 ? "warm" : f >= 3 ? "maybe" : "none"; };
+const PRIO_LBL = { hot: "Hot", warm: "Warm", maybe: "Maybe", none: "Low fit" };
+function dueState(r) {
+  const d = P(r).followUp; if (!d) return "";
+  const t = todayStr(); if (d <= t) return "due";
+  const wk = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+  return d <= wk ? "soon" : "later";
+}
+
+function filtered() {
+  const q = st.q.trim().toLowerCase();
+  return st.rows.filter((r) => {
+    if (st.prio === "hot" && fitOf(r) < 5) return false;
+    if (st.prio === "warm" && fitOf(r) < 4) return false;
+    if (st.prio === "maybe" && fitOf(r) < 3) return false;
+    if (st.type && r.type !== st.type) return false;
+    if (st.ind && r.industry !== st.ind) return false;
+    if (st.due) { const d = dueState(r); if (st.due === "due" && d !== "due") return false; if (st.due === "week" && !(d === "due" || d === "soon")) return false; if (st.due === "none" && P(r).followUp) return false; }
+    if (q) { const hay = [r.name, r.firm, r.title, r.industry, r.tags, r.summary, r.notes, P(r).notes, r.location].join(" ").toLowerCase(); if (!hay.includes(q)) return false; }
+    return true;
+  });
+}
+const byFit = (a, b) => fitOf(b) - fitOf(a) || ((b.qFit || 0) + (b.eFit || 0)) - ((a.qFit || 0) + (a.eFit || 0)) || (b.events || 0) - (a.events || 0) || String(a.name).localeCompare(b.name);
+
+function fitBar(n) { let h = '<span class="fit" title="Fit ' + n + ' of 5">'; for (let i = 1; i <= 5; i++) h += '<i class="' + (i <= n ? "on" : "") + '"></i>'; return h + "</span>"; }
+function dueChip(r) { const d = dueState(r), f = P(r).followUp; if (d === "due") return '<span class="chip due-chip">Follow up ' + (f === todayStr() ? "today" : "overdue") + '</span>'; if (d === "soon") return '<span class="chip soon-chip">Follow up ' + esc(fmtDate(f)) + '</span>'; return ""; }
+function fmtDate(d) { try { return new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } }
+
+function renderLedger() {
+  const rows = st.rows, cfg = st.settings[st.round] || {};
+  const target = cfg.target || 0;
+  const committed = rows.filter((r) => stageOf(r) === "committed").reduce((s, r) => s + (Number(P(r).amount) || 0), 0);
+  $("raise-lbl").textContent = (st.round === "qenzo" ? "Qenzo" : "Elixion") + " · committed toward the round";
+  $("raise-amt").innerHTML = money(committed) + " <span>of " + money(target) + "</span>";
+  $("raise-meter").style.width = Math.min(100, target ? committed / target * 100 : 0) + "%";
+  if (document.activeElement !== $("tgt")) $("tgt").value = target;
+  $("s-active").textContent = rows.filter((r) => ACTIVE.has(stageOf(r))).length;
+  $("s-meet").textContent = rows.filter((r) => ["meeting", "dd", "committed"].includes(stageOf(r))).length;
+  const counts = Object.fromEntries(STAGES.map(([k]) => [k, 0])); rows.forEach((r) => counts[stageOf(r)]++);
+  const total = rows.length || 1;
+  $("funnel-bar").innerHTML = STAGES.filter(([k]) => counts[k]).map(([k, l]) => `<button data-stage="${k}" style="flex:${counts[k]} 1 0;background:${STAGE[k].color}" title="${l}: ${counts[k]}">${counts[k] / total > .06 ? counts[k] : ""}</button>`).join("");
+  $("funnel-keys").innerHTML = STAGES.map(([k, l]) => `<button data-stage="${k}"><span class="dot" style="background:${STAGE[k].color}"></span>${l} <b>${counts[k]}</b></button>`).join("");
+  const due = rows.filter((r) => dueState(r) === "due").sort(byFit);
+  $("due-strip").innerHTML = due.length ? `<span>Follow up now:</span>` + due.slice(0, 8).map((r) => `<span class="chip due-chip" data-open="${esc(r.id)}">${esc(r.name)}</span>`).join("") + (due.length > 8 ? `<span>+${due.length - 8} more</span>` : "") : `<span>No follow-ups due. Set a date on an investor's file to get reminded here.</span>`;
+}
+
+function cardHtml(r) {
+  const p = prioOf(r);
+  return `<button class="card" draggable="${canWrite}" data-open="${esc(r.id)}" data-id="${esc(r.id)}">
+    <span class="r1"><span class="nm">${esc(r.name)}</span></span>
+    <span class="firm">${esc([r.title, r.firm].filter(Boolean).join(" · ") || r.type)}</span>
+    <span class="r3"><span class="chip p-${p}">${PRIO_LBL[p]}</span><span class="chip t-chip">${esc(r.type || "Investor")}</span>${r.industry ? `<span class="chip ind-chip">${esc(r.industry)}</span>` : ""}${fitBar(fitOf(r))}</span>
+    ${dueChip(r)}${r.nextEvent ? `<span class="ev">Next together: ${esc(r.nextEvent)}</span>` : ""}
+    ${stageOf(r) === "committed" && P(r).amount ? `<span class="chip p-hot" style="background:var(--good-soft);color:var(--good)">${money(P(r).amount)}</span>` : ""}
+  </button>`;
+}
+
+function renderBoard(list) {
+  const LIMIT = 60;
+  return `<div class="board">` + STAGES.map(([k, l]) => {
+    const items = list.filter((r) => stageOf(r) === k).sort(byFit);
+    const n = st.show[k] || LIMIT;
+    return `<section class="col" data-col="${k}" aria-label="${l}">
+      <div class="col-h"><span class="dot" style="background:${STAGE[k].color}"></span>${l}<span class="n">${items.length}</span></div>
+      <div class="col-b">${items.slice(0, n).map(cardHtml).join("")}${items.length > n ? `<button class="more" data-more="${k}">Show ${Math.min(LIMIT, items.length - n)} more</button>` : ""}${items.length ? "" : `<div class="count" style="padding:6px 4px">Drag investors here</div>`}</div>
+    </section>`;
+  }).join("") + `</div>`;
+}
+
+const COLS = [
+  ["name", "Investor", (r) => `<b>${esc(r.name)}</b><div class="count">${esc(r.title || "")}</div>`, (r) => r.name],
+  ["firm", "Firm", (r) => esc(r.firm), (r) => r.firm || ""],
+  ["stage", "Stage", (r) => `<span class="stage-pill"><span class="dot" style="background:${STAGE[stageOf(r)].color}"></span>${STAGE[stageOf(r)].label}</span>`, (r) => STAGES.findIndex(([k]) => k === stageOf(r))],
+  ["fit", "Fit", (r) => `<span class="chip p-${prioOf(r)}">${PRIO_LBL[prioOf(r)]}</span> ${fitBar(fitOf(r))}`, (r) => fitOf(r) * 10 + ((r.qFit || 0) + (r.eFit || 0)) / 10],
+  ["type", "Type", (r) => `<span class="chip t-chip">${esc(r.type)}</span>`, (r) => r.type || ""],
+  ["industry", "Industry", (r) => esc(r.industry), (r) => r.industry || ""],
+  ["stageFocus", "Stage focus", (r) => esc(r.stageFocus), (r) => r.stageFocus || ""],
+  ["follow", "Follow-up", (r) => P(r).followUp ? `<span class="${dueState(r) === "due" ? "chip due-chip" : dueState(r) === "soon" ? "chip soon-chip" : "num"}">${esc(fmtDate(P(r).followUp))}</span>` : "", (r) => P(r).followUp || "9999"],
+  ["events", "Events", (r) => `<span class="num">${r.events || 0}</span>`, (r) => r.events || 0],
+  ["next", "Next shared event", (r) => `<span class="count">${esc(r.nextEvent)}</span>`, (r) => r.nextEvent || "~"],
+];
+function renderTable(list) {
+  const [key, dir] = st.sort; const col = COLS.find((c) => c[0] === key) || COLS[3];
+  const rows = [...list].sort((a, b) => { const x = col[3](a), y = col[3](b); return (x > y ? 1 : x < y ? -1 : 0) * dir || byFit(a, b); });
+  return `<div class="tbl-wrap"><table><thead><tr>${COLS.map(([k, l]) => `<th data-sort="${k}" ${k === key ? `aria-sort="${dir > 0 ? "ascending" : "descending"}"` : ""}>${l}${k === key ? (dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead>
+    <tbody>${rows.slice(0, 600).map((r) => `<tr data-open="${esc(r.id)}">${COLS.map((c) => `<td>${c[2](r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+function render() {
+  renderLedger();
+  if (!st.rows.length) return;
+  const list = filtered();
+  $("count").textContent = list.length + " of " + st.rows.length + " investors";
+  $("view").innerHTML = list.length ? (st.view === "board" ? renderBoard(list) : renderTable(list)) : `<div class="empty"><b>No investors match</b>Clear the search or filters to see the full list.</div>`;
+  if (st.open) renderSheet();
+}
+
+function fillFilters() {
+  const types = [...new Set(st.rows.map((r) => r.type).filter(Boolean))].sort();
+  const inds = [...new Set(st.rows.map((r) => r.industry).filter(Boolean))].sort();
+  const keep = (sel, opts) => { const v = sel.value; sel.innerHTML = sel.options[0].outerHTML + opts.map((o) => `<option>${esc(o)}</option>`).join(""); sel.value = v; };
+  keep($("f-type"), types); keep($("f-ind"), inds);
+}
+
+function linkBtn(href, label) { return href ? `<a href="${esc(href)}" target="_blank" rel="noopener">${label}</a>` : ""; }
+function renderSheet() {
+  const r = st.rows.find((x) => x.id === st.open); if (!r) return closeSheet();
+  const p = P(r), sg = stageOf(r);
+  const focusId = document.activeElement && document.activeElement.id;
+  const notesVal = $("n-notes") && focusId === "n-notes" ? $("n-notes").value : (p.notes || "");
+  $("sheet").innerHTML = `
+    <div class="sheet-h"><div style="min-width:0"><h2>${esc(r.name)}</h2><div class="who">${esc([r.title, r.firm].filter(Boolean).join(" · "))}</div>
+      <div class="r3" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px"><span class="chip p-${prioOf(r)}">${PRIO_LBL[prioOf(r)]} · fit ${fitOf(r)}/5</span><span class="chip t-chip">${esc(r.type)}</span>${r.industry ? `<span class="chip ind-chip">${esc(r.industry)}</span>` : ""}</div></div>
+      <button class="x" id="close" aria-label="Close">✕</button></div>
+    <div class="sheet-b">
+      <div><div class="sect">Stage for ${st.round === "qenzo" ? "Qenzo" : "Elixion"}</div><div class="stages">${STAGES.map(([k, l]) => `<button data-set-stage="${k}" aria-pressed="${k === sg}" ${canWrite ? "" : "disabled"}><span class="dot" style="background:${STAGE[k].color}"></span>${l}</button>`).join("")}</div></div>
+      <div class="fields">
+        <label>Follow up on<input type="date" id="n-follow" value="${esc(p.followUp || "")}" ${canWrite ? "" : "disabled"}></label>
+        <label>Committed amount ($)<input id="n-amount" inputmode="numeric" value="${esc(p.amount || "")}" placeholder="e.g. 100000" ${canWrite ? "" : "disabled"}></label>
+      </div>
+      <div><div class="sect">Notes</div><textarea id="n-notes" placeholder="Where you met, what they asked, what to send next…" ${canWrite ? "" : "disabled"}>${esc(notesVal)}</textarea><div class="saved" id="saved"></div></div>
+      <div><div class="sect">Contact</div><div class="links">${linkBtn(r.linkedin, r.linkedin && r.linkedin.includes("/search/") ? "Find on LinkedIn ↗" : "LinkedIn ↗")}${linkBtn(r.website, "Website ↗")}${linkBtn(r.ig, "Instagram ↗")}${linkBtn(r.x, "X ↗")}${linkBtn(r.nextEventUrl, "Next event ↗")}${r.email ? `<button class="copy" data-copy="${esc(r.email)}">${esc(r.email)} · copy</button>` : ""}</div></div>
+      <dl class="facts">
+        ${r.stageFocus ? `<dt>Invests at</dt><dd>${esc(r.stageFocus)}</dd>` : ""}${r.check ? `<dt>Check size</dt><dd>${esc(r.check)}</dd>` : ""}
+        ${r.tags ? `<dt>Focus</dt><dd>${esc(r.tags)}</dd>` : ""}${r.location ? `<dt>Location</dt><dd>${esc(r.location)}</dd>` : ""}
+        <dt>Fit</dt><dd>Qenzo ${r.qFit || 0}/5 · Elixion ${r.eFit || 0}/5</dd>
+        <dt>Events together</dt><dd>${r.events || 0}${r.nextEvent ? ` · next: ${esc(r.nextEvent)}` : ""}</dd>
+        ${r.summary ? `<dt>Why</dt><dd>${esc(r.summary)}</dd>` : ""}${r.notes ? `<dt>Research</dt><dd>${esc(r.notes)}</dd>` : ""}
+      </dl>
+      ${r.bio ? `<div><div class="sect">Their Partiful bio</div><div class="bio">${esc(r.bio)}</div></div>` : ""}
+      ${(p.log || []).length ? `<div><div class="sect">History</div><div class="log">${[...p.log].reverse().map((e) => `<div><time>${esc(fmtDate(e.d))}</time><span>${esc(e.t)}</span></div>`).join("")}</div></div>` : ""}
+    </div>`;
+  $("sheet").hidden = false; $("scrim").hidden = false;
+  if (focusId && $(focusId)) $(focusId).focus();
+}
+function openSheet(id) { st.open = id; renderSheet(); setTimeout(() => $("close") && $("close").focus(), 0); }
+function closeSheet() { st.open = null; $("sheet").hidden = true; $("scrim").hidden = true; }
+
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 2200); }
+
+const pending = new Map();
+async function writeRound(id, patch, logText) {
+  if (!db || !canWrite) { toast("You can view this pipeline but not change it."); return; }
+  const r = st.rows.find((x) => x.id === id); if (!r) return;
+  const cur = { ...(P(r)) }; Object.assign(cur, patch);
+  if (logText) cur.log = [...(cur.log || []), { d: todayStr(), t: logText }].slice(-40);
+  const prev = pending.get(id) || Promise.resolve();
+  const job = prev.then(() => db.doc("investors/" + id).update({ p: { [st.round]: cur } })).catch((e) => {
+    if (e && e.code === "invalid_argument") { canWrite = false; toast("This view is read-only."); } else toast("Couldn't save. Check your connection and try again.");
+  });
+  pending.set(id, job); await job;
+}
+async function setStage(id, k) {
+  const r = st.rows.find((x) => x.id === id); if (!r || stageOf(r) === k) return;
+  await writeRound(id, { stage: k }, "Moved to " + STAGE[k].label);
+  toast(r.name + " → " + STAGE[k].label);
+}
+
+// events
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-open],[data-more],[data-sort],[data-stage],[data-set-stage],[data-copy],#close,#scrim");
+  if (!t) return;
+  if (t.id === "close" || t.id === "scrim") return closeSheet();
+  if (t.dataset.setStage) return setStage(st.open, t.dataset.setStage);
+  if (t.dataset.copy) { navigator.clipboard.writeText(t.dataset.copy).then(() => toast("Email copied"), () => toast(t.dataset.copy)); return; }
+  if (t.dataset.more) { st.show[t.dataset.more] = (st.show[t.dataset.more] || 60) + 60; return render(); }
+  if (t.dataset.sort) { st.sort = st.sort[0] === t.dataset.sort ? [t.dataset.sort, -st.sort[1]] : [t.dataset.sort, t.dataset.sort === "name" || t.dataset.sort === "firm" ? 1 : -1]; return render(); }
+  if (t.dataset.stage && !t.dataset.setStage) { st.view = "table"; st.sort = ["stage", 1]; setView(); return; }
+  if (t.dataset.open) openSheet(t.dataset.open);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && st.open) closeSheet(); });
+
+let dragId = null;
+document.addEventListener("dragstart", (e) => { const c = e.target.closest(".card"); if (!c) return; dragId = c.dataset.id; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", dragId); } catch {} });
+document.addEventListener("dragend", (e) => { const c = e.target.closest(".card"); if (c) c.classList.remove("dragging"); document.querySelectorAll(".col.drop").forEach((x) => x.classList.remove("drop")); });
+document.addEventListener("dragover", (e) => { const col = e.target.closest(".col"); if (!col || !dragId) return; e.preventDefault(); document.querySelectorAll(".col.drop").forEach((x) => x !== col && x.classList.remove("drop")); col.classList.add("drop"); });
+document.addEventListener("drop", (e) => { const col = e.target.closest(".col"); if (!col || !dragId) return; e.preventDefault(); col.classList.remove("drop"); const id = dragId; dragId = null; setStage(id, col.dataset.col); });
+
+let notesTimer;
+document.addEventListener("input", (e) => {
+  if (e.target.id === "n-notes") { clearTimeout(notesTimer); const id = st.open, v = e.target.value; $("saved").textContent = "Saving…"; notesTimer = setTimeout(async () => { await writeRound(id, { notes: v }); if ($("saved")) $("saved").textContent = "Saved"; }, 900); }
+});
+document.addEventListener("change", async (e) => {
+  const id = st.open;
+  if (e.target.id === "n-follow") { const v = e.target.value; await writeRound(id, { followUp: v }, v ? "Follow-up set for " + fmtDate(v) : "Follow-up cleared"); }
+  if (e.target.id === "n-amount") { const v = Number(String(e.target.value).replace(/[^0-9.]/g, "")) || 0; await writeRound(id, { amount: v }, v ? "Amount set to " + money(v) : "Amount cleared"); }
+  if (e.target.id === "tgt") { const v = Number(String(e.target.value).replace(/[^0-9.]/g, "")) || 0; st.settings[st.round] = { ...(st.settings[st.round] || {}), target: v }; render(); if (db && canWrite) db.doc("meta/settings").set(st.settings).catch(() => toast("Couldn't save the target.")); }
+});
+$("q").addEventListener("input", (e) => { st.q = e.target.value; render(); });
+["prio", "type", "ind", "due"].forEach((k) => $("f-" + k).addEventListener("change", (e) => { st[k] = e.target.value; render(); }));
+function setRound(r) { st.round = r; $("r-qenzo").setAttribute("aria-pressed", r === "qenzo"); $("r-elixion").setAttribute("aria-pressed", r === "elixion"); saveUi(); render(); }
+$("r-qenzo").onclick = () => setRound("qenzo"); $("r-elixion").onclick = () => setRound("elixion");
+function setView(v) { if (v) st.view = v; $("v-board").setAttribute("aria-pressed", st.view === "board"); $("v-table").setAttribute("aria-pressed", st.view === "table"); saveUi(); render(); }
+$("v-board").onclick = () => setView("board"); $("v-table").onclick = () => setView("table");
+setRound(st.round); setView(st.view);
+
+(async () => {
+  db = window.claude ? await window.claude.use("db") : null;
+  if (!db) { $("status").textContent = "Offline"; $("empty").innerHTML = "<b>Sign in to open your pipeline</b>This tracker keeps its data in your Claude account, so it only loads when you're signed in."; return; }
+  try { const user = await window.claude.use("user"); const w = user && await user.can("data.write"); if (w === false) canWrite = false; } catch {}
+  db.doc("meta/settings").onSnapshot((s) => { if (s.exists) { st.settings = { ...st.settings, ...s.data() }; renderLedger(); } }, () => {});
+  db.collection("investors").limit(1000).onSnapshot((snap) => {
+    st.rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    $("status").textContent = st.rows.length ? (canWrite ? "Synced" : "View only") : "No investors yet";
+    if (!st.rows.length) { $("view").innerHTML = `<div class="empty"><b>No investors yet</b>Ask Claude to load your investor list into Raisebook.</div>`; renderLedger(); return; }
+    fillFilters(); render();
+  }, (e) => { $("status").textContent = "Disconnected"; toast("Lost the connection to your pipeline. Reload to reconnect."); });
+})();
+</script>
