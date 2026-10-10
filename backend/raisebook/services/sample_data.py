@@ -1,73 +1,43 @@
-"""Sample (sandbox) workspace with fictional data (SPEC §8.5).
+"""Sample (sandbox) workspace with fictional data (SPEC §8.5). Owner: Import-Export+Ops (IE).
 
-Owner: Import-Export+Ops (IE). This is the Foundation-backend baseline so that
-``rbctl seed-demo`` and ``POST /v1/workspaces {sample: true}`` work from day one;
-IE may extend or replace it (and should route investor/participant writes through
-``services.investors`` / ``services.participants`` / ``services.activities`` once
-those land).
+"Kestrel Robotics (sample)" has a closed "Pre-seed" round (fully committed) and an open
+"Seed" round (target 2,000,000 USD, SAFE, cap 16,000,000, closing 8 weeks out) with 40
+investors across every stage, follow-ups (overdue, today, next week), three commitments,
+notes, stale conversations, and timelines mixing user, agent (``claude-code`` /
+``claude-opus-4-5``) and system actors.
 
-Everything here is made up: people, firms (no real firm names), ``example.com``
-emails and ``linkedin.com/in/example-…`` URLs. The workspace "Kestrel Robotics
-(sample)" has a closed "Pre-seed" round (fully committed) and an open "Seed" round
-(target 2,000,000 USD, SAFE, cap 16,000,000, closing 8 weeks out) with 40 investors
-across every stage, follow-ups (overdue, today, next week), three commitments,
-notes, and timelines mixing user, agent (``claude-code`` / ``claude-opus-4-5``) and
-system actors.
+Every investor and participant write goes through the feature services
+(``services.rounds``, ``services.investors``, ``services.participants``,
+``services.activities``) with a back-dated ``now``, so derived fields, activities and
+``last_activity_at`` are exactly what real use would produce.
+
+Everything here is made up: people, firms (no real firm names), ``example.com`` emails and
+``linkedin.com/in/example-…`` URLs.
 """
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from raisebook.core.actor import SYSTEM_ACTOR, Actor
-from raisebook.models.activity import Activity
-from raisebook.models.enums import ActorType, RoundStatus, Via
+from raisebook.auth.principal import Principal, WorkspaceContext, WorkspaceInfo
+from raisebook.auth.scopes import ROLE_SCOPES
+from raisebook.core.actor import SYSTEM_ACTOR, Actor, user_actor
+from raisebook.models.enums import ActorType, Role, Via
 from raisebook.models.investor import Investor
-from raisebook.models.round import DEFAULT_STAGES, Round, RoundParticipant, RoundStage
+from raisebook.models.round import RoundStage
 from raisebook.models.user import User
 from raisebook.models.workspace import Workspace
+from raisebook.services.normalize import norm
 from raisebook.services.workspaces import create_workspace_row
 
 SAMPLE_NAME = "Kestrel Robotics (sample)"
 SAMPLE_TIMEZONE = "America/Los_Angeles"
 AGENT = Actor(ActorType.AGENT, Via.MCP, label="claude-code", model="claude-opus-4-5")
-
-_FIRM_SUFFIXES = ("capital", "ventures", "partners", "vc", "fund", "llc", "lp", "inc")
-
-
-def _norm(s: str | None) -> str:
-    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
-    s = s.replace("&", " and ")
-    return " ".join(re.findall(r"[a-z0-9]+", s))
-
-
-def _name_key(name: str, firm: str | None) -> str:
-    words = _norm(firm).split()
-    while words and words[-1] in _FIRM_SUFFIXES:
-        words.pop()
-    return f"{_norm(name)}|{' '.join(words)}"
-
-
-def _search_text(inv: dict[str, Any]) -> str:
-    parts = [
-        inv.get("name"),
-        inv.get("firm"),
-        inv.get("title"),
-        inv.get("email"),
-        inv.get("location"),
-        " ".join(inv.get("tags", [])),
-        " ".join(inv.get("industries", [])),
-        inv.get("source"),
-        (inv.get("notes") or "")[:2000],
-    ]
-    return " ".join(p for p in parts if p).lower()
 
 
 @dataclass(frozen=True)
@@ -627,57 +597,64 @@ NOTES = (
 SOURCES = ("SF Tech Week 2026", "Warm intro", "Demo day", "Cold outreach", "Angel list")
 
 
+NOTES = (
+    "Met at SF Tech Week 2026. Interested in warehouse robotics; asked for the deck.",
+    "Prefers to co-invest behind a lead. Ask about their pro-rata in follow-on rounds.",
+    "Portfolio overlap with two of our customers. Could make customer intros.",
+    "Wants to see 3 more months of pilot data before committing.",
+    "Strong technical background; asked detailed questions about the gripper design.",
+)
+SOURCES = ("SF Tech Week 2026", "Warm intro", "Demo day", "Cold outreach", "Angel list")
+FOLLOW_NOTE = "Send the updated deck and pilot metrics"
+
+
 def _slug(name: str) -> str:
-    return "-".join(_norm(name).split())
+    return "-".join(norm(name).split())
 
 
-async def _stages(db: AsyncSession, ws: Workspace, rnd: Round) -> dict[str, RoundStage]:
-    out: dict[str, RoundStage] = {}
-    for pos, st in enumerate(DEFAULT_STAGES):
-        row = RoundStage(
-            workspace_id=ws.id,
-            round_id=rnd.id,
-            key=st.key,
-            label=st.label,
-            color=str(st.color),
-            kind=str(st.kind),
-            position=pos,
-        )
-        db.add(row)
-        out[st.key] = row
-    await db.flush()
-    return out
-
-
-def _activity(
-    ws: Workspace,
-    inv: Investor,
-    kind: str,
-    actor: Actor,
-    at: datetime,
-    *,
-    round_id: UUID | None = None,
-    body: str | None = None,
-    data: dict[str, Any] | None = None,
-) -> Activity:
-    return Activity(
-        workspace_id=ws.id,
-        investor_id=inv.id,
-        round_id=round_id,
-        kind=kind,
-        occurred_at=at,
-        body=body,
-        data=data or {},
-        created_at=at,
-        **actor.activity_fields(),
+def _context(ws: Workspace, user: User) -> WorkspaceContext:
+    """A workspace context for the seeding: the owner's principal, system actor by default."""
+    principal = Principal(
+        type=ActorType.USER,
+        workspace=WorkspaceInfo.of(ws),
+        scopes=ROLE_SCOPES[Role.OWNER],
+        user_id=user.id,
+        role=Role.OWNER,
     )
+    return WorkspaceContext.build(principal, SYSTEM_ACTOR)
+
+
+def _stage_map(stages: list[RoundStage]) -> dict[str, RoundStage]:
+    return {s.key: s for s in stages}
+
+
+def _contact(i: int, p: Person) -> dict[str, Any]:
+    first = p.name.split()[0].lower()
+    return {
+        "name": p.name,
+        "firm": p.firm,
+        "title": p.title,
+        "type": p.type,
+        "check_note": p.check,
+        "check_min": p.check_min,
+        "check_max": p.check_max,
+        "location": p.location,
+        "industries": list(p.industries),
+        "tags": list(p.tags),
+        "stage_focus": ["pre-seed", "seed"] if p.type in ("angel", "scout") else ["seed"],
+        "email": f"{first}.{i + 1}@example.com",
+        "linkedin_url": f"https://www.linkedin.com/in/example-{_slug(p.name)}",
+        "source": SOURCES[i % len(SOURCES)],
+        "notes": NOTES[i % len(NOTES)] if i % 3 != 2 else None,
+        "warm_intro_by": "Tomas Okafor" if i in (2, 8, 13) else None,
+    }
 
 
 async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime) -> Workspace:
     """Create "Kestrel Robotics (sample)" (``is_sandbox=True``) owned by ``user``."""
-    from zoneinfo import ZoneInfo
+    from raisebook.services import activities, investors, participants, rounds, stages
 
-    ws = await create_workspace_row(
+    ws_row = await create_workspace_row(
         db,
         user=user,
         name=SAMPLE_NAME,
@@ -686,264 +663,195 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
         default_currency="USD",
         is_sandbox=True,
     )
+    ws = _context(ws_row, user)
     today: date = now.astimezone(ZoneInfo(SAMPLE_TIMEZONE)).date()
-    me = Actor(ActorType.USER, Via.WEB, user_id=user.id)
+    me = user_actor(user.id)
 
-    preseed = Round(
-        workspace_id=ws.id,
-        slug="pre-seed",
-        name="Pre-seed",
-        status=RoundStatus.CLOSED.value,
-        instrument="safe",
-        currency="USD",
-        target_amount=250_000,
-        valuation_cap=8_000_000,
-        target_close_on=today - timedelta(days=250),
-        closed_on=today - timedelta(days=240),
-        notes="Friends, angels and one accelerator. Closed oversubscribed.",
-        created_at=now - timedelta(days=330),
-        updated_at=now - timedelta(days=240),
+    preseed = await rounds.create_round(
+        db,
+        ws,
+        {
+            "name": "Pre-seed",
+            "instrument": "safe",
+            "currency": "USD",
+            "target_amount": 250_000,
+            "valuation_cap": 8_000_000,
+            "target_close_on": today - timedelta(days=250),
+            "notes": "Friends, angels and one accelerator. Closed oversubscribed.",
+        },
+        now=now - timedelta(days=330),
     )
-    seed = Round(
-        workspace_id=ws.id,
-        slug="seed",
-        name="Seed",
-        status=RoundStatus.OPEN.value,
-        instrument="safe",
-        currency="USD",
-        target_amount=2_000_000,
-        valuation_cap=16_000_000,
-        target_close_on=today + timedelta(weeks=8),
-        notes="Post-money SAFE. Looking for a lead with robotics or industrial depth.",
-        created_at=now - timedelta(days=45),
-        updated_at=now - timedelta(days=1),
+    seed = await rounds.create_round(
+        db,
+        ws,
+        {
+            "name": "Seed",
+            "instrument": "safe",
+            "currency": "USD",
+            "target_amount": 2_000_000,
+            "valuation_cap": 16_000_000,
+            "target_close_on": today + timedelta(weeks=8),
+            "notes": "Post-money SAFE. Looking for a lead with robotics or industrial depth.",
+        },
+        now=now - timedelta(days=45),
     )
-    db.add_all([preseed, seed])
-    await db.flush()
-    pre_stages = await _stages(db, ws, preseed)
-    seed_stages = await _stages(db, ws, seed)
+    pre_list = await stages.stages_for(db, ws, preseed.id)
+    seed_list = await stages.stages_for(db, ws, seed.id)
+    pre_st, seed_st = _stage_map(pre_list), _stage_map(seed_list)
 
-    investors: list[Investor] = []
+    people: list[Investor] = []
     for i, p in enumerate(PEOPLE):
-        first = p.name.split()[0].lower()
-        fields: dict[str, Any] = {
-            "name": p.name,
-            "firm": p.firm,
-            "title": p.title,
-            "type": p.type,
-            "check_note": p.check,
-            "check_min": p.check_min,
-            "check_max": p.check_max,
-            "location": p.location,
-            "industries": list(p.industries),
-            "tags": list(p.tags),
-            "stage_focus": ["pre-seed", "seed"] if p.type in ("angel", "scout") else ["seed"],
-            "email": f"{first}.{i + 1}@example.com",
-            "linkedin_url": f"https://www.linkedin.com/in/example-{_slug(p.name)}",
-            "source": SOURCES[i % len(SOURCES)],
-            "notes": NOTES[i % len(NOTES)] if i % 3 != 2 else None,
-            "warm_intro_by": "Tomas Okafor" if i in (2, 8, 13) else None,
-        }
         created = now - timedelta(days=60 - (i % 20))
-        inv = Investor(
-            workspace_id=ws.id,
-            **fields,
-            linkedin_key=f"in/example-{_slug(p.name)}",
-            name_key=_name_key(p.name, p.firm),
-            search_text=_search_text(fields),
-            created_at=created,
-            updated_at=created,
-        )
-        db.add(inv)
-        investors.append(inv)
-    await db.flush()
-
-    activities: list[Activity] = []
-    for i, inv in enumerate(investors):
-        created = inv.created_at
-        importer = AGENT if i % 4 == 0 else SYSTEM_ACTOR
-        activities.append(
-            _activity(ws, inv, "investor_created", importer, created, data={"sample": True})
+        people.append(
+            await investors.create(
+                db, ws, _contact(i, p), now=created, actor=AGENT if i % 4 == 0 else SYSTEM_ACTOR
+            )
         )
 
-    # Pre-seed: committed and passed participants.
+    # Pre-seed (closed): five commitments and two passes.
     for i, amount in PRESEED_COMMITTED.items():
-        inv = investors[i]
-        st = pre_stages["committed"]
         at = now - timedelta(days=245)
-        db.add(
-            RoundParticipant(
-                workspace_id=ws.id,
-                round_id=preseed.id,
-                investor_id=inv.id,
-                stage_id=st.id,
-                fit=4,
-                amount_committed=amount,
-                committed_on=today - timedelta(days=245),
-                stage_changed_at=at,
-                last_activity_at=at,
-                created_at=now - timedelta(days=320),
-                updated_at=at,
-            )
+        await participants.upsert(
+            db,
+            ws,
+            preseed,
+            people[i],
+            {"fit": 4},
+            now=now - timedelta(days=320),
+            actor=me,
+            stages=pre_list,
         )
-        activities.append(
-            _activity(
-                ws,
-                inv,
-                "commitment",
-                me,
-                at,
-                round_id=preseed.id,
-                data={
-                    "amount": amount,
-                    "currency": "USD",
-                    "committed_on": (today - timedelta(days=245)).isoformat(),
-                },
-            )
+        await participants.upsert(
+            db,
+            ws,
+            preseed,
+            people[i],
+            {
+                "stage": pre_st["committed"],
+                "amount_committed": amount,
+                "committed_on": today - timedelta(days=245),
+            },
+            now=at,
+            actor=me,
+            stages=pre_list,
         )
     for i in PRESEED_PASSED:
-        inv = investors[i]
-        at = now - timedelta(days=280)
-        db.add(
-            RoundParticipant(
-                workspace_id=ws.id,
-                round_id=preseed.id,
-                investor_id=inv.id,
-                stage_id=pre_stages["passed"].id,
-                fit=2,
-                stage_changed_at=at,
-                last_activity_at=at,
-                created_at=now - timedelta(days=320),
-                updated_at=at,
-            )
+        await participants.upsert(
+            db,
+            ws,
+            preseed,
+            people[i],
+            {"fit": 2},
+            now=now - timedelta(days=320),
+            actor=me,
+            stages=pre_list,
         )
+        await participants.upsert(
+            db,
+            ws,
+            preseed,
+            people[i],
+            {"stage": pre_st["passed"]},
+            now=now - timedelta(days=280),
+            actor=me,
+            stages=pre_list,
+        )
+    await rounds.update_round(
+        db,
+        ws,
+        preseed,
+        {"status": "closed", "closed_on": today - timedelta(days=240)},
+        now=now - timedelta(days=240),
+    )
 
-    # Seed: every investor, spread across all stages.
-    for i, (inv, plan) in enumerate(zip(investors, SEED_PLAN, strict=True)):
+    # Seed (open): every investor, spread across all stages.
+    for i, (inv, plan) in enumerate(zip(people, SEED_PLAN, strict=True)):
         key, fit, follow, soft, prob, committed = plan
-        st = seed_stages[key]
-        changed = now - timedelta(days=(i * 3) % 21 + 1)
+        st = seed_st[key]
         stale = st.kind == "active" and i % 7 == 0
-        last = changed - timedelta(days=16) if stale else changed
-        part = RoundParticipant(
-            workspace_id=ws.id,
-            round_id=seed.id,
-            investor_id=inv.id,
-            stage_id=st.id,
-            fit=fit,
-            probability=prob,
-            amount_soft=soft,
-            amount_committed=committed,
-            committed_on=(today - timedelta(days=i % 9 + 1)) if committed else None,
-            follow_up_on=(today + timedelta(days=follow)) if follow is not None else None,
-            follow_up_note=(
-                "Send the updated deck and pilot metrics" if follow is not None else None
-            ),
-            next_step=("Schedule partner meeting" if key in ("meeting", "dd") else None),
-            owner_user_id=user.id if i % 2 == 0 else None,
-            stage_changed_at=changed,
-            last_activity_at=last,
-            created_at=now - timedelta(days=40 - (i % 10)),
-            updated_at=changed,
-        )
-        db.add(part)
-        added_at = now - timedelta(days=40 - (i % 10))
+        changed = now - timedelta(days=(17 + i % 4) if stale else ((i * 3) % 21 + 1))
+        added = now - timedelta(days=40 - (i % 10))
         actor = AGENT if i % 3 == 0 else me
-        activities.append(
-            _activity(
-                ws,
-                inv,
-                "added_to_round",
-                actor,
-                added_at,
-                round_id=seed.id,
-                data={"stage": {"key": "new", "label": "New"}},
-            )
+        initial: dict[str, Any] = {"fit": fit}
+        if soft is not None:
+            initial["amount_soft"] = soft
+        if prob is not None:
+            initial["probability"] = prob
+        if i % 2 == 0:
+            initial["owner_user_id"] = user.id
+        await participants.upsert(
+            db, ws, seed, inv, initial, now=added, actor=actor, stages=seed_list
         )
-        if key != "new":
-            activities.append(
-                _activity(
-                    ws,
-                    inv,
-                    "stage_change",
-                    actor,
-                    changed,
-                    round_id=seed.id,
-                    data={
-                        "from": {"key": "new", "label": "New"},
-                        "to": {"key": st.key, "label": st.label},
-                    },
-                )
-            )
         if key in ("contacted", "replied", "meeting", "dd", "committed"):
-            activities.append(
-                _activity(
-                    ws,
-                    inv,
-                    "email",
-                    AGENT if i % 2 else me,
-                    changed - timedelta(days=2),
-                    round_id=seed.id,
-                    body="Sent the Seed deck and a two-line update on the pilot with a 3PL.",
-                    data={"direction": "outbound"},
-                )
+            await activities.log_manual(
+                db,
+                ws,
+                investor=inv,
+                kind="email",
+                body="Sent the Seed deck and a two-line update on the pilot with a 3PL.",
+                now=changed - timedelta(days=2),
+                round_id=seed.id,
+                direction="outbound",
+                actor=AGENT if i % 2 else me,
             )
         if key in ("meeting", "dd", "committed"):
-            activities.append(
-                _activity(
-                    ws,
-                    inv,
-                    "meeting",
-                    me,
-                    changed - timedelta(hours=20),
-                    round_id=seed.id,
-                    body="45-minute call. Walked through unit economics and the pilot pipeline.",
-                )
-            )
-        if follow is not None:
-            activities.append(
-                _activity(
-                    ws,
-                    inv,
-                    "follow_up_set",
-                    AGENT if i % 2 == 0 else me,
-                    changed,
-                    round_id=seed.id,
-                    data={
-                        "to": (today + timedelta(days=follow)).isoformat(),
-                        "note": "Send the updated deck and pilot metrics",
-                    },
-                )
-            )
-        if committed:
-            activities.append(
-                _activity(
-                    ws,
-                    inv,
-                    "commitment",
-                    me,
-                    changed,
-                    round_id=seed.id,
-                    body="Signed the SAFE.",
-                    data={
-                        "amount": committed,
-                        "currency": "USD",
-                        "committed_on": (today - timedelta(days=i % 9 + 1)).isoformat(),
-                    },
-                )
+            await activities.log_manual(
+                db,
+                ws,
+                investor=inv,
+                kind="meeting",
+                body="45-minute call. Walked through unit economics and the pilot pipeline.",
+                now=changed - timedelta(hours=20),
+                round_id=seed.id,
+                actor=me,
             )
         if i % 5 == 1:
-            activities.append(
-                _activity(
-                    ws,
-                    inv,
-                    "note",
-                    AGENT,
-                    changed - timedelta(days=1),
-                    round_id=seed.id,
-                    body="Researched recent investments: two warehouse-automation deals in 2026.",
-                )
+            await activities.log_manual(
+                db,
+                ws,
+                investor=inv,
+                kind="note",
+                body="Researched recent investments: two warehouse-automation deals in 2026.",
+                now=changed - timedelta(days=1),
+                round_id=seed.id,
+                actor=AGENT,
             )
-    db.add_all(activities)
+        if committed:
+            await participants.upsert(
+                db,
+                ws,
+                seed,
+                inv,
+                {
+                    "stage": st,
+                    "amount_committed": committed,
+                    "committed_on": today - timedelta(days=i % 9 + 1),
+                },
+                now=changed,
+                actor=me,
+                stages=seed_list,
+                note="Signed the SAFE.",
+            )
+        elif key != "new":
+            await participants.upsert(
+                db, ws, seed, inv, {"stage": st}, now=changed, actor=actor, stages=seed_list
+            )
+        extra: dict[str, Any] = {}
+        if follow is not None:
+            extra["follow_up_on"] = today + timedelta(days=follow)
+            extra["follow_up_note"] = FOLLOW_NOTE
+        if key in ("meeting", "dd"):
+            extra["next_step"] = "Schedule partner meeting"
+        if extra:
+            await participants.upsert(
+                db,
+                ws,
+                seed,
+                inv,
+                extra,
+                now=changed,
+                actor=AGENT if i % 2 == 0 else me,
+                stages=seed_list,
+            )
     await db.flush()
-    return ws
+    return ws_row

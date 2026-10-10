@@ -1,0 +1,50 @@
+{
+  "investors": [
+    {
+      "id": "r1",
+      "name": "Dana Whitfield",
+      "firm": "Harbor Light Ventures",
+      "title": "Partner",
+      "type": "VC",
+      "industry": "Robotics",
+      "tags": "lead, hardware",
+      "summary": "Leads seed rounds in industrial robotics.",
+      "notes": "Asked about pilot metrics.",
+      "bio": "Former operator at a fictional warehouse startup.",
+      "location": "San Francisco, CA",
+      "linkedin": "https://www.linkedin.com/in/example-dana-whitfield",
+      "website": "harborlight.example.com",
+      "ig": "@example.dana",
+      "x": "@example_dana",
+      "email": "dana@example.com",
+      "check": "$500k-$2M",
+      "stageFocus": "Seed, Series A",
+      "events": 2,
+      "nextEvent": "Robotics Night",
+      "nextEventUrl": "https://events.example.com/robotics-night",
+      "qFit": 5,
+      "eFit": 2,
+      "p": {
+        "qenzo": {"stage": "dd", "followUp": "2026-10-15", "amount": 0, "notes": "Wants the data room.",
+                  "log": [{"d": "2026-10-01", "t": "Intro call went well."}, {"d": "2026-10-05", "t": "Sent the deck."}]},
+        "elixion": {"stage": "passed"}
+      }
+    },
+    {
+      "name": "Marcus Odell",
+      "firm": "Juniper Angels",
+      "type": "Angel",
+      "tags": "operator",
+      "linkedin": "https://www.linkedin.com/search/results/all/?keywords=marcus",
+      "qFit": 4,
+      "p": {"qenzo": {"stage": "committed", "amount": 50000}}
+    },
+    {
+      "name": "Ines Calloway",
+      "type": "Syndicate",
+      "qFit": 3,
+      "p": {"qenzo": {"stage": "Meeting"}}
+    },
+    "not an object"
+  ]
+}
