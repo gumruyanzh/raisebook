@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raisebook.auth.principal import WorkspaceContext
 from raisebook.core.actor import Actor
 from raisebook.core.errors import Duplicate, LimitReached, ValidationFailed, not_found
+from raisebook.models.enums import Via
 from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant, RoundStage
 from raisebook.schemas.investors import InvestorCompact, InvestorOut, ParticipationBrief
@@ -285,7 +286,8 @@ async def update(
     investor.updated_at = now
     await db.flush()
 
-    log_fields = [f for f in changed if not (f == "notes" and act.is_user)]
+    web_user = act.is_user and act.via == Via.WEB  # the autosaving notes field
+    log_fields = [f for f in changed if not (f == "notes" and web_user)]
     if log_fields:
         diff: dict[str, Any] = {}
         for f in log_fields:
