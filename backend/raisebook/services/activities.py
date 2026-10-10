@@ -315,15 +315,12 @@ async def present(
         return []
     inv_ids = {r.investor_id for r in rows}
     round_ids = {r.round_id for r in rows if r.round_id is not None}
-    names = dict(
-        (
-            await db.execute(
-                select(Investor.id, Investor.name).where(
-                    Investor.workspace_id == ws.workspace_id, Investor.id.in_(inv_ids)
-                )
-            )
-        ).tuples()
+    name_rows = await db.execute(
+        select(Investor.id, Investor.name).where(
+            Investor.workspace_id == ws.workspace_id, Investor.id.in_(inv_ids)
+        )
     )
+    names: dict[UUID, str] = {i: n for i, n in name_rows.tuples()}
     slugs: dict[UUID, str] = {}
     if round_ids:
         slugs = {

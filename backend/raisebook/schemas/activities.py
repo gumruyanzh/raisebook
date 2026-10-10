@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -43,7 +42,7 @@ class ActivityCreate(StrictInput):
     investor_id: UUID
     kind: LoggableKind
     body: str = Field(..., min_length=1, max_length=20000)
-    occurred_at: datetime | None = None
+    occurred_at: str | None = Field(None, max_length=40)
     round: str | None = Field(None, max_length=200)
     direction: Literal["inbound", "outbound"] | None = None
     idempotency_key: str | None = Field(None, min_length=1, max_length=200)

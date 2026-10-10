@@ -35,8 +35,8 @@ def word_conditions(q: str) -> list[ColumnElement[bool]]:
 
 def array_has_ci(col: Any, value: str) -> ColumnElement[bool]:
     """Case-insensitive membership of ``value`` in a ``text[]`` column."""
-    elem = func.unnest(col).column_valued("v")
-    return select(1).select_from(elem).where(func.lower(elem) == value.strip().lower()).exists()
+    tv = func.unnest(col).table_valued("v").render_derived()
+    return select(1).select_from(tv).where(func.lower(tv.c.v) == value.strip().lower()).exists()
 
 
 def investors_query(
