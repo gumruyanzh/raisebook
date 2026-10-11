@@ -177,6 +177,14 @@ class NotDeletable(Conflict):
     code = "not_deletable"
 
 
+class SessionConflict(Conflict):
+    code = "session_conflict"
+    default_message = (
+        "You are signed in as someone else in this browser. Send switch_account=true to sign "
+        "out of that account and continue with this link."
+    )
+
+
 # --- 413 -----------------------------------------------------------------------------------
 class PayloadTooLarge(APIError):
     status_code = 413

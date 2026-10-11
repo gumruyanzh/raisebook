@@ -24,6 +24,7 @@ plus a JSON line of details.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime
@@ -63,8 +64,12 @@ class Clock:
         return get_now()
 
 
+# REST paths in a message ("(POST /v1/rounds)") mean nothing to an MCP agent.
+_REST_HINT = re.compile(r"\s*\((?:GET|POST|PATCH|PUT|DELETE) /v1/[^)]*\)")
+
+
 def tool_error(exc: APIError) -> ToolError:
-    msg = f"{exc.code}: {exc.message}"
+    msg = f"{exc.code}: {_REST_HINT.sub('', exc.message)}"
     if exc.details:
         msg += "\n" + json.dumps(exc.details, default=str)[:4000]
     return ToolError(msg)

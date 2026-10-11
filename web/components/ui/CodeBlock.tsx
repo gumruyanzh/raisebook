@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
@@ -116,6 +116,7 @@ export function CodeBlock({
   className,
   copy = true,
   defaultTab = 0,
+  wrap = false,
 }: {
   code?: string;
   lang?: CodeLang;
@@ -125,13 +126,27 @@ export function CodeBlock({
   className?: string;
   copy?: boolean;
   defaultTab?: number;
+  /** Wrap long lines (prose prompts, not commands): never clipped, nothing to scroll. */
+  wrap?: boolean;
 }) {
   const [active, setActive] = useState(defaultTab);
+  const preRef = useRef<HTMLPreElement>(null);
+  const [more, setMore] = useState(false);
+  const measure = useCallback(() => {
+    const el = preRef.current;
+    if (!el) return;
+    setMore(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
+  }, []);
   const base = useId();
   const current: CodeTab | undefined = tabs?.[active] ?? tabs?.[0];
   const text = current ? current.code : (code ?? "");
   const language = current ? (current.lang ?? "text") : lang;
   const hasHeader = Boolean(tabs?.length || title || copy);
+  useEffect(() => {
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [measure, text, wrap]);
 
   return (
     <div
@@ -143,7 +158,7 @@ export function CodeBlock({
       {hasHeader ? (
         <div className="flex items-center gap-8 border-b border-code-line px-10 py-6">
           {tabs?.length ? (
-            <div role="tablist" aria-label="Client" className="flex min-w-0 gap-2 overflow-x-auto scrollbar-none">
+            <div role="tablist" aria-label="Client" className="flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-none">
               {tabs.map((t, i) => (
                 <button
                   key={t.label}
@@ -165,17 +180,31 @@ export function CodeBlock({
           ) : (
             <span className="truncate text-micro text-code-muted">{title}</span>
           )}
-          {copy ? <CopyButton text={text} className="ml-auto" /> : null}
+          {copy ? <CopyButton text={text} className="ml-auto shrink-0" /> : null}
         </div>
       ) : null}
-      <pre
-        id={`${base}-p`}
-        role={tabs?.length ? "tabpanel" : undefined}
-        aria-labelledby={tabs?.length ? `${base}-t${active}` : undefined}
-        className="m-0 overflow-x-auto px-14 py-12"
-      >
-        <Code code={text} lang={language} />
-      </pre>
+      <div className="relative">
+        <pre
+          ref={preRef}
+          onScroll={measure}
+          id={`${base}-p`}
+          role={tabs?.length ? "tabpanel" : undefined}
+          aria-labelledby={tabs?.length ? `${base}-t${active}` : undefined}
+          className={cn(
+            "m-0 px-14 py-12",
+            wrap ? "break-words whitespace-pre-wrap" : "overflow-x-auto scrollbar-thin",
+          )}
+        >
+          <Code code={text} lang={language} />
+        </pre>
+        {more && !wrap ? (
+          // There is more to the right: fade the edge so the cut reads as "scroll", not a bug.
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 right-0 w-40 bg-linear-to-l from-code-bg to-transparent"
+          />
+        ) : null}
+      </div>
       {current?.caption ? (
         <p className="border-t border-code-line px-14 py-6 font-body text-sm text-code-muted">
           {current.caption}

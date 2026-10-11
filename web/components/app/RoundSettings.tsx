@@ -95,7 +95,7 @@ export function RoundSettings({ round: initial }: { round: Round }) {
         >
           <RoundFields draft={draft} onChange={setDraft} errors={errors} disabled={!canWrite} showNotes />
           <div className="mt-14 flex flex-wrap items-center gap-8">
-            <Button type="submit" variant="primary" disabled={!canWrite || !dirty} busy={state === "saving" ? "Saving…" : false}>
+            <Button type="submit" variant={dirty ? "primary" : "secondary"} disabled={!canWrite || !dirty} busy={state === "saving" ? "Saving…" : false}>
               Save terms
             </Button>
             {dirty ? (

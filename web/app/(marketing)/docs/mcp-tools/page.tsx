@@ -17,7 +17,7 @@ import { Chip, CodeBlock } from "@/components/ui";
 export const metadata: Metadata = {
   title: "MCP tools reference",
   description:
-    "All 15 Raisebook MCP tools: what each one does, its parameters, what it returns, and which ones are safe to repeat.",
+    "All 17 Raisebook MCP tools: what each one does, its parameters, what it returns, and which ones are safe to repeat.",
   alternates: { canonical: "/docs/mcp-tools" },
 };
 

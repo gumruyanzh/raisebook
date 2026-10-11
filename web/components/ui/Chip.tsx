@@ -25,16 +25,16 @@ export type ChipTone =
   | "mode";
 
 const TONE: Record<ChipTone, string> = {
-  hot: "bg-hot-soft text-hot",
-  warm: "bg-warm-soft text-warm",
-  maybe: "bg-maybe-soft text-maybe",
+  hot: "bg-hot-soft text-hot-ink",
+  warm: "bg-warm-soft text-warm-ink",
+  maybe: "bg-maybe-soft text-maybe-ink",
   low: "bg-sunk text-muted",
   type: "bg-accent-soft text-accent",
   tag: "bg-sunk text-muted",
   industry: "bg-sunk text-muted",
   due: "bg-bad-soft text-bad",
-  soon: "bg-warm-soft text-warm",
-  money: "bg-good-soft text-good font-mono",
+  soon: "bg-warm-soft text-warm-ink",
+  money: "bg-good-soft text-good-ink font-mono",
   agent: "bg-agent-soft text-agent",
   mode: "border-line! bg-transparent text-muted font-mono uppercase tracking-[0.06em] text-2xs!",
 };

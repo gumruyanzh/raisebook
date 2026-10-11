@@ -8,6 +8,8 @@
 # Cron (as root on the droplet), every night at 03:17:
 #   17 3 * * * /opt/raisebook/deploy/backup.sh >> /var/log/raisebook-backup.log 2>&1
 set -euo pipefail
+# Dumps hold every workspace's data: create every file owner-only from the first byte.
+umask 077
 
 here="$(cd "$(dirname "$0")" && pwd)"
 if [[ -f "$here/.env" ]]; then

@@ -542,44 +542,44 @@ PEOPLE: tuple[Person, ...] = (
 # probability, amount_committed). Index-aligned with PEOPLE.
 SEED_PLAN: tuple[tuple[str, int, int | None, int | None, int | None, int | None], ...] = (
     ("committed", 5, None, None, None, 750_000),
-    ("dd", 5, -2, 1_000_000, 60, None),
-    ("meeting", 4, 0, 1_500_000, 40, None),
+    ("dd", 5, -2, 250_000, 60, None),
+    ("meeting", 4, 0, 375_000, 40, None),
     ("committed", 4, None, None, None, 50_000),
-    ("meeting", 4, 3, 750_000, 35, None),
-    ("replied", 3, 1, 500_000, 25, None),
+    ("meeting", 4, 3, 200_000, 35, None),
+    ("replied", 3, 1, 125_000, 25, None),
     ("contacted", 3, 5, 25_000, 20, None),
-    ("contacted", 4, -1, 500_000, 20, None),
-    ("dd", 5, 2, 1_500_000, 70, None),
+    ("contacted", 4, -1, 125_000, 20, None),
+    ("dd", 5, 2, 375_000, 70, None),
     ("research", 3, 7, None, None, None),
-    ("replied", 4, 0, 750_000, 30, None),
+    ("replied", 4, 0, 200_000, 30, None),
     ("new", 2, None, None, None, None),
     ("committed", 4, None, None, None, 25_000),
-    ("meeting", 5, -4, 1_000_000, 45, None),
-    ("contacted", 3, 6, 100_000, 15, None),
+    ("meeting", 5, -4, 250_000, 45, None),
+    ("contacted", 3, 6, 25_000, 15, None),
     ("passed", 2, None, None, None, None),
     ("research", 4, 4, None, None, None),
     ("new", 3, None, None, None, None),
-    ("contacted", 5, -6, 2_000_000, 20, None),
+    ("contacted", 5, -6, 500_000, 20, None),
     ("new", 1, None, None, None, None),
-    ("replied", 3, 9, 500_000, 25, None),
+    ("replied", 3, 9, 125_000, 25, None),
     ("research", 3, None, None, None, None),
     ("passed", 3, None, None, None, None),
-    ("meeting", 4, 1, 1_000_000, 40, None),
+    ("meeting", 4, 1, 250_000, 40, None),
     ("new", 2, None, None, None, None),
-    ("contacted", 2, 12, 250_000, 10, None),
+    ("contacted", 2, 12, 50_000, 10, None),
     ("research", 3, None, None, None, None),
-    ("replied", 4, -3, 75_000, 30, None),
-    ("dd", 4, 0, 1_000_000, 55, None),
+    ("replied", 4, -3, 25_000, 30, None),
+    ("dd", 4, 0, 250_000, 55, None),
     ("new", 3, None, None, None, None),
-    ("contacted", 4, 6, 1_000_000, 15, None),
+    ("contacted", 4, 6, 250_000, 15, None),
     ("passed", 4, None, None, None, None),
     ("research", 2, None, None, None, None),
     ("new", 2, None, None, None, None),
-    ("contacted", 3, 2, 500_000, 15, None),
-    ("meeting", 4, 8, 1_000_000, 35, None),
+    ("contacted", 3, 2, 125_000, 15, None),
+    ("meeting", 4, 8, 250_000, 35, None),
     ("new", 1, None, None, None, None),
     ("research", 3, 10, None, None, None),
-    ("replied", 4, 5, 500_000, 30, None),
+    ("replied", 4, 5, 125_000, 30, None),
     ("passed", 3, None, None, None, None),
 )
 
@@ -605,7 +605,41 @@ NOTES = (
     "Strong technical background; asked detailed questions about the gripper design.",
 )
 SOURCES = ("SF Tech Week 2026", "Warm intro", "Demo day", "Cold outreach", "Angel list")
-FOLLOW_NOTE = "Send the updated deck and pilot metrics"
+FOLLOW_NOTES = (
+    "Send the updated deck and pilot metrics",
+    "Share the 3PL pilot results once the October numbers are in",
+    "Ask whether they will lead or only follow",
+    "Book a partner meeting for next week",
+    "Send the data room link",
+    "Answer their question on gross margin per robot",
+    "Check in after their Monday partner meeting",
+    "Intro them to our design partner at the 3PL",
+    "Send the customer reference list",
+    "Confirm the allocation they asked for",
+    "Follow up on the term sheet questions",
+)
+NEXT_STEPS = (
+    "Schedule partner meeting",
+    "Customer reference calls",
+    "Technical deep dive with our CTO",
+    "Send financial model",
+    "Site visit at the pilot warehouse",
+    "Confirm allocation and sign the SAFE",
+)
+
+
+def _work_hours(at: datetime, i: int) -> datetime:
+    """``at`` moved to a plausible working-hours time (local), never later than ``at``'s day
+    allows: 8:40 to 17:55 in the sample timezone, varied by ``i``."""
+    tz = ZoneInfo(SAMPLE_TIMEZONE)
+    local = at.astimezone(tz)
+    minutes = 8 * 60 + 40 + (i * 97) % (9 * 60 + 15)
+    moved = local.replace(hour=minutes // 60, minute=minutes % 60, second=0, microsecond=0)
+    return moved.astimezone(at.tzinfo or tz)
+
+
+def _past(at: datetime, now: datetime) -> datetime:
+    return min(at, now - timedelta(minutes=5))
 
 
 def _slug(name: str) -> str:
@@ -629,7 +663,8 @@ def _stage_map(stages: list[RoundStage]) -> dict[str, RoundStage]:
 
 
 def _contact(i: int, p: Person) -> dict[str, Any]:
-    first = p.name.split()[0].lower()
+    local = ".".join(norm(p.name).split())
+    domain = f"{_slug(p.firm).replace('-', '')}.example.com" if p.firm else "example.com"
     return {
         "name": p.name,
         "firm": p.firm,
@@ -639,10 +674,10 @@ def _contact(i: int, p: Person) -> dict[str, Any]:
         "check_min": p.check_min,
         "check_max": p.check_max,
         "location": p.location,
-        "industries": list(p.industries),
+        "industries": [i.upper() if i in ("ai", "saas") else i.capitalize() for i in p.industries],
         "tags": list(p.tags),
         "stage_focus": ["pre-seed", "seed"] if p.type in ("angel", "scout") else ["seed"],
-        "email": f"{first}.{i + 1}@example.com",
+        "email": f"{local}@{domain}",
         "linkedin_url": f"https://www.linkedin.com/in/example-{_slug(p.name)}",
         "source": SOURCES[i % len(SOURCES)],
         "notes": NOTES[i % len(NOTES)] if i % 3 != 2 else None,
@@ -700,8 +735,11 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
     pre_st, seed_st = _stage_map(pre_list), _stage_map(seed_list)
 
     people: list[Investor] = []
+    in_preseed = set(PRESEED_COMMITTED) | set(PRESEED_PASSED)
     for i, p in enumerate(PEOPLE):
-        created = now - timedelta(days=60 - (i % 20))
+        # Every contact exists before its first timeline entry.
+        days = 335 - (i % 5) if i in in_preseed else 60 - (i % 20)
+        created = _past(_work_hours(now - timedelta(days=days), i), now)
         people.append(
             await investors.create(
                 db, ws, _contact(i, p), now=created, actor=AGENT if i % 4 == 0 else SYSTEM_ACTOR
@@ -710,14 +748,14 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
 
     # Pre-seed (closed): five commitments and two passes.
     for i, amount in PRESEED_COMMITTED.items():
-        at = now - timedelta(days=245)
+        at = _work_hours(now - timedelta(days=245), i)
         await participants.upsert(
             db,
             ws,
             preseed,
             people[i],
             {"fit": 4},
-            now=now - timedelta(days=320),
+            now=_work_hours(now - timedelta(days=320), i + 1),
             actor=me,
             stages=pre_list,
         )
@@ -742,7 +780,7 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
             preseed,
             people[i],
             {"fit": 2},
-            now=now - timedelta(days=320),
+            now=_work_hours(now - timedelta(days=320), i + 1),
             actor=me,
             stages=pre_list,
         )
@@ -752,7 +790,7 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
             preseed,
             people[i],
             {"stage": pre_st["passed"]},
-            now=now - timedelta(days=280),
+            now=_work_hours(now - timedelta(days=280), i + 2),
             actor=me,
             stages=pre_list,
         )
@@ -769,8 +807,11 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
         key, fit, follow, soft, prob, committed = plan
         st = seed_st[key]
         stale = st.kind == "active" and i % 7 == 0
-        changed = now - timedelta(days=(17 + i % 4) if stale else ((i * 3) % 21 + 1))
-        added = now - timedelta(days=40 - (i % 10))
+        changed = _past(
+            _work_hours(now - timedelta(days=(17 + i % 4) if stale else ((i * 3) % 21 + 1)), i),
+            now,
+        )
+        added = _past(_work_hours(now - timedelta(days=40 - (i % 10)), i + 3), now)
         actor = AGENT if i % 3 == 0 else me
         initial: dict[str, Any] = {"fit": fit}
         if soft is not None:
@@ -789,7 +830,7 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
                 investor=inv,
                 kind="email",
                 body="Sent the Seed deck and a two-line update on the pilot with a 3PL.",
-                now=changed - timedelta(days=2),
+                now=_work_hours(changed - timedelta(days=2), i + 5),
                 round_id=seed.id,
                 direction="outbound",
                 actor=AGENT if i % 2 else me,
@@ -801,7 +842,7 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
                 investor=inv,
                 kind="meeting",
                 body="45-minute call. Walked through unit economics and the pilot pipeline.",
-                now=changed - timedelta(hours=20),
+                now=_work_hours(changed - timedelta(days=1), i + 11),
                 round_id=seed.id,
                 actor=me,
             )
@@ -812,7 +853,7 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
                 investor=inv,
                 kind="note",
                 body="Researched recent investments: two warehouse-automation deals in 2026.",
-                now=changed - timedelta(days=1),
+                now=_work_hours(changed - timedelta(days=1), i + 17),
                 round_id=seed.id,
                 actor=AGENT,
             )
@@ -839,9 +880,9 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
         extra: dict[str, Any] = {}
         if follow is not None:
             extra["follow_up_on"] = today + timedelta(days=follow)
-            extra["follow_up_note"] = FOLLOW_NOTE
-        if key in ("meeting", "dd"):
-            extra["next_step"] = "Schedule partner meeting"
+            extra["follow_up_note"] = FOLLOW_NOTES[i % len(FOLLOW_NOTES)]
+        if key in ("meeting", "dd", "replied"):
+            extra["next_step"] = NEXT_STEPS[i % len(NEXT_STEPS)]
         if extra:
             await participants.upsert(
                 db,

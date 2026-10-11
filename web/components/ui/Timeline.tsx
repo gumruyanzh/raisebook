@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 
 import type { Activity, ActivityKind } from "@/lib/api/types";
@@ -102,6 +103,21 @@ export function activitySentence(
   }
 }
 
+function linkName(sentence: string, a: Activity, href?: (a: Activity) => string): ReactNode {
+  const name = a.investor_name;
+  const at = href && name ? sentence.indexOf(name) : -1;
+  if (!href || at < 0) return sentence;
+  return (
+    <>
+      {sentence.slice(0, at)}
+      <Link href={href(a)} className="font-medium hover:underline">
+        {name}
+      </Link>
+      {sentence.slice(at + name.length)}
+    </>
+  );
+}
+
 /**
  * Vertical activity list (SYSTEM 3.18): mono time column (64px), actor, action sentence and an
  * optional body (pre-wrap, 65ch), grouped under day separators. Agent items get the orchid
@@ -117,6 +133,8 @@ export function Timeline({
   defaultFilter = "all",
   empty = "Nothing has happened here yet.",
   renderExtra,
+  investorHref,
+  roundLabel,
   footer,
   now,
   className,
@@ -131,6 +149,10 @@ export function Timeline({
   empty?: ReactNode;
   /** Trailing slot per item (e.g. a "Delete" link for deletable notes). */
   renderExtra?: (a: Activity) => ReactNode;
+  /** With `withInvestor`: the investor's name in the sentence links here. */
+  investorHref?: (a: Activity) => string;
+  /** A muted "in Pre-seed" after the sentence (investor pages with several rounds). */
+  roundLabel?: (a: Activity) => string | null;
   footer?: ReactNode;
   /** Fixed "now" for stable rendering in tests and vignettes. */
   now?: Date;
@@ -193,7 +215,10 @@ export function Timeline({
                   <div className="min-w-0">
                     <p className="flex flex-wrap items-baseline gap-x-6">
                       <ActorName actor={a.actor} />
-                      <span className="text-fg">{activitySentence(a, { withInvestor, currency })}</span>
+                      <span className="text-fg">
+                        {linkName(activitySentence(a, { withInvestor, currency }), a, withInvestor ? investorHref : undefined)}
+                        {roundLabel?.(a) ? <span className="text-muted"> · in {roundLabel(a)}</span> : null}
+                      </span>
                       {renderExtra ? <span className="ml-auto">{renderExtra(a)}</span> : null}
                     </p>
                     {a.body ? (

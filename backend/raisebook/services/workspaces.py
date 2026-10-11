@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import WorkspaceContext
-from raisebook.core.errors import ValidationFailed, WorkspaceNotFound
+from raisebook.core.errors import LimitReached, ValidationFailed, WorkspaceNotFound
 from raisebook.models.enums import Role
 from raisebook.models.user import User
 from raisebook.models.workspace import Membership, Workspace
@@ -31,7 +31,18 @@ LIMITS: dict[str, int] = {
     "rounds": 50,
     "investors": 20_000,
     "activities": 1_000_000,
+    "workspaces_per_user": 10,  # real (non-sample) workspaces a person owns
+    "sample_workspaces_per_user": 3,
 }
+
+# Names go into invite emails, so they must not carry links (phishing relay guard).
+_LINKY_RE = re.compile(r"(://|\bwww\.|https?\b:|[<>])", re.IGNORECASE)
+
+
+def reject_links(field: str, value: str, what: str) -> None:
+    if _LINKY_RE.search(value):
+        raise ValidationFailed(field, f"{what} cannot contain a web address or angle brackets.")
+
 
 _BASE32 = "abcdefghijklmnopqrstuvwxyz234567"
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -56,6 +67,7 @@ def clean_workspace_name(raw: str) -> str:
     name = " ".join((raw or "").split())
     if not 1 <= len(name) <= 80:
         raise ValidationFailed("name", "Workspace name must be 1 to 80 characters.")
+    reject_links("name", name, "Workspace name")
     return name
 
 
@@ -122,7 +134,11 @@ async def create_workspace(
     default_currency: str | None = None,
     sample: bool = False,
 ) -> Workspace:
-    """``POST /v1/workspaces``. ``sample=True`` creates the fictional sandbox workspace."""
+    """``POST /v1/workspaces``. ``sample=True`` creates the fictional sandbox workspace.
+
+    422 ``limit_reached`` past ``workspaces_per_user`` real (or
+    ``sample_workspaces_per_user`` sample) workspaces owned by the caller."""
+    await _check_owned_limit(db, user, sample=sample)
     if sample:
         from raisebook.services.sample_data import create_sample_workspace
 
@@ -135,6 +151,26 @@ async def create_workspace(
         timezone=timezone,
         default_currency=default_currency,
     )
+
+
+async def _check_owned_limit(db: AsyncSession, user: User, *, sample: bool) -> None:
+    owned = await db.scalar(
+        select(func.count())
+        .select_from(Membership)
+        .join(Workspace, Workspace.id == Membership.workspace_id)
+        .where(
+            Membership.user_id == user.id,
+            Membership.role == Role.OWNER.value,
+            Workspace.is_sandbox.is_(sample),
+        )
+    )
+    key = "sample_workspaces_per_user" if sample else "workspaces_per_user"
+    if int(owned or 0) >= LIMITS[key]:
+        kind = "sample workspaces" if sample else "workspaces"
+        raise LimitReached(
+            f"You can own {LIMITS[key]} {kind}. Delete one you no longer use first.",
+            details={"limit": LIMITS[key]},
+        )
 
 
 async def get_workspace(db: AsyncSession, ws: WorkspaceContext) -> Workspace:

@@ -43,5 +43,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"
 
-# --proxy-headers + --forwarded-allow-ips: trust X-Forwarded-* from Caddy on the compose network.
-CMD ["uvicorn", "--factory", "raisebook.main:create_app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# X-Forwarded-For is trusted only from FORWARDED_ALLOW_IPS (comma-separated IPs or CIDRs).
+# The default is the compose network's fixed subnet (docker-compose.yml), where only Caddy
+# talks to the API. Never set it to "*" when the API port is reachable directly: anyone could
+# then spoof their IP and get around the per-IP limits (sign-in emails, failed keys).
+ENV FORWARDED_ALLOW_IPS=172.30.0.0/24
+CMD ["sh", "-c", "exec uvicorn --factory raisebook.main:create_app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips \"$FORWARDED_ALLOW_IPS\""]

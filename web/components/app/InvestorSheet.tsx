@@ -23,7 +23,7 @@ import { getInvestor, updateInvestor } from "@/lib/api/investors";
 import { sortedStages } from "@/lib/api/rounds";
 import type { Activity, Investor, Member, Participant, Round } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
-import { formatDate, isoDate, money, moneyCompact } from "@/lib/format";
+import { formatDate, isoDate, money, moneyCompact, stageFocusLabel } from "@/lib/format";
 
 import { LogComposer } from "./LogComposer";
 import { ParticipantFields } from "./ParticipantFields";
@@ -312,7 +312,7 @@ export function InvestorSheet({
             <SectionLabel>Facts</SectionLabel>
             <DefList
               items={[
-                { term: "Invests at", value: investor.stage_focus.join(", ") },
+                { term: "Invests at", value: investor.stage_focus.map(stageFocusLabel).join(", ") },
                 { term: "Check size", value: checkSize(investor, round.currency) },
                 { term: "Industries", value: investor.industries.join(", ") },
                 {
@@ -342,7 +342,7 @@ export function InvestorSheet({
                         >
                           {r.round_name} · <StagePill color={r.stage.color} label={r.stage.label} />
                           {r.amount_committed ? (
-                            <span className="t-data text-good" title={money(r.amount_committed, round.currency)}>
+                            <span className="t-data text-good-ink" title={money(r.amount_committed, round.currency)}>
                               {moneyCompact(r.amount_committed, round.currency)}
                             </span>
                           ) : null}

@@ -2,7 +2,7 @@
 
 import type { RoundSummary, StageColor } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
-import { money, moneyCompact, num } from "@/lib/format";
+import { formatDate, money, moneyCompact, num } from "@/lib/format";
 
 import { Chip } from "./Chip";
 import { FunnelBar, type FunnelSegment } from "./FunnelBar";
@@ -32,9 +32,17 @@ export interface LedgerProps {
   onStageSelect?: (stageKey: string) => void;
   activeStage?: string | null;
   onDueSelect?: (id: string) => void;
+  /** Phones: the due strip becomes one "N follow-ups due →" button that calls this. */
+  onDueFilter?: () => void;
   /** compact on the pipeline page, full on the overview (adds soft and weighted lines). */
   variant?: "compact" | "full";
   weightedPipeline?: number;
+  /** Whether any participant has a probability (weighted pipeline means nothing otherwise). */
+  hasProbabilities?: boolean;
+  /** A closed round reads as a result, not a to-do list. */
+  closed?: boolean;
+  closedOn?: string | null;
+  today?: string;
   className?: string;
 }
 
@@ -59,6 +67,8 @@ export function ledgerFromSummary(
     softCircled: s.money.soft_circled,
     weightedPipeline: s.money.weighted_pipeline,
     daysToClose: s.round.days_to_close ?? null,
+    closed: s.round.status === "closed",
+    closedOn: s.round.closed_on ?? null,
     funnel: s.funnel.map((f) => ({
       key: f.key,
       label: f.label,
@@ -77,13 +87,22 @@ export function ledgerFromSummary(
 export function Ledger(p: LedgerProps) {
   const variant = p.variant ?? "compact";
   const dueTotal = p.dueTotal ?? p.due.length;
-  const shown = p.due.slice(0, 8);
-  const stats: { n: string; label: string }[] = [
-    { n: num(p.inConversation), label: "in conversation" },
-    { n: num(p.committedCount), label: "committed" },
-    { n: moneyCompact(p.softCircled, p.currency), label: "soft" },
-  ];
-  if (p.daysToClose !== undefined && p.daysToClose !== null) {
+  // One line: whole chips only (five on the pipeline, three in the narrower overview column),
+  // then "+N more".
+  const shown = p.due.slice(0, variant === "full" ? 3 : 5);
+  const pct = p.target > 0 ? Math.round((p.committed / p.target) * 100) : null;
+  const stats: { n: string; label: string }[] = p.closed
+    ? [
+        { n: num(p.committedCount), label: "committed" },
+        ...(p.closedOn ? [{ n: formatDate(p.closedOn, p.today), label: "closed" }] : []),
+        ...(pct !== null ? [{ n: `${num(pct)}%`, label: "of target" }] : []),
+      ]
+    : [
+        { n: num(p.inConversation), label: "in conversation" },
+        { n: num(p.committedCount), label: "committed" },
+        { n: moneyCompact(p.softCircled, p.currency), label: "soft" },
+      ];
+  if (!p.closed && p.daysToClose !== undefined && p.daysToClose !== null) {
     stats.push(
       p.daysToClose >= 0
         ? { n: num(p.daysToClose), label: p.daysToClose === 1 ? "day to close" : "days to close" }
@@ -94,12 +113,14 @@ export function Ledger(p: LedgerProps) {
     <section
       aria-label={`${p.roundName} summary`}
       className={cn(
-        "grid grid-cols-1 gap-18 rounded-md border border-line bg-surface p-14 md:grid-cols-[minmax(0,1.2fr)_minmax(0,2fr)]",
+        "grid grid-cols-1 gap-12 rounded-md border border-line bg-surface p-14 sm:gap-18 md:grid-cols-[minmax(0,1.2fr)_minmax(0,2fr)]",
         p.className,
       )}
     >
       <div className="min-w-0">
-        <p className="t-label">Committed toward {p.roundName}</p>
+        <p className="t-label">
+          {p.closed ? "Raised in" : "Committed toward"} {p.roundName}
+        </p>
         <p className="t-amount mt-4">
           {money(p.committed, p.currency)}{" "}
           <span className="text-[18px] font-medium whitespace-nowrap text-muted">
@@ -113,9 +134,10 @@ export function Ledger(p: LedgerProps) {
           label={`Committed toward ${p.roundName}`}
         />
         {/* Dots sit in a 12px gutter left of each item; the gutter of an item that starts a
-            line falls in the clipped -12px margin, so a wrapped line never starts with "·". */}
+            line falls in the clipped -12px margin, so a wrapped line never starts with "·".
+            Phones keep one line (the first two stats). */}
         <div className="mt-8 overflow-hidden">
-          <p className="t-body-s -ml-12 flex flex-wrap gap-y-2 text-muted">
+          <p className="t-body-s -ml-12 flex flex-wrap gap-y-2 text-muted max-sm:[&>span:nth-child(n+3)]:hidden">
             {stats.map((s) => (
               <span
                 key={s.label}
@@ -126,39 +148,89 @@ export function Ledger(p: LedgerProps) {
             ))}
           </p>
         </div>
-        {variant === "full" && p.weightedPipeline !== undefined ? (
+        {variant === "full" && !p.closed && p.weightedPipeline !== undefined ? (
           <p className="t-body-s mt-4 text-muted">
             Weighted pipeline{" "}
-            <b className="tnum font-semibold text-fg" title={money(p.weightedPipeline, p.currency)}>
-              {moneyCompact(p.weightedPipeline, p.currency)}
-            </b>
+            {p.hasProbabilities === false ? (
+              <span>: set a probability on investors to see it</span>
+            ) : (
+              <b className="tnum font-semibold text-fg" title={money(p.weightedPipeline, p.currency)}>
+                {moneyCompact(p.weightedPipeline, p.currency)}
+              </b>
+            )}
           </p>
         ) : null}
       </div>
       <div className="flex min-w-0 flex-col gap-8">
-        <p className="t-label">Pipeline</p>
-        <FunnelBar segments={p.funnel} onSelect={p.onStageSelect} active={p.activeStage} />
-        <div className="t-body-s flex flex-wrap items-center gap-6 text-muted">
-          {shown.length ? (
-            <>
-              <span>Follow up now:</span>
-              {shown.map((d) =>
-                p.onDueSelect ? (
-                  <Chip key={d.id} as="button" tone="due" onClick={() => p.onDueSelect?.(d.id)}>
-                    {d.name}
-                  </Chip>
-                ) : (
-                  <Chip key={d.id} tone="due">
-                    {d.name}
-                  </Chip>
-                ),
+        <p className="t-label max-sm:hidden">Pipeline</p>
+        <FunnelBar
+          segments={p.funnel}
+          onSelect={p.onStageSelect}
+          active={p.activeStage}
+          legendClassName="max-sm:hidden"
+        />
+        {p.closed ? (
+          <p className="t-body-s text-muted">
+            This round is closed. Reopen it in its settings to track follow-ups.
+          </p>
+        ) : (
+          <>
+            {/* Phones: one button instead of a wall of red chips. */}
+            {dueTotal > 0 && p.onDueFilter ? (
+              <button
+                type="button"
+                onClick={p.onDueFilter}
+                className="t-body-s self-start border-0 bg-transparent p-0 font-medium text-bad sm:hidden"
+              >
+                {num(dueTotal)} {dueTotal === 1 ? "follow-up" : "follow-ups"} due →
+              </button>
+            ) : null}
+            <div
+              className={cn(
+                "t-body-s flex min-w-0 flex-nowrap items-center gap-6 overflow-hidden text-muted",
+                p.onDueFilter && "max-sm:hidden",
               )}
-              {dueTotal > shown.length ? <span>+{num(dueTotal - shown.length)} more</span> : null}
-            </>
-          ) : (
-            <span>No follow-ups due. Set a date on an investor&apos;s file to get reminded here.</span>
-          )}
-        </div>
+            >
+              {shown.length ? (
+                <>
+                  <span className="shrink-0">Follow up now:</span>
+                  {shown.map((d) =>
+                    p.onDueSelect ? (
+                      <Chip
+                        key={d.id}
+                        as="button"
+                        tone="due"
+                        className="shrink-0"
+                        onClick={() => p.onDueSelect?.(d.id)}
+                      >
+                        {d.name}
+                      </Chip>
+                    ) : (
+                      <Chip key={d.id} tone="due" className="shrink-0">
+                        {d.name}
+                      </Chip>
+                    ),
+                  )}
+                  {dueTotal > shown.length ? (
+                    p.onDueFilter ? (
+                      <button
+                        type="button"
+                        onClick={p.onDueFilter}
+                        className="link shrink-0 border-0 bg-transparent p-0 whitespace-nowrap"
+                      >
+                        +{num(dueTotal - shown.length)} more
+                      </button>
+                    ) : (
+                      <span className="shrink-0 whitespace-nowrap">+{num(dueTotal - shown.length)} more</span>
+                    )
+                  ) : null}
+                </>
+              ) : (
+                <span className="truncate">Nothing due today.</span>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </section>
   );

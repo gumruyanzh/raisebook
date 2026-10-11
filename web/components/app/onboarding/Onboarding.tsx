@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { Button, Field, Input, Select, Wordmark } from "@/components/ui";
+import { Button, ButtonLink, Field, Input, Select, Wordmark } from "@/components/ui";
 import { api, ApiError, errorMessage, setCsrfToken } from "@/lib/api/client";
-import { createWorkspace, type Workspace } from "@/lib/api/core";
-import { createRound } from "@/lib/api/rounds";
+import { createWorkspace, updateMe, updateWorkspace, type Workspace } from "@/lib/api/core";
+import { createRound, getRound, updateRound } from "@/lib/api/rounds";
 import { cn } from "@/lib/cn";
 
 import { draftFromRound, roundBody, RoundFields, type RoundDraft } from "../RoundForm";
@@ -28,7 +28,15 @@ const enc = encodeURIComponent;
  * Onboarding (SYSTEM §4.11): 1 company → 2 first round → 3 how to bring investors in. The
  * step and the new workspace live in the URL (`?ws=<slug>&round=<slug>`) so a reload resumes.
  */
-export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Workspace[] }) {
+export function Onboarding({
+  csrf,
+  workspaces,
+  userName,
+}: {
+  csrf: string;
+  workspaces: Workspace[];
+  userName: string | null;
+}) {
   const router = useRouter();
   const params = useSearchParams();
   useEffect(() => setCsrfToken(csrf), [csrf]);
@@ -36,9 +44,13 @@ export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Wor
   const wsSlug = params.get("ws");
   const roundSlug = params.get("round");
   const ws = workspaces.find((w) => w.slug === wsSlug) ?? null;
-  const step = !wsSlug ? 1 : !roundSlug ? 2 : 3;
+  // ?step= revisits an earlier step after "Back" (editing what was created, not duplicating it).
+  const asked = Number(params.get("step"));
+  const natural = !wsSlug ? 1 : !roundSlug ? 2 : 3;
+  const step = asked >= 1 && asked < natural ? asked : natural;
 
-  const [company, setCompany] = useState("");
+  const [person, setPerson] = useState(userName ?? "");
+  const [company, setCompany] = useState(ws?.name ?? "");
   const [tz, setTz] = useState("UTC");
   const tzs = useMemo(zones, []);
   const [busy, setBusy] = useState(false);
@@ -58,11 +70,31 @@ export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Wor
   const fail = (err: unknown) =>
     setError(err instanceof ApiError ? { message: err.message, code: err.code } : { message: errorMessage(err) });
 
+  useEffect(() => {
+    // Back from step 3: load the round so step 2 edits it.
+    if (step !== 2 || !wsSlug || !roundSlug) return;
+    let live = true;
+    getRound(api.ws(wsSlug), roundSlug)
+      .then((r) => live && setDraft(draftFromRound(r, r.currency)))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [step, wsSlug, roundSlug]);
+
   const createWs = async () => {
+    if (!person.trim()) return setError({ message: "Enter your name, so co-founders know who did what." });
     if (!company.trim()) return setError({ message: "Enter your company's name." });
     setBusy(true);
     setError(null);
     try {
+      if (person.trim() !== (userName ?? "")) await updateMe(api, { name: person.trim() });
+      if (ws) {
+        if (company.trim() !== ws.name) await updateWorkspace(api.ws(ws.slug), { name: company.trim(), timezone: tz });
+        router.replace(`/onboarding?ws=${enc(ws.slug)}${roundSlug ? `&round=${enc(roundSlug)}` : ""}`);
+        router.refresh();
+        return;
+      }
       const w = await createWorkspace(api, { name: company.trim(), timezone: tz });
       router.replace(`/onboarding?ws=${enc(w.slug)}`);
       router.refresh();
@@ -81,7 +113,9 @@ export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Wor
     setBusy(true);
     setError(null);
     try {
-      const r = await createRound(api.ws(wsSlug), body);
+      const r = roundSlug
+        ? await updateRound(api.ws(wsSlug), roundSlug, body)
+        : await createRound(api.ws(wsSlug), body);
       router.replace(`/onboarding?ws=${enc(wsSlug)}&round=${enc(r.slug)}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === "duplicate") {
@@ -112,34 +146,49 @@ export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Wor
   };
 
   const base = wsSlug ? `/w/${enc(wsSlug)}` : "";
-  const options = roundSlug
-    ? [
-        {
-          title: "Import a spreadsheet",
-          body: "Bring the list you already have. Columns are matched for you, duplicates are caught, and you preview before anything is written.",
-          href: `${base}/import?round=${enc(roundSlug)}`,
-          cta: "Import CSV →",
-        },
-        {
-          title: "Add them as you go",
-          body: "Start with an empty board and add investors one at a time as you research and reach out.",
-          href: `${base}/r/${enc(roundSlug)}`,
-          cta: "Open the pipeline →",
-        },
-        {
-          title: "Connect your agent first",
-          body: "Give Claude Code, Codex or Cursor a key and let it import, log and set follow-ups with you. Everything it does shows on the timeline.",
-          href: `${base}/settings/mcp`,
-          cta: "Connect an agent →",
-        },
-      ]
-    : [];
+  const options: { title: string; body: string; href: string; cta: string; variant: "primary" | "secondary" | "ghost" }[] =
+    roundSlug
+      ? [
+          {
+            title: "Import a spreadsheet",
+            body: "Bring the list you already have. Columns are matched for you, duplicates are caught, and you preview before anything is written.",
+            href: `${base}/import?round=${enc(roundSlug)}`,
+            cta: "Import a spreadsheet",
+            variant: "primary",
+          },
+          {
+            title: "Add them as you go",
+            body: "Start with an empty board and add investors one at a time as you research and reach out.",
+            href: `${base}/r/${enc(roundSlug)}`,
+            cta: "Open the pipeline",
+            variant: "secondary",
+          },
+          {
+            title: "Connect your agent first",
+            body: "Give Claude Code, Codex or Cursor a key and let it import, log and set follow-ups with you. Everything it does shows on the timeline.",
+            href: `${base}/settings/mcp`,
+            cta: "Connect an agent",
+            variant: "ghost",
+          },
+        ]
+      : [];
+  const backHref =
+    step === 2 && wsSlug
+      ? `/onboarding?ws=${enc(wsSlug)}${roundSlug ? `&round=${enc(roundSlug)}` : ""}&step=1`
+      : step === 3 && wsSlug && roundSlug
+        ? `/onboarding?ws=${enc(wsSlug)}&round=${enc(roundSlug)}&step=2`
+        : null;
 
   return (
     <div className="mx-auto w-full max-w-flow pt-24 pb-48">
-      <div className="mb-40 flex items-center">
+      <div className="mb-40 flex items-center gap-12">
         <Wordmark size={20} href="/" />
-        <span className="t-micro ml-auto text-muted" aria-label={`Step ${step} of 3`}>
+        {backHref ? (
+          <Link href={backHref} className="t-body-s ml-auto text-muted hover:text-fg">
+            ← Back
+          </Link>
+        ) : null}
+        <span className={cn("t-micro text-muted", !backHref && "ml-auto")} aria-label={`Step ${step} of 3`}>
           {step} / 3
         </span>
       </div>
@@ -156,8 +205,18 @@ export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Wor
             <h1 className="t-display-m">What are you raising for?</h1>
             <p className="mt-6 text-muted">Your company gets its own private workspace. Co-founders can join it later.</p>
           </div>
+          <Field label="Your name" hint="Shown to co-founders on the timeline.">
+            <Input
+              autoFocus={!userName}
+              value={person}
+              maxLength={120}
+              autoComplete="name"
+              required
+              onChange={(e) => setPerson(e.target.value)}
+            />
+          </Field>
           <Field label="Company name" error={error ? { message: error.message, code: error.code } : null}>
-            <Input autoFocus value={company} maxLength={80} onChange={(e) => setCompany(e.target.value)} placeholder="Kestrel Robotics" />
+            <Input autoFocus={!!userName} value={company} maxLength={80} onChange={(e) => setCompany(e.target.value)} />
           </Field>
           <Field label="Timezone" hint="Follow-ups are due by this calendar.">
             <Select value={tz} onChange={(e) => setTz(e.target.value)}>
@@ -168,7 +227,7 @@ export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Wor
               ))}
             </Select>
           </Field>
-          <Button type="submit" variant="primary" size="lg" busy={busy ? "Creating…" : false} className="self-start">
+          <Button type="submit" variant="primary" size="lg" busy={busy ? "Saving…" : false} className="self-start">
             Continue
           </Button>
         </form>
@@ -192,8 +251,8 @@ export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Wor
             </p>
           ) : null}
           <div className="flex flex-wrap items-center gap-12">
-            <Button type="submit" variant="primary" size="lg" busy={busy ? "Creating…" : false}>
-              Create round
+            <Button type="submit" variant="primary" size="lg" busy={busy ? "Saving…" : false}>
+              {roundSlug ? "Save round" : "Create round"}
             </Button>
           </div>
         </form>
@@ -206,11 +265,15 @@ export function Onboarding({ csrf, workspaces }: { csrf: string; workspaces: Wor
           <ul className="m-0 list-none border-t border-line p-0">
             {options.map((o) => (
               <li key={o.title} className="border-b border-line">
-                <Link href={o.href} className="group flex flex-col gap-4 py-16 pr-8">
-                  <span className="t-display-xs group-hover:text-accent">{o.title}</span>
-                  <span className="text-muted">{o.body}</span>
-                  <span className="link t-body-s mt-2">{o.cta}</span>
-                </Link>
+                <div className="-mx-12 flex flex-col gap-10 rounded-sm px-12 py-16 hover:bg-sunk sm:flex-row sm:items-center sm:gap-16">
+                  <div className="flex min-w-0 flex-1 flex-col gap-4">
+                    <span className="t-display-xs">{o.title}</span>
+                    <span className="text-muted">{o.body}</span>
+                  </div>
+                  <ButtonLink href={o.href} variant={o.variant} className="self-start sm:self-center">
+                    {o.cta}
+                  </ButtonLink>
+                </div>
               </li>
             ))}
           </ul>

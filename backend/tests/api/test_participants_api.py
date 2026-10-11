@@ -148,7 +148,7 @@ async def test_move_stage_follow_up_commitment_and_remove(
     }
     r = await c.post(f"{base}/stage", json={"stage": "dd"})
     assert r.status_code == 409 and r.json()["error"]["code"] == "not_in_round"
-    assert "add_to_round" in r.json()["error"]["message"]
+    assert "/v1/rounds/seed/participants" in r.json()["error"]["message"]
     assert (await c.get(base)).status_code == 409
 
 

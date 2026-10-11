@@ -4,8 +4,9 @@ Deletes are immediate and permanent, in one transaction, with no soft-delete
 columns or tombstones. Deleting a workspace cascades everything in it (rounds,
 stages, investors, participants, activities, import runs, invites, API keys,
 memberships). Deleting an account deletes the workspaces where the user is the
-only member, removes their memberships elsewhere, and their pending sign-in
-tokens; activities they made stay, shown as "Former member".
+only member, removes their memberships elsewhere (revoking the API keys they
+created there), and their pending sign-in tokens; activities they made stay,
+shown as "Former member".
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from raisebook.core.errors import ConfirmationRequired, TransferOwnershipFirst
 from raisebook.models.enums import Role
 from raisebook.models.user import LoginToken, User
 from raisebook.models.workspace import Invite, Membership, Workspace
+from raisebook.services.members import revoke_keys_created_by
 
 
 async def delete_workspace_by_id(db: AsyncSession, workspace_id: UUID) -> None:
@@ -103,6 +105,9 @@ async def delete_account(
         )
     for ws_id in plan.delete_workspaces:
         await delete_workspace_by_id(db, ws_id)
+    # Keys the user created in workspaces they leave stop working before the user row
+    # goes (ON DELETE SET NULL would otherwise erase who created them).
+    await revoke_keys_created_by(db, user.id, now=now)
     await db.execute(delete(LoginToken).where(LoginToken.email == user.email))
     await db.execute(delete(Invite).where(Invite.email == user.email, Invite.accepted_at.is_(None)))
     await db.execute(delete(User).where(User.id == user.id))

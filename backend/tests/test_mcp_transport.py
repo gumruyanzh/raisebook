@@ -64,7 +64,7 @@ async def test_initialize_and_instructions(db: AsyncSession, mcp_rpc: Any) -> No
 
 async def test_tools_list_has_annotations(db: AsyncSession, mcp_rpc: Any, probe: None) -> None:
     ws = await make_workspace(db)
-    _, raw = await make_api_key(db, ws, scopes="read")
+    _, raw = await make_api_key(db, ws, scopes="read,write")
     r = await mcp_rpc(raw, "tools/list", {})
     tools = {t["name"]: t for t in r.json()["result"]["tools"]}
     assert {"probe_whoami", "probe_write"} <= set(tools)

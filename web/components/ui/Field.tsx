@@ -16,13 +16,23 @@ import { cn } from "@/lib/cn";
  * canvas background, as inside sheets and forms; `tone="toolbar"` uses surface, for controls
  * sitting on the canvas.
  */
-type Tone = "form" | "toolbar";
+type Tone = "form" | "toolbar" | "inline";
 
 const CONTROL =
-  "w-full min-w-0 rounded-sm border border-line text-fg transition-[border-color] duration-[120ms] " +
-  "hover:border-muted disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-bad";
+  "w-full min-w-0 rounded-sm border text-fg transition-[border-color,background-color] duration-[120ms] " +
+  "disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-bad";
 
-const TONE: Record<Tone, string> = { form: "bg-canvas", toolbar: "bg-surface" };
+/**
+ * `inline` is for facts that are edited in place (the investor profile): no box until you
+ * hover or focus, so the page reads as a file, not a form.
+ */
+const TONE: Record<Tone, string> = {
+  form: "border-line bg-canvas hover:border-muted",
+  toolbar: "border-line bg-surface hover:border-muted",
+  inline:
+    "border-transparent bg-transparent hover:border-line focus:border-accent focus:bg-canvas " +
+    "disabled:opacity-100 disabled:cursor-default disabled:hover:border-transparent",
+};
 
 export interface InputProps extends Omit<ComponentProps<"input">, "size"> {
   tone?: Tone;
@@ -102,10 +112,12 @@ export function Select({ tone = "form", size = "md", className, children, ...res
 export interface CheckboxProps extends Omit<ComponentProps<"input">, "type"> {
   label?: ReactNode;
   hint?: ReactNode;
+  /** A small mono note after the label, e.g. "ALWAYS ON" for a locked option. */
+  badge?: ReactNode;
 }
 
 /** Native checkbox, accent-colored, with an optional label and hint. */
-export function Checkbox({ label, hint, className, id, ...rest }: CheckboxProps) {
+export function Checkbox({ label, hint, badge, className, id, ...rest }: CheckboxProps) {
   const auto = useId();
   const cid = id ?? auto;
   const box = (
@@ -118,13 +130,16 @@ export function Checkbox({ label, hint, className, id, ...rest }: CheckboxProps)
   );
   if (!label) return box;
   return (
-    <label
-      htmlFor={cid}
-      className={cn("inline-flex items-start gap-8", rest.disabled && "opacity-60", className)}
-    >
-      <span className="mt-2">{box}</span>
+    <label htmlFor={cid} className={cn("inline-flex items-start gap-8", className)}>
+      {/* Only the box dims when disabled: the label still explains what the option does. */}
+      <span className={cn("mt-2", rest.disabled && "opacity-60")}>{box}</span>
       <span>
-        <span className="block">{label}</span>
+        <span className="block">
+          {label}
+          {badge ? (
+            <span className="ml-8 font-mono text-2xs tracking-[0.06em] text-muted uppercase">{badge}</span>
+          ) : null}
+        </span>
         {hint ? <span className="t-body-s block text-muted">{hint}</span> : null}
       </span>
     </label>

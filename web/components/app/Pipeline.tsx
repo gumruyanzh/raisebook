@@ -43,6 +43,7 @@ import { useWorkspace } from "@/lib/session";
 import { AddInvestorDialog } from "./AddInvestorDialog";
 import { InvestorSheet } from "./InvestorSheet";
 import { PipelineBoard, type AgentMark } from "./PipelineBoard";
+import { RoundHeader } from "./RoundHeader";
 import { DEFAULT_DIR, PipelineTable, TABLE_COLS, type SortDir, type TableCol } from "./PipelineTable";
 import { matchesQuery, participantSearchText, personName } from "./util";
 
@@ -432,12 +433,16 @@ export function Pipeline(props: PipelineProps) {
 
   return (
     <div className="flex flex-col gap-14">
+      {/* On phones the round picker under the top bar already names the round. */}
+      <RoundHeader wsSlug={workspace.slug} round={round} active="pipeline" className="mb-0 max-sm:hidden" />
       <Ledger
         {...ledger}
         variant="compact"
+        today={today}
         activeStage={stageFilter || null}
         onStageSelect={(key) => setParams({ stage: stageFilter === key ? null : key })}
         onDueSelect={openInvestor}
+        onDueFilter={() => setParams({ follow: "due" })}
       />
 
       {empty ? null : (
@@ -490,8 +495,9 @@ export function Pipeline(props: PipelineProps) {
           {num(filtered.length)} of {num(participants.length)}
         </span>
         {canWrite ? (
-          <Button variant="primary" className="ml-auto" onClick={() => setAdding(true)}>
-            Add investor
+          <Button variant="primary" className="ml-auto" onClick={() => setAdding(true)} aria-label="Add investor">
+            <span className="sm:hidden">+ Add</span>
+            <span className="hidden sm:inline">Add investor</span>
           </Button>
         ) : null}
       </div>

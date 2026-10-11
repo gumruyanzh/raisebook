@@ -57,7 +57,7 @@ export function SaveState({ state }: { state: "idle" | "saving" | "saved" | "err
       aria-live="polite"
       className={cn(
         "t-micro",
-        state === "saved" && "text-good",
+        state === "saved" && "text-good-ink",
         state === "saving" && "text-muted",
         state === "error" && "text-bad",
       )}

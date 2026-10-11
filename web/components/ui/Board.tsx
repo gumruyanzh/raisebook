@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, CSSProperties, ReactNode } from "react";
 
 import type { FollowUpState, StageColor } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -9,15 +9,29 @@ import { FitMeter } from "./FitMeter";
 import { StageDot, stageVar } from "./Stage";
 import { Tooltip } from "./Tooltip";
 
-/** Horizontal board scroller: columns minmax(250px, 1fr), 85vw with snap under 640px. */
-export function Board({ children, className, ...rest }: ComponentProps<"div">) {
+/**
+ * Horizontal board scroller: 85vw columns with snap under 640px; from 640px columns are
+ * minmax(250px, 1fr), narrowing to minmax(176px, 1fr) from 1280px so a full default pipeline
+ * (with the lost stage collapsed to a rail) fits at 1440. `columns` overrides the template from
+ * 640px up (a collapsed column is a fixed 44px track): use `minmax(var(--col-min), 1fr)`.
+ */
+export function Board({
+  children,
+  className,
+  columns,
+  style,
+  ...rest
+}: ComponentProps<"div"> & { columns?: string }) {
   return (
     <div
       className={cn(
-        "grid min-h-[60vh] auto-cols-[85vw] grid-flow-col gap-10 overflow-x-auto pb-8",
-        "snap-x snap-mandatory sm:auto-cols-[minmax(250px,1fr)] sm:snap-none",
+        "grid min-h-[60vh] auto-cols-[85vw] grid-flow-col gap-10 overflow-x-auto pb-8 scrollbar-thin",
+        "snap-x snap-mandatory [--col-min:250px] sm:auto-cols-[minmax(var(--col-min),1fr)] sm:snap-none",
+        "2xl:[--col-min:176px]",
+        columns && "sm:[grid-template-columns:var(--board-cols)]",
         className,
       )}
+      style={columns ? ({ ...style, "--board-cols": columns } as CSSProperties) : style}
       {...rest}
     >
       {children}
@@ -38,6 +52,11 @@ export interface BoardColumnProps extends Omit<ComponentProps<"section">, "child
   /** Cards not rendered yet (after the first 60). Shows "Show N more". */
   hiddenCount?: number;
   onShowMore?: () => void;
+  /** Render as a 44px vertical rail (label + count); pressing it calls `onExpand`. */
+  collapsed?: boolean;
+  onExpand?: () => void;
+  /** Shows a "Hide" control in the header that calls this (the lost stage). */
+  onCollapse?: () => void;
   children?: ReactNode;
 }
 
@@ -54,11 +73,40 @@ export function BoardColumn({
   readOnly,
   hiddenCount = 0,
   onShowMore,
+  collapsed,
+  onExpand,
+  onCollapse,
   children,
   className,
   ...rest
 }: BoardColumnProps) {
   const empty = count === 0;
+  if (collapsed) {
+    return (
+      <section
+        aria-label={`${label}, ${count}`}
+        className={cn(
+          "flex max-h-[78vh] min-w-0 flex-col rounded-md bg-sunk",
+          isDropTarget && "outline-2 -outline-offset-2 outline-accent outline-dashed",
+          className,
+        )}
+        style={{ borderTop: `3px solid ${stageVar(color)}` }}
+        {...rest}
+      >
+        <button
+          type="button"
+          onClick={onExpand}
+          aria-expanded={false}
+          title={`Show ${label}`}
+          className="flex w-full flex-1 flex-col items-center gap-8 rounded-b-md border-0 bg-transparent px-0 pt-10 pb-12 text-fg hover:bg-line/40"
+        >
+          <StageDot color={color} />
+          <span className="font-mono text-[12px] text-muted">{num(count)}</span>
+          <span className="text-13 font-semibold [writing-mode:vertical-rl]">{label}</span>
+        </button>
+      </section>
+    );
+  }
   return (
     <section
       aria-label={`${label}, ${count}`}
@@ -75,12 +123,22 @@ export function BoardColumn({
         <h3 className="min-w-0 truncate">{label}</h3>
         <span className="ml-auto flex items-baseline gap-6 font-mono text-[12px] font-normal text-muted">
           {total && total.amount > 0 ? (
-            <span className="text-good" title={`${label} total`}>
+            <span className="text-good-ink" title={`${label} total`}>
               {moneyCompact(total.amount, total.currency)}
             </span>
           ) : null}
           {num(count)}
         </span>
+        {onCollapse ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            aria-expanded
+            className="t-micro border-0 bg-transparent p-0 font-normal text-muted hover:text-fg"
+          >
+            Hide
+          </button>
+        ) : null}
       </header>
       <div className="flex min-h-40 flex-col gap-6 overflow-y-auto px-8 pb-8">
         {children}
@@ -94,7 +152,7 @@ export function BoardColumn({
           </button>
         ) : null}
         {empty ? (
-          <p className="t-micro px-4 py-6 text-muted">
+          <p className="t-body-s px-4 py-6 text-muted">
             {readOnly ? "Nothing here yet" : "Drag investors here"}
           </p>
         ) : null}
@@ -102,6 +160,12 @@ export function BoardColumn({
     </section>
   );
 }
+
+/** Long type labels shortened on cards (the full label is the chip's title). */
+const SHORT_TYPE: Record<string, string> = {
+  "Corporate VC": "CVC",
+  "Family Office": "FO",
+};
 
 export interface BoardCardProps extends Omit<ComponentProps<"button">, "title"> {
   name: string;
@@ -122,6 +186,8 @@ export interface BoardCardProps extends Omit<ComponentProps<"button">, "title"> 
   /** Agent changed this card in the last 24h: diamond marker + tooltip. */
   agentMark?: { tip: string } | null;
   dragging?: boolean;
+  /** The button's tooltip (e.g. "View only" for viewers). */
+  hint?: string;
 }
 
 /**
@@ -144,6 +210,7 @@ export function BoardCard({
   nextStep,
   agentMark,
   dragging,
+  hint,
   className,
   type = "button",
   ...rest
@@ -152,6 +219,7 @@ export function BoardCard({
   return (
     <button
       type={type}
+      title={hint}
       className={cn(
         "flex w-full flex-col gap-5 rounded-card border border-line bg-surface px-10 py-9 text-left",
         "transition-[border-color] duration-[120ms] hover:border-accent",
@@ -170,35 +238,35 @@ export function BoardCard({
         ) : null}
       </span>
       {who ? <span className="t-body-s w-full truncate text-muted">{who}</span> : null}
-      {/* SYSTEM 3.13 row 3: priority, type, first industry + FitMeter, on one line. Only the
-          industry chip gives way (ellipsis), so the fit pips never wrap onto a second line. */}
-      <span className="flex w-full min-w-0 flex-nowrap items-center gap-4 overflow-hidden">
-        <PriorityChip fit={fit} className="shrink-0" />
-        {typeLabel ? (
-          <Chip tone="type" className="shrink-0">
-            {typeLabel}
-          </Chip>
-        ) : null}
-        {industry ? (
-          <Chip
-            tone="industry"
-            className="min-w-0 shrink overflow-hidden"
-            style={{ paddingInline: 0 }}
-            title={extraTagCount > 0 ? `${industry} and ${extraTagCount} more` : industry}
-          >
-            {/* Padding lives on the text, so a fully squeezed chip disappears instead of
-                leaving an empty pill. */}
-            <span className="min-w-0 truncate px-7">{industry}</span>
-          </Chip>
-        ) : null}
-        <FitMeter value={fit} className="ml-auto shrink-0 pl-2" />
+      {/* SYSTEM 3.13 row 3: priority, type, first industry + FitMeter, on one line. The chips
+          sit in a one-line wrapping row with its overflow clipped: a chip that does not fit
+          whole drops out entirely (industry first, then type), never as a truncated stub. The
+          full list stays in the tooltip. */}
+      <span className="flex w-full min-w-0 items-center gap-4">
+        <span
+          className="flex h-[22px] min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-[40px] overflow-hidden"
+          title={industry ? (extraTagCount > 0 ? `${industry} and ${extraTagCount} more` : industry) : undefined}
+        >
+          <PriorityChip fit={fit} className="shrink-0" />
+          {typeLabel ? (
+            <Chip tone="type" className="shrink-0" title={SHORT_TYPE[typeLabel] ? typeLabel : undefined}>
+              {SHORT_TYPE[typeLabel] ?? typeLabel}
+            </Chip>
+          ) : null}
+          {industry ? (
+            <Chip tone="industry" className="shrink-0">
+              {industry}
+            </Chip>
+          ) : null}
+        </span>
+        <FitMeter value={fit} className="shrink-0 pl-2" />
       </span>
       {(followUpState && followUpState !== "later") || amount ? (
         <span className="flex flex-wrap items-center gap-4">
           <FollowUpChip on={followUpOn} state={followUpState} today={today} />
           {amount && amount.value > 0 ? (
             <MoneyChip amount={amount.value} currency={amount.currency}>
-              {amount.soft ? <span className="font-body text-good"> soft</span> : null}
+              {amount.soft ? <span className="font-body text-good-ink"> soft</span> : null}
             </MoneyChip>
           ) : null}
         </span>

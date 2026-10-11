@@ -14,11 +14,22 @@ Streamable HTTP, stateless (any API replica serves any request), JSON responses.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
+from typing import Any
+
 from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ContentBlock, TextContent
+from mcp.types import Tool as MCPTool
+from pydantic import ValidationError
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
+
+from raisebook import __version__
+from raisebook.auth.scopes import SCOPE_WRITE
 
 SERVER_NAME = "raisebook"
 
@@ -41,9 +52,91 @@ SERVER_INSTRUCTIONS = (
 )
 
 
+def _got(value: Any) -> str:
+    text = json.dumps(value, default=str, ensure_ascii=False)
+    return text if len(text) <= 60 else text[:57] + "..."
+
+
+def format_validation_error(exc: ValidationError) -> str:
+    """``validation_error: fit must be at most 5 (got 7); type must be one of …``."""
+    parts: list[str] = []
+    for err in exc.errors(include_url=False)[:5]:
+        loc = ".".join(str(x) for x in err.get("loc", ()) if x != "body") or "arguments"
+        typ = err.get("type", "")
+        ctx = err.get("ctx") or {}
+        got = f" (got {_got(err['input'])})" if "input" in err and typ != "missing" else ""
+        if typ == "missing":
+            msg = f"{loc} is required"
+        elif typ == "extra_forbidden":
+            msg = f"{loc} is not a known field"
+            got = ""
+        elif typ == "literal_error":
+            msg = f"{loc} must be one of {ctx.get('expected', '')}".replace("'", "")
+        elif typ in ("less_than_equal", "less_than"):
+            msg = f"{loc} must be at most {ctx.get('le', ctx.get('lt'))}"
+        elif typ in ("greater_than_equal", "greater_than"):
+            msg = f"{loc} must be at least {ctx.get('ge', ctx.get('gt'))}"
+        elif typ.startswith("int_"):
+            msg = f"{loc} must be a whole number (amounts may also be written like '250k')"
+        else:
+            msg = f"{loc}: {err.get('msg', 'invalid value')}"
+        parts.append(msg + got)
+    return "validation_error: " + "; ".join(parts) + "."
+
+
+class RaisebookMCP(FastMCP):
+    """FastMCP with Raisebook's result and error conventions.
+
+    - Results are compact JSON text (no pretty-printing, no useless ``outputSchema``).
+    - Errors read ``<code>: <message>``; argument validation errors are rewritten from
+      pydantic's text into ``validation_error: fit must be at most 5 (got 7)``.
+    - ``tools/list`` hides write tools from keys without ``raisebook:write`` (the scope
+      check in each tool stays as the backstop).
+    - ``serverInfo.version`` is the Raisebook version.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._mcp_server.version = __version__
+
+    def tool(self, *args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("structured_output", False)
+        return super().tool(*args, **kwargs)
+
+    async def list_tools(self) -> list[MCPTool]:
+        from raisebook.mcp.auth import current_principal
+
+        tools = await super().list_tools()
+        principal = current_principal()
+        if principal is None or SCOPE_WRITE in principal.scopes:
+            return tools
+        return [t for t in tools if t.annotations is None or t.annotations.readOnlyHint]
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        context = self.get_context()
+        try:
+            result = await self._tool_manager.call_tool(
+                name, arguments, context=context, convert_result=False
+            )
+        except ToolError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, ToolError):
+                raise cause from None  # drop the SDK's "Error executing tool …" prefix
+            if isinstance(cause, ValidationError):
+                raise ToolError(format_validation_error(cause)) from None
+            raise
+        if isinstance(result, str):
+            text = result
+        else:
+            text = json.dumps(result, separators=(",", ":"), ensure_ascii=False, default=str)
+        return [TextContent(type="text", text=text)]
+
+
 def create_mcp_server() -> FastMCP:
     """A fresh FastMCP instance with the full Raisebook tool surface."""
-    server = FastMCP(
+    server = RaisebookMCP(
         name=SERVER_NAME,
         instructions=SERVER_INSTRUCTIONS,
         stateless_http=True,

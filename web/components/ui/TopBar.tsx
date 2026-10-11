@@ -97,6 +97,24 @@ export function TopBar(p: TopBarProps) {
       />
     ) : null;
 
+  // SANDBOX (fictional data, rb_test_ keys) and VIEW ONLY (viewer role) stay visible at every
+  // width: beside the workspace name from 640px, on the second row on phones.
+  const modeChips =
+    ws && (ws.is_sandbox || ws.role === "viewer") ? (
+      <>
+        {ws.is_sandbox ? (
+          <Chip tone="mode" title="Sample workspace with fictional data">
+            Sandbox
+          </Chip>
+        ) : null}
+        {ws.role === "viewer" ? (
+          <Chip tone="mode" title="You can read everything here but not change it">
+            View only
+          </Chip>
+        ) : null}
+      </>
+    ) : null;
+
   return (
     <header className={cn("sticky top-0 z-30 border-b border-line bg-canvas", p.className)}>
       <div className="gutter mx-auto flex h-56 max-w-app items-center gap-10 sm:gap-14">
@@ -116,13 +134,7 @@ export function TopBar(p: TopBarProps) {
           }
           triggerClassName="inline-flex h-32 min-w-0 max-w-full items-center gap-6 rounded-sm border border-transparent bg-transparent px-8 font-medium hover:border-line"
         />
-        {ws?.is_sandbox ? (
-          <span className="hidden shrink-0 sm:inline-flex">
-            <Chip tone="mode" title="Sample workspace with fictional data">
-              Sandbox
-            </Chip>
-          </span>
-        ) : null}
+        {modeChips ? <span className="hidden shrink-0 gap-6 sm:inline-flex">{modeChips}</span> : null}
 
         {picker ? (
           <div className="hidden min-w-0 flex-1 overflow-x-auto scrollbar-none lg:flex">{picker}</div>
@@ -178,8 +190,11 @@ export function TopBar(p: TopBarProps) {
           />
         </div>
       </div>
-      {picker ? (
-        <div className="gutter overflow-x-auto pb-8 scrollbar-none lg:hidden">{picker}</div>
+      {picker || modeChips ? (
+        <div className="gutter flex items-center gap-8 pb-8 lg:hidden">
+          {modeChips ? <span className="flex shrink-0 gap-6 sm:hidden">{modeChips}</span> : null}
+          {picker ? <div className="min-w-0 overflow-x-auto scrollbar-none">{picker}</div> : null}
+        </div>
       ) : null}
     </header>
   );

@@ -22,12 +22,40 @@ import {
   useToast,
 } from "@/components/ui";
 import { api, ApiError, errorMessage } from "@/lib/api/client";
-import { deleteMe, signOut, updateMe } from "@/lib/api/core";
+import { deleteMe, endMySession, endOtherSessions, listMySessions, signOut, updateMe } from "@/lib/api/core";
 import { removeMember } from "@/lib/api/settings";
-import type { Me, Workspace } from "@/lib/api/types";
+import type { Me, UserSessionInfo, Workspace } from "@/lib/api/types";
 import { ROLE_LABEL } from "@/lib/api/types";
 import { formatDate, isoDate } from "@/lib/format";
 import { useSession } from "@/lib/session";
+
+/** "Chrome on macOS" from a user agent; good enough to tell your own browsers apart. */
+function describeAgent(ua: string | null | undefined): string {
+  if (!ua) return "Unknown browser";
+  const browser = /Edg\//.test(ua)
+    ? "Edge"
+    : /Firefox\//.test(ua)
+      ? "Firefox"
+      : /Chrome\//.test(ua)
+        ? "Chrome"
+        : /Safari\//.test(ua)
+          ? "Safari"
+          : /curl|httpx|python/i.test(ua)
+            ? "Script"
+            : "Browser";
+  const os = /iPhone|iPad/.test(ua)
+    ? "iOS"
+    : /Android/.test(ua)
+      ? "Android"
+      : /Mac OS X|Macintosh/.test(ua)
+        ? "macOS"
+        : /Windows/.test(ua)
+          ? "Windows"
+          : /Linux/.test(ua)
+            ? "Linux"
+            : "";
+  return os ? `${browser} on ${os}` : browser;
+}
 
 export interface WorkspaceMembership extends Workspace {
   member_count: number | null;
@@ -51,6 +79,21 @@ export function Account({ me, workspaces, today }: { me: Me; workspaces: Workspa
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [sessions, setSessions] = useState<UserSessionInfo[] | null>(null);
+  const [endingOthers, setEndingOthers] = useState(false);
+
+  const loadSessions = async () => {
+    try {
+      setSessions((await listMySessions(api)).data);
+    } catch {
+      setSessions([]);
+    }
+  };
+  useEffect(() => {
+    void loadSessions();
+  }, []);
+  const others = (sessions ?? []).filter((x) => !x.current);
+  const isLastOwner = (w: WorkspaceMembership) => w.role === "owner" && (w.owner_count ?? 1) <= 1;
 
   const saveName = async () => {
     const v = name.trim();
@@ -87,9 +130,23 @@ export function Account({ me, workspaces, today }: { me: Me; workspaces: Workspa
               onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             />
           </Field>
-          <Field label="Email" hint="You sign in with a link sent here.">
-            <Input value={me.email} readOnly mono className="text-muted" />
-          </Field>
+          <div className="flex min-w-0 flex-col gap-4">
+            <span className="text-[12px] text-muted">Email</span>
+            <div className="flex min-h-[34px] items-center gap-8">
+              <span className="t-data truncate text-muted">{me.email}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(me.email);
+                  toast.show("Email copied.");
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+            <p className="t-body-s text-muted">You sign in with a link sent here.</p>
+          </div>
           <p className="t-body-s text-muted sm:col-span-2">Member since {formatDate(since, today)}.</p>
         </div>
       </section>
@@ -118,7 +175,17 @@ export function Account({ me, workspaces, today }: { me: Me; workspaces: Workspa
                   <Td>{w.role ? ROLE_LABEL[w.role] : ""}</Td>
                   <Td variant="num">{w.member_count ?? ""}</Td>
                   <Td className="text-right">
-                    <Button size="sm" variant="ghost" onClick={() => setLeaving(w)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={isLastOwner(w)}
+                      title={
+                        isLastOwner(w)
+                          ? "Transfer ownership first: make another member an owner, or delete the workspace."
+                          : undefined
+                      }
+                      onClick={() => setLeaving(w)}
+                    >
                       Leave
                     </Button>
                   </Td>
@@ -129,27 +196,95 @@ export function Account({ me, workspaces, today }: { me: Me; workspaces: Workspa
         </TableScroll>
       </section>
 
-      <section aria-label="Session">
-        <SectionLabel>Session</SectionLabel>
-        <div className="flex flex-wrap items-center gap-12 rounded-md border border-line bg-surface p-16">
-          <p className="min-w-0 flex-1">Sign out on this device. Other devices stay signed in until their sessions expire.</p>
-          <Button
-            busy={signingOut ? "Signing out…" : false}
-            onClick={async () => {
-              setSigningOut(true);
-              try {
-                await signOut(api);
-                router.replace("/signin");
-                router.refresh();
-              } catch (err) {
-                toast.show(errorMessage(err));
-                setSigningOut(false);
-              }
-            }}
-          >
-            Sign out
-          </Button>
+      <section aria-label="Sessions">
+        <SectionLabel
+          aside={
+            others.length ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                busy={endingOthers ? "Signing out…" : false}
+                onClick={async () => {
+                  setEndingOthers(true);
+                  try {
+                    await endOtherSessions(api);
+                    toast.show("Signed out of every other browser.");
+                    await loadSessions();
+                  } catch (err) {
+                    toast.show(errorMessage(err));
+                  } finally {
+                    setEndingOthers(false);
+                  }
+                }}
+              >
+                Sign out other sessions
+              </Button>
+            ) : null
+          }
+        >
+          Signed-in browsers
+        </SectionLabel>
+        <div className="rounded-md border border-line bg-surface">
+          {sessions === null ? (
+            <p className="t-body-s p-16 text-muted">Loading…</p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {sessions.map((x) => (
+                <li key={x.id} className="flex flex-wrap items-center gap-12 px-16 py-12">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">
+                      {describeAgent(x.user_agent)}
+                      {x.current ? <span className="t-micro ml-8 text-good-ink">THIS BROWSER</span> : null}
+                    </p>
+                    <p className="t-body-s text-muted">
+                      Last used {formatDate(isoDate(x.last_seen_at ?? x.created_at), today)}
+                      {x.ip ? <span className="t-data"> · {x.ip}</span> : null} · signed in{" "}
+                      {formatDate(isoDate(x.created_at), today)}
+                    </p>
+                  </div>
+                  {x.current ? (
+                    <Button
+                      size="sm"
+                      busy={signingOut ? "Signing out…" : false}
+                      onClick={async () => {
+                        setSigningOut(true);
+                        try {
+                          await signOut(api);
+                          router.replace("/signin");
+                          router.refresh();
+                        } catch (err) {
+                          toast.show(errorMessage(err));
+                          setSigningOut(false);
+                        }
+                      }}
+                    >
+                      Sign out
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={async () => {
+                        try {
+                          await endMySession(api, x.id);
+                          toast.show("That browser is signed out.");
+                          await loadSessions();
+                        } catch (err) {
+                          toast.show(errorMessage(err));
+                        }
+                      }}
+                    >
+                      Sign out
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
+        <p className="t-body-s mt-8 text-muted">
+          A session ends after 30 days without use, and 90 days after sign-in at the latest.
+        </p>
       </section>
 
       <section aria-label="Danger zone">

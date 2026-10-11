@@ -213,9 +213,67 @@ class ProtocolRateLimit:
         await self.app(scope, replay, send)
 
 
+REJECTED_KEY_MESSAGE = (
+    "Invalid or revoked Raisebook API key. Create a new one in Settings → Connect an agent."
+)
+MISSING_KEY_MESSAGE = (
+    "No Raisebook API key. Send 'Authorization: Bearer rb_live_…' (create a key in "
+    "Settings → Connect an agent)."
+)
+
+
+async def _send_json(
+    send: Send, status: int, body: dict[str, Any], headers: dict[str, str] | None = None
+) -> None:
+    raw = json.dumps(body).encode()
+    hdrs = [(b"content-type", b"application/json"), (b"content-length", str(len(raw)).encode())]
+    hdrs += [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    await send({"type": "http.response.start", "status": status, "headers": hdrs})
+    await send({"type": "http.response.body", "body": raw})
+
+
+class KeyGate:
+    """Answers unauthenticated /mcp requests before the SDK's generic 401.
+
+    A presented-but-rejected key gets a message that says so (and counts against the
+    per-IP ``auth_fail`` bucket, 429 when over); a missing key gets setup guidance.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or isinstance(scope.get("user"), AuthenticatedUser):
+            await self.app(scope, receive, send)
+            return
+        conn = HTTPConnection(scope)
+        presented = bool(_credential(conn))
+        if presented:
+            client = scope.get("client")
+            ip = client[0] if client else "unknown"
+            try:
+                await ratelimit.enforce("auth_fail", ip)
+            except RateLimited as exc:
+                await _send_json(
+                    send, 429, error_body(exc.code, exc.message, exc.details), exc.headers
+                )
+                return
+        desc = REJECTED_KEY_MESSAGE if presented else MISSING_KEY_MESSAGE
+        ascii_desc = desc.replace("→", ">").replace("…", "...")
+        www = f'Bearer realm="raisebook", error="invalid_token", error_description="{ascii_desc}"'
+        await _send_json(
+            send,
+            401,
+            {"error": "invalid_token", "error_description": desc},
+            {"WWW-Authenticate": www},
+        )
+
+
 def build_guarded_mcp_asgi(handler: ASGIApp) -> ASGIApp:
-    """Wrap the raw /mcp handler: authenticate → auth context → require a key → limit."""
+    """Wrap the raw /mcp handler: authenticate → reject missing/bad keys → auth context →
+    require a key → limit."""
     guarded: ASGIApp = ProtocolRateLimit(handler)
     guarded = RequireAuthMiddleware(guarded, required_scopes=[SCOPE_READ])
     guarded = AuthContextMiddleware(guarded)
+    guarded = KeyGate(guarded)
     return AuthenticationMiddleware(guarded, backend=ApiKeyAuthBackend())

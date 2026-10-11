@@ -97,6 +97,7 @@ async def add_investor(
         created=res.created,
         matched_on=res.matched_on,
         filled_fields=res.filled_fields,
+        not_applied=res.not_applied or None,
     )
 
 

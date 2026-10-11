@@ -25,6 +25,26 @@ class MagicLinkOut(BaseModel):
 
 class VerifyRequest(StrictInput):
     token: str = Field(..., min_length=1, max_length=200)
+    switch_account: bool = Field(
+        False,
+        description="Sign out of the account this browser is signed in to and continue with "
+        "this link. Without it, a different signed-in account gives 409 session_conflict.",
+    )
+
+
+class VerifyPeekOut(BaseModel):
+    valid: bool
+    email_hint: str | None = Field(None, description="Masked email, e.g. j***@example.com.")
+
+
+class SessionInfoOut(BaseModel):
+    id: UUID
+    created_at: Timestamp
+    last_seen_at: Timestamp | None = None
+    expires_at: Timestamp
+    user_agent: str | None = None
+    ip: str | None = None
+    current: bool
 
 
 class UserOut(APIModel):

@@ -100,7 +100,7 @@ export function GeneralSettings({ detail, rounds: initialRounds }: { detail: Wor
   const base = `/w/${encodeURIComponent(workspace.slug)}`;
 
   return (
-    <div className="flex max-w-[880px] flex-col gap-32">
+    <div className="flex flex-col gap-32">
       <section aria-label="Workspace">
         <SectionLabel aside={<SaveState state={state} />}>Workspace</SectionLabel>
         <form
@@ -146,9 +146,22 @@ export function GeneralSettings({ detail, rounds: initialRounds }: { detail: Wor
                 ))}
               </Select>
             </Field>
-            <Field label="Workspace URL">
-              <Input value={workspace.slug} readOnly mono className="text-muted" />
-            </Field>
+            <div className="flex min-w-0 flex-col gap-4">
+              <span className="text-[12px] text-muted">Workspace URL</span>
+              <span className="flex min-h-32 items-center gap-8">
+                <span className="t-data truncate text-muted">/w/{workspace.slug}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(`${window.location.origin}/w/${workspace.slug}`);
+                    toast.show("Link copied.");
+                  }}
+                >
+                  Copy link
+                </Button>
+              </span>
+            </div>
             <div className="flex flex-col gap-4">
               <span className="text-[12px] text-muted">Mode</span>
               <span className="flex h-32 items-center gap-8">
@@ -159,7 +172,7 @@ export function GeneralSettings({ detail, rounds: initialRounds }: { detail: Wor
           </div>
           {isAdmin ? (
             <div className="mt-14 flex flex-wrap items-center gap-8">
-              <Button type="submit" variant="primary" disabled={!dirty} busy={state === "saving" ? "Saving…" : false}>
+              <Button type="submit" variant={dirty ? "primary" : "secondary"} disabled={!dirty} busy={state === "saving" ? "Saving…" : false}>
                 Save changes
               </Button>
               {error ? <span className="t-body-s text-bad">{error}</span> : null}

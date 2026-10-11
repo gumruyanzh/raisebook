@@ -51,6 +51,14 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
   const [leaving, setLeaving] = useState<Member | null>(null);
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaveErr, setLeaveErr] = useState<string | null>(null);
+  const [demoting, setDemoting] = useState<{ member: Member; role: Role } | null>(null);
+  const ownerCount = members.filter((x) => x.role === "owner").length;
+  const isLastOwner = (mb: Member) => mb.role === "owner" && ownerCount <= 1;
+  const keysLine = (mb: Member) => {
+    const n = mb.active_api_keys ?? 0;
+    if (!n) return null;
+    return `${n} active API ${n === 1 ? "key" : "keys"} created by ${mb.is_you ? "you" : "this person"} will be revoked.`;
+  };
 
   const reload = async () => {
     try {
@@ -80,7 +88,11 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
     }
   };
 
-  const setMemberRole = async (mb: Member, r: Role) => {
+  const setMemberRole = async (mb: Member, r: Role, confirmed = false) => {
+    if (!confirmed && mb.role === "owner" && r !== "owner" && (mb.active_api_keys ?? 0) > 0) {
+      setDemoting({ member: mb, role: r });
+      return;
+    }
     try {
       const updated = await changeMemberRole(client, mb.user_id, r);
       setMembers((list) => list.map((x) => (x.user_id === mb.user_id ? updated : x)));
@@ -116,7 +128,7 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
   const pending = invites.filter((i) => i.status === "pending");
 
   return (
-    <div className="flex max-w-[880px] flex-col gap-32">
+    <div className="flex flex-col gap-32">
       <section aria-label="Members">
         <SectionLabel aside={<span className="t-micro text-muted">{num(members.length)} of 20</span>}>Members</SectionLabel>
         <TableScroll>
@@ -142,7 +154,15 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
                   <Td className="t-data">{mb.email}</Td>
                   <Td>
                     {isOwner ? (
-                      <Select size="sm" aria-label={`Role for ${personName(mb)}`} value={mb.role} onChange={(e) => void setMemberRole(mb, e.target.value as Role)} className="w-auto!">
+                      <Select
+                        size="sm"
+                        aria-label={`Role for ${personName(mb)}`}
+                        value={mb.role}
+                        disabled={isLastOwner(mb)}
+                        title={isLastOwner(mb) ? "Transfer ownership first: make another member an owner." : undefined}
+                        onChange={(e) => void setMemberRole(mb, e.target.value as Role)}
+                        className="w-auto!"
+                      >
                         {ROLES.map((r) => (
                           <option key={r} value={r}>
                             {ROLE_LABEL[r]}
@@ -156,7 +176,13 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
                   <Td className="t-data whitespace-nowrap text-muted">{formatDate(isoDate(mb.joined_at, workspace.timezone), today)}</Td>
                   <Td className="text-right">
                     {mb.is_you ? (
-                      <Button size="sm" variant="ghost" onClick={() => setLeaving(mb)}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={isLastOwner(mb)}
+                        title={isLastOwner(mb) ? "Transfer ownership first: make another member an owner." : undefined}
+                        onClick={() => setLeaving(mb)}
+                      >
                         Leave
                       </Button>
                     ) : isOwner ? (
@@ -277,6 +303,22 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
             ? "You lose access right away. An owner can invite you again."
             : "They lose access right away. Their past timeline entries stay, under their name."}
         </p>
+        {leaving && keysLine(leaving) ? <p className="mt-8 font-medium">{keysLine(leaving)}</p> : null}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={demoting !== null}
+        onClose={() => setDemoting(null)}
+        onConfirm={async () => {
+          if (!demoting) return;
+          const d = demoting;
+          setDemoting(null);
+          await setMemberRole(d.member, d.role, true);
+        }}
+        title={demoting ? `Make ${personName(demoting.member)} ${ROLE_LABEL[demoting.role].toLowerCase()}?` : ""}
+        confirmLabel="Change role"
+      >
+        <p>Only owners can hold API keys. {demoting ? keysLine(demoting.member) : null}</p>
       </ConfirmDialog>
     </div>
   );

@@ -136,6 +136,11 @@ class LoadedSession:
     touched: bool  # the expiry slid during this call
 
 
+def absolute_expiry(created_at: datetime, settings: Settings | None = None) -> datetime:
+    """The moment a session ends regardless of activity (``session_max_days`` after sign-in)."""
+    return created_at + timedelta(days=(settings or get_settings()).session_max_days)
+
+
 async def load_session(
     db: AsyncSession, cookie_value: str | None, *, now: datetime
 ) -> tuple[UserSession, User] | None:
@@ -169,10 +174,13 @@ async def load_session_detail(
     if sess.revoked_at is not None or sess.expires_at <= now:
         return None
     s = get_settings()
+    hard_end = absolute_expiry(sess.created_at, s)
+    if hard_end <= now:
+        return None
     interval = timedelta(seconds=s.session_touch_interval_s)
     touched = False
     if sess.last_seen_at is None or now - sess.last_seen_at >= interval:
-        expires = now + timedelta(hours=s.session_ttl_hours)
+        expires = min(now + timedelta(hours=s.session_ttl_hours), hard_end)
         await db.execute(
             update(UserSession)
             .where(UserSession.id == sess.id)
@@ -248,6 +256,53 @@ async def revoke_session(db: AsyncSession, session_id: UUID, *, now: datetime) -
         .where(UserSession.id == session_id, UserSession.revoked_at.is_(None))
         .values(revoked_at=now)
     )
+
+
+async def list_user_sessions(
+    db: AsyncSession, user_id: UUID, *, now: datetime
+) -> list[UserSession]:
+    """The user's live sessions (not revoked, not expired), most recently used first."""
+    rows = await db.scalars(
+        select(UserSession)
+        .where(
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > now,
+        )
+        .order_by(UserSession.last_seen_at.desc().nulls_last(), UserSession.created_at.desc())
+    )
+    return [r for r in rows if absolute_expiry(r.created_at) > now]
+
+
+async def revoke_user_session(
+    db: AsyncSession, user_id: UUID, session_id: UUID, *, now: datetime
+) -> bool:
+    """Revoke one of the user's own sessions. False when it is not theirs (or unknown)."""
+    res = await db.execute(
+        update(UserSession)
+        .where(
+            UserSession.id == session_id,
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    return bool(getattr(res, "rowcount", 0))
+
+
+async def revoke_other_sessions(
+    db: AsyncSession, user_id: UUID, keep_session_id: UUID, *, now: datetime
+) -> int:
+    res = await db.execute(
+        update(UserSession)
+        .where(
+            UserSession.user_id == user_id,
+            UserSession.id != keep_session_id,
+            UserSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    return int(getattr(res, "rowcount", 0) or 0)
 
 
 @dataclass(frozen=True)

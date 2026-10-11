@@ -13,33 +13,32 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from raisebook.auth.scopes import SCOPE_WRITE
-from raisebook.core.refs import resolve_investor, resolve_round, resolve_stage
+from raisebook.core.errors import APIError
+from raisebook.core.refs import resolve_investor, resolve_round, resolve_stage, suggestions
 from raisebook.mcp import shaping
 from raisebook.mcp.annotations import read_only, write
-from raisebook.mcp.tools._common import Clock, tool_call
+from raisebook.mcp.tools._args import (
+    Amount,
+    CheckNote,
+    DateArg,
+    Email,
+    Fit,
+    InvestorArg,
+    InvestorType,
+    LinkedIn,
+    RoundOpt,
+    StageArg,
+    Str200,
+    Tags,
+    Url,
+)
+from raisebook.mcp.tools._common import Clock, parse_date, tool_call
 from raisebook.services import activities as act_svc
 from raisebook.services import investors as investors_svc
 from raisebook.services import participants as parts_svc
 from raisebook.services.investors import compact
 from raisebook.services.search import list_investors
 from raisebook.services.stages import stages_for
-
-InvestorType = Literal[
-    "vc", "angel", "family_office", "corporate_vc", "accelerator", "scout", "other"
-]
-InvestorArg = Annotated[
-    str,
-    Field(
-        description='Investor id, email, LinkedIn URL, exact "Name", or "Name @ Firm".',
-        min_length=1,
-        max_length=500,
-    ),
-]
-RoundOpt = Annotated[str | None, Field(description="Round id, slug or name.", max_length=200)]
-Str200 = Annotated[str | None, Field(max_length=200)]
-Url = Annotated[str | None, Field(max_length=500)]
-Amount = Annotated[int | None, Field(ge=0, description="Whole currency units (250000 = $250k).")]
-Tags = Annotated[list[str] | None, Field(max_length=30)]
 
 # MCP argument names → investor columns.
 MCP_TO_FIELD = {"linkedin": "linkedin_url", "website": "website_url", "x": "x_url"}
@@ -54,15 +53,17 @@ class InvestorSet(BaseModel):
     firm: Str200 = None
     title: Str200 = None
     type: InvestorType | None = None
-    email: Annotated[str | None, Field(max_length=254)] = None
-    linkedin: Url = Field(None, description="LinkedIn profile URL")
+    email: Email = None
+    linkedin: LinkedIn = None
     website: Url = None
     x: Url = Field(None, description="X/Twitter URL or @handle")
     location: Str200 = None
     check_min: Amount = None
     check_max: Amount = None
-    check_note: Str200 = Field(None, description='Check size as written, e.g. "$250k-$1M, leads"')
-    stage_focus: Annotated[list[str] | None, Field(max_length=10)] = None
+    check_note: CheckNote = None
+    stage_focus: Annotated[
+        list[str] | None, Field(max_length=10, description='e.g. ["pre-seed", "seed"]')
+    ] = None
     industries: Tags = None
     tags: Tags = None
     notes: Annotated[str | None, Field(max_length=20000)] = None
@@ -70,8 +71,125 @@ class InvestorSet(BaseModel):
     warm_intro_by: Str200 = None
 
 
+MCP_FROM_FIELD = {v: k for k, v in MCP_TO_FIELD.items()}
+
+
 def to_fields(data: dict[str, Any]) -> dict[str, Any]:
     return {MCP_TO_FIELD.get(k, k): v for k, v in data.items()}
+
+
+ADD_DESCRIPTION = """Add an investor contact, or find the existing one and fill in what it is missing. Dedupes by email, then LinkedIn profile, then name+firm, then the name alone when there is exactly one person with that name; `matched_on` tells you which. on_duplicate: fill_empty (default: fill empty fields, merge tags, and append new notes as a dated paragraph; it never overwrites), return_existing (change nothing; `not_applied` lists the fields you sent that were not saved), create_anyway (ignore name matches; email/LinkedIn duplicates are never created). Pass `round` (and optionally `stage`, `fit`, `follow_up_on`, `follow_up_note`, `next_step`, `amount_soft`) to also put them on that round's board in the same call. Leave unknown fields out."""  # noqa: E501
+
+ADD_MANY_DESCRIPTION = """Add up to 50 investors in one call, each exactly as add_investor would (same dedupe and on_duplicate rules), optionally all on one round. Each item takes add_investor's contact fields plus its own stage, fit, follow_up_on, follow_up_note, next_step and amount_soft. Returns one compact line per item (id, name, created or matched_on, and any error), so one bad item does not stop the rest."""  # noqa: E501
+
+
+class RoundFields(BaseModel):
+    """Round options shared by add_investor and add_investors items."""
+
+    stage: StageArg = None
+    fit: Fit = None
+    follow_up_on: DateArg = None
+    follow_up_note: Annotated[
+        str | None, Field(max_length=500, description="What the follow-up is for.")
+    ] = None
+    next_step: Annotated[str | None, Field(max_length=500)] = None
+    amount_soft: Amount = None
+
+
+class InvestorItem(RoundFields):
+    """One investor for add_investors (add_investor's fields)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    firm: Str200 = None
+    title: Str200 = None
+    type: InvestorType | None = None
+    email: Email = None
+    linkedin: LinkedIn = None
+    website: Url = None
+    x: Annotated[str | None, Field(description="URL or @handle", max_length=500)] = None
+    location: Str200 = None
+    check_min: Amount = None
+    check_max: Amount = None
+    check_note: CheckNote = None
+    stage_focus: Annotated[list[str] | None, Field(max_length=10)] = None
+    industries: Tags = None
+    tags: Tags = None
+    notes: Annotated[str | None, Field(max_length=20000)] = None
+    source: Str200 = None
+    warm_intro_by: Str200 = None
+
+
+CONTACT_KEYS = tuple(k for k in InvestorItem.model_fields if k not in RoundFields.model_fields)
+ROUND_KEYS = tuple(RoundFields.model_fields)
+OnDup = Annotated[
+    Literal["fill_empty", "return_existing", "create_anyway"],
+    Field(description="What to do when the investor already exists (default fill_empty)."),
+]
+
+
+def _hint(matched_on: str, not_applied: list[str], on_duplicate: str) -> str:
+    fields = ", ".join(not_applied)
+    if on_duplicate == "return_existing":
+        return (
+            f"Existing investor matched on {matched_on}; {fields} were not saved. To save them, "
+            "call add_investor again with on_duplicate='fill_empty', or update_investor "
+            "(use append_notes for notes)."
+        )
+    return (
+        f"Existing investor matched on {matched_on}; {fields} already have different values "
+        "and were not overwritten. Use update_investor to change them."
+    )
+
+
+async def _add_one(
+    db: Any,
+    ws: Any,
+    contact: dict[str, Any],
+    round_fields: dict[str, Any],
+    *,
+    round_ref: str | None,
+    on_duplicate: str,
+    now: Any,
+) -> dict[str, Any]:
+    """add_investor's work for one investor (shared by add_investors)."""
+    fields = to_fields({k: v for k, v in contact.items() if v is not None})
+    wants_round = any(v is not None for v in round_fields.values())
+    rnd = await resolve_round(db, ws, round_ref, required=False)
+    res = await investors_svc.add(db, ws, fields, on_duplicate=on_duplicate, now=now)  # type: ignore[arg-type]
+    if rnd is None and wants_round:
+        rnd = await resolve_round(db, ws, None, required=True, investor=res.investor)
+    out: dict[str, Any] = {"created": res.created}
+    if res.matched_on:
+        out["matched_on"] = res.matched_on
+    if res.filled_fields:
+        out["filled_fields"] = res.filled_fields
+    if res.not_applied and not res.created:
+        shown = [MCP_FROM_FIELD.get(f, f) for f in res.not_applied]
+        out["not_applied"] = shown
+        out["hint"] = _hint(res.matched_on or "", shown, on_duplicate)
+    if rnd is not None:
+        changes: dict[str, Any] = {}
+        for key in ROUND_KEYS:
+            value = round_fields.get(key)
+            if value is None:
+                continue
+            changes[key] = parse_date(value, key) if key == "follow_up_on" else value
+        up = await parts_svc.upsert(db, ws, rnd, res.investor, changes, now=now)
+        part = await parts_svc.present_one(db, ws, up.participant, now=now)
+        out["participant"] = shaping.participant(part, with_investor=False)
+        out["round"] = str(rnd.slug)
+        fu = changes.get("follow_up_on")
+        if fu is not None and fu < ws.today(now):
+            out["warning"] = f"follow_up_on {fu.isoformat()} is in the past (today is " + (
+                f"{ws.today(now).isoformat()}); the follow-up shows as overdue."
+            )
+    inv = shaping.investor(await investors_svc.present_one(db, ws, res.investor))
+    if rnd is not None:
+        inv.pop("rounds", None)
+    out["investor"] = inv
+    return out
 
 
 def register(server: FastMCP) -> None:
@@ -84,7 +202,9 @@ def register(server: FastMCP) -> None:
         stage: Annotated[
             str | list[str] | None, Field(description="Stage key(s) or label(s) in the round.")
         ] = None,
-        fit_min: Annotated[int | None, Field(ge=0, le=5)] = None,
+        fit_min: Annotated[
+            int | None, Field(ge=0, le=5, description="Minimum fit (5 hot, 4 warm, 3 maybe).")
+        ] = None,
         tags: Annotated[list[str] | None, Field(description="All must match.")] = None,
         industries: Annotated[list[str] | None, Field(description="Any matches.")] = None,
         type: InvestorType | None = None,
@@ -97,13 +217,16 @@ def register(server: FastMCP) -> None:
             Field(description="Default: fit (round) / name (contacts)."),
         ] = None,
         limit: Annotated[int, Field(ge=1, le=100)] = 25,
-        cursor: str | None = None,
+        cursor: Annotated[
+            str | None, Field(description="next_cursor from the previous page.")
+        ] = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Find investors. `query` matches name, firm, title, email, location, tags, industries, source and notes (all words must match). Without `round`, it searches all workspace contacts and shows each one's stage in every round. With `round` (or any of stage/fit_min/follow_up, which imply the single open round), it returns investors in that round with stage, fit, follow-up and amounts."""  # noqa: E501
+        """Find investors. `query` matches name, firm, title, email, location, tags, industries, source and notes (all words must match). Without `round`, it searches all workspace contacts and shows each one's stage in every round. With `round` (or any of stage/fit_min/follow_up, which imply the single open round), it returns investors in that round with stage, fit, follow-up and amounts. When nothing matches, `suggestions` lists close names."""  # noqa: E501
         async with tool_call(ctx) as (db, ws):
             now = Clock.now()
             round_mode = bool(round) or stage is not None or fit_min is not None or bool(follow_up)
+            out: dict[str, Any]
             if round_mode:
                 rnd = await resolve_round(db, ws, round, required=True)
                 assert rnd is not None
@@ -128,14 +251,12 @@ def register(server: FastMCP) -> None:
                 )
                 results = []
                 for p in await parts_svc.present(db, ws, parts, now=now):
-                    row = shaping.dump(p.investor)
-                    if row.get("tags") == []:
-                        row.pop("tags")
+                    row = shaping.investor(p.investor)
                     row.update(
                         shaping.dump(
                             {
                                 "stage": p.stage.key,
-                                "fit": p.fit,
+                                "fit": p.fit or None,
                                 "priority": p.priority,
                                 "follow_up_on": (
                                     p.follow_up_on.isoformat() if p.follow_up_on else None
@@ -148,40 +269,42 @@ def register(server: FastMCP) -> None:
                         )
                     )
                     results.append(row)
-                return shaping.dump(
-                    {
-                        "round": {"slug": str(rnd.slug), "name": rnd.name},
-                        "results": results,
-                        "next_cursor": nxt,
-                        "total": total,
-                    }
+                out = {
+                    "round": {"slug": str(rnd.slug), "name": rnd.name},
+                    "results": results,
+                    "next_cursor": nxt,
+                    "total": total,
+                }
+            else:
+                sort_map = {"name": "name", "recent": "updated"}
+                rows, nxt, total = await list_investors(
+                    db,
+                    ws,
+                    limit=limit,
+                    cursor=cursor,
+                    q=query,
+                    type_=type,
+                    tags=tags,
+                    industries=industries,
+                    sort=sort_map.get(sort or "name", "name"),
                 )
-            sort_map = {"name": "name", "recent": "updated"}
-            rows, nxt, total = await list_investors(
-                db,
-                ws,
-                limit=limit,
-                cursor=cursor,
-                q=query,
-                type_=type,
-                tags=tags,
-                industries=industries,
-                sort=sort_map.get(sort or "name", "name"),
-            )
-            briefs = await investors_svc.participations(db, ws, [r.id for r in rows])
-            results = []
-            for inv in rows:
-                row = shaping.dump(compact(inv))
-                if row.get("tags") == []:
-                    row.pop("tags")
-                rounds = [
-                    {"round_slug": b.round_slug, "stage_key": b.stage.key, "fit": b.fit}
-                    for b in briefs.get(inv.id, [])
-                ]
-                if rounds:
-                    row["rounds"] = rounds
-                results.append(row)
-            return shaping.dump({"results": results, "next_cursor": nxt, "total": total})
+                briefs = await investors_svc.participations(db, ws, [r.id for r in rows])
+                results = []
+                for inv in rows:
+                    row = shaping.investor(compact(inv))
+                    rounds = [
+                        {"round_slug": b.round_slug, "stage_key": b.stage.key, "fit": b.fit}
+                        for b in briefs.get(inv.id, [])
+                    ]
+                    if rounds:
+                        row["rounds"] = rounds
+                    results.append(row)
+                out = {"results": results, "next_cursor": nxt, "total": total}
+            if not results and query:
+                sugg = await suggestions(db, ws, query)
+                if sugg:
+                    out["suggestions"] = sugg
+            return shaping.prune(out)  # type: ignore[no-any-return]
 
     @server.tool(annotations=read_only("Get investor"))
     async def get_investor(
@@ -206,45 +329,65 @@ def register(server: FastMCP) -> None:
             timeline = await act_svc.present(db, ws, rows)
             data = shaping.investor(out, notes_limit=shaping.DETAIL_NOTES_LIMIT)
             data.pop("rounds", None)
-            return {
+            result: dict[str, Any] = {
                 "investor": data,
                 "participations": [
-                    shaping.participant(p) for p in await parts_svc.present(db, ws, parts, now=now)
+                    shaping.participant(p, with_investor=False)
+                    for p in await parts_svc.present(db, ws, parts, now=now)
                 ],
-                "timeline": [shaping.activity(a) for a in timeline],
-                "timeline_truncated": nxt is not None,
+                "timeline": [shaping.activity(a, with_investor=False) for a in timeline],
             }
+            if nxt is not None:
+                result["timeline_truncated"] = True
+            return shaping.prune(result)  # type: ignore[no-any-return]
 
-    @server.tool(annotations=write("Add investor", idempotent=True))
+    @server.tool(annotations=write("Add investor", idempotent=True), description=ADD_DESCRIPTION)
     async def add_investor(
         name: Annotated[str, Field(min_length=1, max_length=200)],
         firm: Str200 = None,
         title: Str200 = None,
         type: InvestorType | None = None,
-        email: Annotated[str | None, Field(max_length=254)] = None,
-        linkedin: Annotated[str | None, Field(description="Profile URL", max_length=500)] = None,
+        email: Email = None,
+        linkedin: LinkedIn = None,
         website: Url = None,
         x: Annotated[str | None, Field(description="URL or @handle", max_length=500)] = None,
         location: Str200 = None,
         check_min: Amount = None,
         check_max: Amount = None,
-        check_note: Str200 = None,
-        stage_focus: Annotated[list[str] | None, Field(max_length=10)] = None,
+        check_note: CheckNote = None,
+        stage_focus: Annotated[
+            list[str] | None, Field(max_length=10, description='e.g. ["pre-seed", "seed"]')
+        ] = None,
         industries: Tags = None,
         tags: Tags = None,
         notes: Annotated[str | None, Field(max_length=20000)] = None,
-        source: Str200 = None,
-        warm_intro_by: Str200 = None,
-        on_duplicate: Literal["return_existing", "fill_empty", "create_anyway"] = (
-            "return_existing"
-        ),
-        round: RoundOpt = None,
-        stage: Annotated[str | None, Field(description="Stage key or label (needs round).")] = None,
-        fit: Annotated[int | None, Field(ge=0, le=5)] = None,
+        source: Annotated[
+            str | None,
+            Field(max_length=200, description='Where you found them, e.g. "SF Tech Week 2026"'),
+        ] = None,
+        warm_intro_by: Annotated[
+            str | None, Field(max_length=200, description="Who can introduce you.")
+        ] = None,
+        on_duplicate: OnDup = "fill_empty",
+        round: Annotated[
+            str | None,
+            Field(
+                description="Round id, slug or name to also add them to. Omitted with any round "
+                "option below = the single open round.",
+                max_length=200,
+            ),
+        ] = None,
+        stage: StageArg = None,
+        fit: Fit = None,
+        follow_up_on: DateArg = None,
+        follow_up_note: Annotated[
+            str | None, Field(max_length=500, description="What the follow-up is for.")
+        ] = None,
+        next_step: Annotated[str | None, Field(max_length=500)] = None,
+        amount_soft: Amount = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Add an investor contact, or return the existing one. Dedupes by email, then LinkedIn profile, then name+firm; `matched_on` tells you which. on_duplicate: return_existing (default, changes nothing), fill_empty (fill only fields that are empty, merge tags), create_anyway (ignore a name+firm match; email/LinkedIn duplicates are never created). Pass `round` (and optionally `stage`, `fit`) to also put them on that round's board. Leave unknown fields out."""  # noqa: E501
-        given = {
+        contact = {
             "name": name,
             "firm": firm,
             "title": title,
@@ -264,34 +407,81 @@ def register(server: FastMCP) -> None:
             "source": source,
             "warm_intro_by": warm_intro_by,
         }
-        fields = to_fields({k: v for k, v in given.items() if v is not None})
+        round_fields = {
+            "stage": stage,
+            "fit": fit,
+            "follow_up_on": follow_up_on,
+            "follow_up_note": follow_up_note,
+            "next_step": next_step,
+            "amount_soft": amount_soft,
+        }
+        async with tool_call(ctx, SCOPE_WRITE) as (db, ws):
+            return await _add_one(
+                db,
+                ws,
+                contact,
+                round_fields,
+                round_ref=round,
+                on_duplicate=on_duplicate,
+                now=Clock.now(),
+            )
+
+    @server.tool(
+        annotations=write("Add investors", idempotent=True), description=ADD_MANY_DESCRIPTION
+    )
+    async def add_investors(
+        items: Annotated[list[InvestorItem], Field(min_length=1, max_length=50)],
+        round: Annotated[
+            str | None,
+            Field(description="Round id, slug or name to add every item to.", max_length=200),
+        ] = None,
+        on_duplicate: OnDup = "fill_empty",
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        results: list[dict[str, Any]] = []
         async with tool_call(ctx, SCOPE_WRITE) as (db, ws):
             now = Clock.now()
-            rnd = await resolve_round(db, ws, round, required=False)
-            if rnd is None and (stage is not None or fit is not None):
-                rnd = await resolve_round(db, ws, None, required=True)
-            res = await investors_svc.add(db, ws, fields, on_duplicate=on_duplicate, now=now)
-            out: dict[str, Any] = {
-                "investor": shaping.investor(await investors_svc.present_one(db, ws, res.investor)),
-                "created": res.created,
-            }
-            if res.matched_on:
-                out["matched_on"] = res.matched_on
-            if res.filled_fields is not None:
-                out["filled_fields"] = res.filled_fields
-            if rnd is not None:
-                changes: dict[str, Any] = {}
-                if stage is not None:
-                    changes["stage"] = stage
-                if fit is not None:
-                    changes["fit"] = fit
-                up = await parts_svc.upsert(db, ws, rnd, res.investor, changes, now=now)
-                part = await parts_svc.present_one(db, ws, up.participant, now=now)
-                out["participant"] = shaping.participant(part)
-                out["investor"] = shaping.investor(
-                    await investors_svc.present_one(db, ws, res.investor)
-                )
-            return out
+            for i, item in enumerate(items):
+                data = item.model_dump()
+                contact = {k: data[k] for k in CONTACT_KEYS}
+                round_fields = {k: data[k] for k in ROUND_KEYS}
+                try:
+                    async with db.begin_nested():
+                        one = await _add_one(
+                            db,
+                            ws,
+                            contact,
+                            round_fields,
+                            round_ref=round,
+                            on_duplicate=on_duplicate,
+                            now=now,
+                        )
+                except APIError as exc:
+                    results.append(
+                        {"item": i, "name": item.name, "error": f"{exc.code}: {exc.message}"}
+                    )
+                    continue
+                line: dict[str, Any] = {
+                    "item": i,
+                    "id": one["investor"]["id"],
+                    "name": one["investor"]["name"],
+                }
+                for key in ("created", "matched_on", "not_applied", "round", "warning"):
+                    if key in one:
+                        line[key] = one[key]
+                if "participant" in one:
+                    line["stage"] = one["participant"]["stage"]["key"]
+                results.append(line)
+        created = sum(1 for r in results if r.get("created"))
+        failed = sum(1 for r in results if "error" in r)
+        return {
+            "counts": {
+                "created": created,
+                "existing": len(results) - created - failed,
+                "errors": failed,
+            },
+            "results": results,
+        }
 
     @server.tool(annotations=write("Update investor", idempotent=False))
     async def update_investor(
@@ -327,7 +517,6 @@ def register(server: FastMCP) -> None:
                 add_industries=add_industries,
                 append_notes=append_notes,
             )
-            return {
-                "investor": shaping.investor(await investors_svc.present_one(db, ws, inv)),
-                "changed_fields": res.changed_fields,
-            }
+            out = shaping.investor(await investors_svc.present_one(db, ws, inv))
+            out.pop("rounds", None)
+            return {"investor": out, "changed_fields": res.changed_fields}

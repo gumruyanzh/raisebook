@@ -25,24 +25,26 @@ type TextKey =
 type ListKey = "stage_focus" | "industries" | "tags";
 type MoneyKey = "check_min" | "check_max";
 
+// Placeholders never look like data: an empty fact shows a dash.
+const EMPTY = "—";
 const TEXT: { key: TextKey; label: string; placeholder?: string; type?: string; wide?: boolean }[] = [
   { key: "name", label: "Name", wide: true },
-  { key: "firm", label: "Firm", placeholder: "Harbor Light Ventures" },
-  { key: "title", label: "Title", placeholder: "Partner" },
-  { key: "email", label: "Email", type: "email", placeholder: "name@example.com" },
-  { key: "location", label: "Location", placeholder: "San Francisco" },
-  { key: "linkedin_url", label: "LinkedIn", placeholder: "linkedin.com/in/…" },
-  { key: "website_url", label: "Website", placeholder: "example.com" },
-  { key: "x_url", label: "X", placeholder: "@handle" },
+  { key: "firm", label: "Firm" },
+  { key: "title", label: "Title" },
+  { key: "email", label: "Email", type: "email" },
+  { key: "location", label: "Location" },
+  { key: "linkedin_url", label: "LinkedIn" },
+  { key: "website_url", label: "Website" },
+  { key: "x_url", label: "X" },
 ];
 const LISTS: { key: ListKey; label: string; placeholder: string }[] = [
-  { key: "stage_focus", label: "Invests at", placeholder: "pre-seed, seed" },
-  { key: "industries", label: "Industries", placeholder: "Robotics, Industrial" },
-  { key: "tags", label: "Tags (comma-separated)", placeholder: "lead, warm intro" },
+  { key: "stage_focus", label: "Invests at", placeholder: EMPTY },
+  { key: "industries", label: "Industries", placeholder: EMPTY },
+  { key: "tags", label: "Tags (comma-separated)", placeholder: EMPTY },
 ];
 const MORE: { key: TextKey; label: string; placeholder?: string }[] = [
-  { key: "source", label: "Source", placeholder: "SF Tech Week 2026" },
-  { key: "warm_intro_by", label: "Warm intro by", placeholder: "Who can introduce you" },
+  { key: "source", label: "Source" },
+  { key: "warm_intro_by", label: "Warm intro by" },
 ];
 
 const splitList = (s: string) =>
@@ -139,10 +141,11 @@ export function InvestorProfile({
   const input = (key: TextKey, label: string, placeholder?: string, type?: string, wide?: boolean) => (
     <Field key={key} label={label} error={errors[key]} className={wide ? "sm:col-span-2" : undefined}>
       <Input
+        tone="inline"
         type={type}
         value={d[key]}
         disabled={ro}
-        placeholder={placeholder}
+        placeholder={placeholder ?? EMPTY}
         maxLength={key.endsWith("_url") ? 500 : key === "email" ? 254 : 200}
         onChange={(e) => setD((x) => ({ ...x, [key]: e.target.value }))}
         onBlur={() => blurText(key)}
@@ -153,10 +156,11 @@ export function InvestorProfile({
   return (
     <section aria-label="Profile">
       <SectionLabel aside={<SaveState state={state} />}>Profile</SectionLabel>
-      <div className="grid grid-cols-1 gap-10 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-2 [&_input]:-mx-9 [&_input]:w-[calc(100%+18px)] [&_select]:-mx-9 [&_select]:w-[calc(100%+18px)]">
         {TEXT.slice(0, 3).map((f) => input(f.key, f.label, f.placeholder, f.type, f.wide))}
         <Field label="Type">
           <Select
+            tone="inline"
             value={type}
             disabled={ro}
             onChange={(e) => {
@@ -173,12 +177,13 @@ export function InvestorProfile({
           </Select>
         </Field>
         {TEXT.slice(3).map((f) => input(f.key, f.label, f.placeholder, f.type, f.wide))}
-        <Field label="Check size" error={errors.check_note} className="sm:col-span-2" hint="Free text, e.g. “$250k–$1M, leads”. Min and max are read from it when empty.">
+        <Field label="Check size" error={errors.check_note} className="sm:col-span-2" hint={ro ? undefined : "Free text, e.g. “$250k–$1M, leads”. Min and max are read from it when empty."}>
           <Input
+            tone="inline"
             value={d.check_note}
             disabled={ro}
             maxLength={200}
-            placeholder="$250k–$1M, leads"
+            placeholder={EMPTY}
             onChange={(e) => setD((x) => ({ ...x, check_note: e.target.value }))}
             onBlur={() => blurText("check_note")}
           />
@@ -186,11 +191,12 @@ export function InvestorProfile({
         {(["check_min", "check_max"] as MoneyKey[]).map((k) => (
           <Field key={k} label={`${k === "check_min" ? "Min" : "Max"} check (${currency})`} error={errors[k]}>
             <Input
+              tone="inline"
               mono
               inputMode="decimal"
               value={d[k]}
               disabled={ro}
-              placeholder={k === "check_min" ? "250,000" : "1,000,000"}
+              placeholder={EMPTY}
               onChange={(e) => setD((x) => ({ ...x, [k]: e.target.value }))}
               onBlur={() => blurMoney(k)}
             />
@@ -199,6 +205,7 @@ export function InvestorProfile({
         {LISTS.map((f) => (
           <Field key={f.key} label={f.label} error={errors[f.key]}>
             <Input
+              tone="inline"
               value={d[f.key]}
               disabled={ro}
               placeholder={f.placeholder}

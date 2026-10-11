@@ -1,5 +1,5 @@
 /**
- * The 15 MCP tools (SPEC §6.4). Descriptions are the binding tool description text, word for
+ * The 17 MCP tools (SPEC §6.4). Descriptions are the binding tool description text, word for
  * word. Parameters follow the spec's input schemas. If the spec changes, change this file.
  */
 
@@ -50,7 +50,7 @@ export const MCP_TOOLS: McpTool[] = [
       "Who am I and what's here: workspace name, timezone and today's date, your scopes and agent name, every round with its stage keys, and the allowed investor types and activity kinds. Call this first.",
     params: [],
     output:
-      "{workspace: {id, name, slug, is_sandbox, timezone, today, default_currency}, you: {agent_name, scopes, key_prefix}, rounds: [{id, slug, name, status, currency, target_amount, stages: [{key, label, kind}]}], investor_types, loggable_activity_kinds}",
+      "{workspace: {id, name, slug, is_sandbox, timezone, today, weekday, default_currency}, you: {agent_name, scopes, key_prefix}, rounds: [{id, slug, name, status, currency, target_amount, stages: [{key, label, kind}]}], investor_types, loggable_activity_kinds}",
   },
   {
     name: "list_rounds",
@@ -62,6 +62,23 @@ export const MCP_TOOLS: McpTool[] = [
     params: [{ name: "status", type: '"open" | "closed" | "all"', description: 'Default "open".' }],
     output:
       "{rounds: [{id, slug, name, status, instrument, currency, target_amount, committed_amount, target_close_on?, counts: {total, open, active, won, lost}}]}",
+  },
+  {
+    name: "create_round",
+    title: "Create round",
+    access: "write",
+    idempotent: true,
+    description:
+      "Create a fundraising round with the default stages (New, Researching, Contacted, Replied, Meeting, Diligence, Committed, Passed). Safe to repeat: if a round with this name exists, it is returned unchanged with `created: false`. Returns the round with its stage keys, ready for add_investor / add_to_round.",
+    params: [
+      { name: "name", type: "string 1-80", required: true, description: 'e.g. "Seed" or "Seed Extension".' },
+      { name: "target_amount", type: "integer or \"2M\"", description: "Whole units." },
+      { name: "currency", type: "string", description: "3-letter code. Default: the workspace currency." },
+      { name: "instrument", type: "string", description: "safe (default), priced, convertible_note or other." },
+      { name: "valuation_cap", type: "integer", description: "Optional." },
+      { name: "target_close_on", type: "date", description: "YYYY-MM-DD." },
+    ],
+    output: "{created, round: {id, slug, name, status, instrument, currency, target_amount, stages: [{key, label, kind}]}}",
   },
   {
     name: "get_round_summary",
@@ -117,7 +134,7 @@ export const MCP_TOOLS: McpTool[] = [
     access: "write",
     idempotent: true,
     description:
-      "Add an investor contact, or return the existing one. Dedupes by email, then LinkedIn profile, then name+firm; `matched_on` tells you which. on_duplicate: return_existing (default, changes nothing), fill_empty (fill only fields that are empty, merge tags), create_anyway (ignore a name+firm match; email/LinkedIn duplicates are never created). Pass `round` (and optionally `stage`, `fit`) to also put them on that round's board. Leave unknown fields out.",
+      "Add an investor contact, or find the existing one and fill in what it is missing. Dedupes by email, then LinkedIn profile, then name+firm, then the name alone when there is exactly one person with that name; `matched_on` tells you which. on_duplicate: fill_empty (default: fill empty fields, merge tags, and append new notes as a dated paragraph; it never overwrites), return_existing (change nothing; `not_applied` lists the fields you sent that were not saved), create_anyway (ignore name matches; email/LinkedIn duplicates are never created). Pass `round` (and optionally `stage`, `fit`, `follow_up_on`, `follow_up_note`, `next_step`, `amount_soft`) to also put them on that round's board in the same call. Leave unknown fields out.",
     params: [
       { name: "name", type: "string 1-200", required: true, description: "Full name." },
       { name: "firm", type: "string", description: "Fund or company." },
@@ -133,13 +150,31 @@ export const MCP_TOOLS: McpTool[] = [
       { name: "stage_focus, industries, tags", type: "string[]", description: "Lists." },
       { name: "notes", type: "string", description: "Research notes." },
       { name: "source, warm_intro_by", type: "string", description: "Where you met, who introduced you." },
-      { name: "on_duplicate", type: '"return_existing" | "fill_empty" | "create_anyway"', description: "Default return_existing." },
-      ROUND_OPTIONAL("Also adds the investor to this round."),
+      { name: "on_duplicate", type: '"fill_empty" | "return_existing" | "create_anyway"', description: "Default fill_empty (never overwrites)." },
+      ROUND_OPTIONAL("Also adds the investor to this round. Omitted with any option below: the single open round."),
       { name: "stage", type: "string", description: "Stage in that round. Default: the first stage." },
-      { name: "fit", type: "integer 0-5", description: "Fit in that round." },
+      { name: "fit", type: "integer 0-5", description: "0 = unrated; 5 hot, 4 warm, 3 maybe, 1-2 low." },
+      { name: "follow_up_on, follow_up_note", type: "date, string", description: "Set the next follow-up in the same call." },
+      { name: "next_step", type: "string", description: "One line." },
+      { name: "amount_soft", type: "integer or \"250k\"", description: "Soft-circled amount." },
     ],
-    output: "{investor, created, matched_on?: email | linkedin | name_firm, filled_fields?, participant?}",
+    output:
+      "{investor, created, matched_on?: email | linkedin | name_firm | name, filled_fields?, not_applied?, hint?, round?, participant?, warning?}",
     example: '{"name": "Dana Whitfield", "firm": "Harbor Light Ventures", "email": "dana@example.com", "type": "vc", "round": "seed", "stage": "research", "fit": 4}',
+  },
+  {
+    name: "add_investors",
+    title: "Add investors",
+    access: "write",
+    idempotent: true,
+    description:
+      "Add up to 50 investors in one call, each exactly as add_investor would (same dedupe and on_duplicate rules), optionally all on one round. Each item takes add_investor's contact fields plus its own stage, fit, follow_up_on, follow_up_note, next_step and amount_soft. Returns one compact line per item (id, name, created or matched_on, and any error), so one bad item does not stop the rest.",
+    params: [
+      { name: "items", type: "object[] 1-50", required: true, description: "add_investor arguments, one object per investor." },
+      ROUND_OPTIONAL("Adds every item to this round."),
+      { name: "on_duplicate", type: '"fill_empty" | "return_existing" | "create_anyway"', description: "Default fill_empty." },
+    ],
+    output: "{counts: {created, existing, errors}, results: [{item, id, name, created, matched_on?, not_applied?, stage?, error?}]}",
   },
   {
     name: "update_investor",
@@ -233,14 +268,14 @@ export const MCP_TOOLS: McpTool[] = [
     access: "read",
     idempotent: true,
     description:
-      "Follow-ups that are due: overdue first, then today, then (with within_days > 0) the next N days. Without `round`, it covers all open rounds. Use it to plan the founder's outreach for the day.",
+      "Follow-ups that are due: overdue first, then today, then (with within_days > 0) the next N days. Without `round`, it covers all open rounds. Use it to plan the founder's outreach for the day; for 'this week', pass within_days=7. `counts` always includes next_7_days and next_due_on, so an empty list never hides a busy week ahead.",
     params: [
       ROUND_OPTIONAL("Omit to cover all open rounds."),
       { name: "within_days", type: "integer 0-60", description: "Default 0 (overdue and today only)." },
       { name: "include_overdue", type: "boolean", description: "Default true." },
       { name: "limit", type: "integer 1-200", description: "Default 50." },
     ],
-    output: "{today, items: FollowUpItem[], counts: {overdue, today, upcoming}}",
+    output: "{today, weekday, items: FollowUpItem[], counts: {overdue, today, upcoming, next_7_days, next_due_on?}}",
   },
   {
     name: "record_commitment",
@@ -271,11 +306,12 @@ export const MCP_TOOLS: McpTool[] = [
       ROUND_OPTIONAL("Adds imported investors to this round."),
       { name: "mapping", type: "object", description: '{"Column header": "field" | null}.' },
       { name: "default_stage", type: "string", description: "For rows without a stage." },
-      { name: "on_duplicate", type: '"skip" | "fill_empty" | "update"', description: "Default skip." },
+      { name: "on_duplicate", type: '"skip" | "fill_empty" | "update"', description: "skip (default) leaves existing investors and their round fields untouched; fill_empty fills blanks; update overwrites with non-empty CSV values and applies the round columns." },
       { name: "source", type: "string", description: 'Fills source on rows without one, e.g. "Robotics Demo Night".' },
       { name: "dry_run", type: "boolean", description: "Default true. Nothing is written until false." },
     ],
-    output: "Dry run: ImportPreview (rows cut to 50). Otherwise: ImportResult {import_run_id, counts, errors}.",
+    output:
+      "Dry run: {counts, mapping, warnings, rows} where rows lists only updates, skips, errors and rows with warnings (plain creates are counted). Otherwise: {import_run_id, counts, errors, created: [{row, id, name}]}.",
   },
   {
     name: "export_round",

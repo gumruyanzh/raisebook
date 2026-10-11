@@ -13,19 +13,29 @@ export function CheckInbox({ email }: { email?: string }) {
   const [pending, setPending] = useState<PendingSignIn | null>(null);
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  // A link was just sent: allow another only after 60 seconds.
+  const [wait, setWait] = useState(60);
   useEffect(() => setPending(readPending()), []);
+  useEffect(() => {
+    if (wait <= 0) return;
+    const t = setTimeout(() => setWait((w) => w - 1), 1000);
+    return () => clearTimeout(t);
+  }, [wait]);
 
   const shownEmail = email ?? pending?.request.email;
+  const request = pending?.request ?? (email ? { email } : null);
 
   const resend = async () => {
-    if (!pending) return;
+    if (!request || wait > 0) return;
     setState("sending");
+    setError(null);
     try {
-      const res = await requestMagicLink(api, pending.request);
-      const p = { request: pending.request, devLink: res.dev_link ?? null };
+      const res = await requestMagicLink(api, request);
+      const p = { request, devLink: res.dev_link ?? null };
       savePending(p);
       setPending(p);
       setState("sent");
+      setWait(60);
     } catch (err) {
       setError(errorMessage(err));
       setState("error");
@@ -53,9 +63,9 @@ export function CheckInbox({ email }: { email?: string }) {
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-10">
-        {pending ? (
-          <Button onClick={resend} busy={state === "sending" ? "Sending…" : false}>
-            {state === "sent" ? "Sent again" : "Send it again"}
+        {request ? (
+          <Button onClick={resend} disabled={wait > 0} busy={state === "sending" ? "Sending…" : false}>
+            {wait > 0 ? `Send it again in ${wait}s` : "Send it again"}
           </Button>
         ) : null}
         <Link href="/signin" className="link">

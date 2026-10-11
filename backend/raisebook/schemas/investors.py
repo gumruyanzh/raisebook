@@ -12,7 +12,7 @@ from raisebook.schemas.common import StrictInput, Timestamp
 from raisebook.schemas.rounds import StageOut
 
 OnDuplicate = Literal["return_existing", "fill_empty", "create_anyway"]
-MatchedOnName = Literal["email", "linkedin", "name_firm"]
+MatchedOnName = Literal["email", "linkedin", "name_firm", "name"]
 
 
 class InvestorCompact(BaseModel):
@@ -110,6 +110,11 @@ class InvestorAddOut(BaseModel):
     created: bool
     matched_on: MatchedOnName | None = None
     filled_fields: list[str] | None = None
+    not_applied: list[str] | None = Field(
+        None,
+        description="Fields you sent that were not saved on the existing investor (they "
+        "differ from what is stored). Resend with on_duplicate=fill_empty or use PATCH.",
+    )
 
 
 class InvestorPage(BaseModel):

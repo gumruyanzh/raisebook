@@ -8,18 +8,21 @@ the per-workspace ``import`` / ``export`` rate limits with it.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import Field
 
 from raisebook.auth.scopes import SCOPE_READ, SCOPE_WRITE
 from raisebook.config import get_settings
 from raisebook.core import ratelimit, refs
 from raisebook.core.errors import PayloadTooLarge
+from raisebook.mcp import shaping
 from raisebook.mcp.annotations import read_only, write
 from raisebook.mcp.tools._common import Clock, ToolError, tool_call
 from raisebook.schemas.data import ImportRequest
 from raisebook.services import exports, imports
+from raisebook.services.csv_io import ALL_FIELDS
 
 MAX_CSV_BYTES = 2 * 1024 * 1024
 MAX_INLINE_EXPORT = 1024 * 1024
@@ -29,13 +32,47 @@ DRY_RUN_ROWS = 50
 def register(server: FastMCP) -> None:
     @server.tool(annotations=write("Import investors from CSV", idempotent=False))
     async def import_investors_csv(
-        csv: str,
-        round: str | None = None,
-        mapping: dict[str, str | None] | None = None,
-        default_stage: str | None = None,
-        on_duplicate: Literal["skip", "fill_empty", "update"] = "skip",
-        source: str | None = None,
-        dry_run: bool = True,
+        csv: Annotated[
+            str, Field(description="CSV text (at most 2 MB), first row = column headers.")
+        ],
+        round: Annotated[
+            str | None,
+            Field(
+                description="Round id, slug or name to add imported investors to; the stage, "
+                "fit, follow-up and amount columns only apply with a round.",
+                max_length=200,
+            ),
+        ] = None,
+        mapping: Annotated[
+            dict[str, str | None] | None,
+            Field(
+                description='Override the automatic column mapping: {"Column header": field '
+                "or null to ignore}. Fields: " + ", ".join(ALL_FIELDS) + "."
+            ),
+        ] = None,
+        default_stage: Annotated[
+            str | None,
+            Field(description="Stage key or label for rows without a stage column value."),
+        ] = None,
+        on_duplicate: Annotated[
+            Literal["skip", "fill_empty", "update"],
+            Field(
+                description="For investors that already exist: skip = leave them and their "
+                "round fields untouched (default); fill_empty = fill blank fields only; update = "
+                "overwrite with non-empty CSV values and apply the round columns."
+            ),
+        ] = "skip",
+        source: Annotated[
+            str | None,
+            Field(
+                description='Fills `source` on rows without one, e.g. "Robotics Demo Night".',
+                max_length=200,
+            ),
+        ] = None,
+        dry_run: Annotated[
+            bool,
+            Field(description="Default true: preview only, nothing is written until false."),
+        ] = True,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Import investors from CSV text (first row = headers). Columns are auto-mapped from common headers (Name, Firm/Fund/Company, Email, LinkedIn, Type, Check size, Tags, Stage, Fit, Follow up…); pass `mapping` to override ({"Column header": "field" or null to ignore}). Existing investors are matched like add_investor. dry_run defaults to true and returns a preview with counts and per-row actions; show it to the human, then call again with dry_run=false. With `round`, imported investors are added to that round, and the stage, fit, follow-up and amount columns apply."""  # noqa: E501
@@ -57,23 +94,42 @@ def register(server: FastMCP) -> None:
             )
             if dry_run:
                 pv = await imports.preview(db, ws, req, max_rows=DRY_RUN_ROWS)
-                out = pv.model_dump(mode="json", exclude={"samples"})
-                out["dry_run"] = True
+                full = shaping.dump(pv.model_dump(mode="json", exclude={"samples"}))
+                rows = full.pop("rows", [])
+                # Only rows that need a look; plain creates are summarized in the counts.
+                notable = [r for r in rows if r.get("action") != "create" or r.get("warnings")]
+                out: dict[str, Any] = {"dry_run": True, **full}
+                if notable:
+                    out["rows"] = notable
+                if len(pv.rows) < pv.row_count:
+                    out["rows_previewed"] = len(pv.rows)
                 out["next"] = (
                     "Nothing was written. Show the human these counts and any errors, then "
                     "call import_investors_csv again with the same arguments and dry_run=false."
                 )
                 return out
             result = await imports.commit(db, ws, req, now=Clock.now())
-            done = result.model_dump(mode="json")
+            done = shaping.dump(result.model_dump(mode="json"))
             done["dry_run"] = False
             return done
 
     @server.tool(annotations=read_only("Export a round"))
     async def export_round(
-        round: str | None = None,
-        format: Literal["json", "csv"] = "json",
-        include_activities: bool = False,
+        round: Annotated[
+            str | None,
+            Field(
+                description="Round id, slug or name. Omit when the workspace has exactly one "
+                "open round.",
+                max_length=200,
+            ),
+        ] = None,
+        format: Annotated[
+            Literal["json", "csv"],
+            Field(description="json (structured, default) or csv (spreadsheet-ready text)."),
+        ] = "json",
+        include_activities: Annotated[
+            bool, Field(description="json only: add each investor's timeline. Default false.")
+        ] = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export a round's pipeline: every investor in the round with contact fields, stage, fit, follow-up, amounts and last activity date. format=csv gives spreadsheet-ready text; json gives structured data. Set include_activities to add each investor's timeline (json only)."""  # noqa: E501

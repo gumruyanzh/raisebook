@@ -23,6 +23,7 @@ export function FunnelBar({
   onSelect,
   active,
   className,
+  legendClassName,
   label = "Pipeline by stage",
 }: {
   segments: FunnelSegment[];
@@ -30,6 +31,8 @@ export function FunnelBar({
   /** Stage key currently filtered, if any. */
   active?: string | null;
   className?: string;
+  /** e.g. "max-sm:hidden": the bar alone on phones (tapping a segment still filters). */
+  legendClassName?: string;
   label?: string;
 }) {
   const total = segments.reduce((s, x) => s + x.count, 0) || 1;
@@ -64,7 +67,7 @@ export function FunnelBar({
             </button>
           ))}
       </div>
-      <div className="flex flex-wrap gap-x-12 gap-y-4">
+      <div className={cn("flex flex-wrap gap-x-12 gap-y-4", legendClassName)}>
         {segments.map((s) => (
           <button
             key={s.key}

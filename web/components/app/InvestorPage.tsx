@@ -35,7 +35,7 @@ import {
 import type { Activity, Investor, Member, Participant, Round } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
-import { formatDate, isoDate, plural } from "@/lib/format";
+import { formatDate, isoDate, plural, stageFocusLabel } from "@/lib/format";
 import { useSession, useWorkspace } from "@/lib/session";
 
 import { NotesEditor } from "./InvestorSheet";
@@ -77,17 +77,37 @@ function RoundRow({
   const ro = !canWrite;
   const href = `/w/${encodeURIComponent(wsSlug)}/r/${encodeURIComponent(round.slug)}?investor=${p.investor.id}`;
 
+  if (round.status === "closed") {
+    // A closed round is history: one read-only line, not an editable form.
+    return (
+      <li className="flex flex-wrap items-center gap-x-8 gap-y-4 border-b border-line py-10 first:pt-4 last:border-b-0">
+        <Link href={href} className="font-semibold hover:underline">
+          {round.name}
+        </Link>
+        <span className="inline-flex items-center gap-6 text-muted">
+          <StageDot color={p.stage.color} />
+          {p.stage.label}
+        </span>
+        <span className="t-data text-muted">fit {p.fit}/5</span>
+        <PriorityChip fit={p.fit} />
+        {p.amount_committed ? <MoneyChip amount={p.amount_committed} currency={round.currency} /> : null}
+        <Chip tone="mode" className="ml-auto">
+          Closed
+        </Chip>
+      </li>
+    );
+  }
+
   return (
     <li className="flex flex-col gap-10 border-b border-line py-14 first:pt-4 last:border-b-0">
       <div className="flex flex-wrap items-baseline gap-x-10 gap-y-4">
         <Link href={href} className="font-semibold hover:underline">
           {round.name}
         </Link>
-        {round.status === "closed" ? <Chip tone="mode">Closed</Chip> : null}
         <PriorityChip fit={p.fit} />
         {p.amount_committed ? <MoneyChip amount={p.amount_committed} currency={round.currency} /> : null}
         <span className="t-micro ml-auto text-muted" aria-live="polite">
-          {state === "saving" ? "Saving…" : state === "saved" ? <span className="text-good">Saved</span> : state === "error" ? <span className="text-bad">Not saved</span> : null}
+          {state === "saving" ? "Saving…" : state === "saved" ? <span className="text-good-ink">Saved</span> : state === "error" ? <span className="text-bad">Not saved</span> : null}
         </span>
         {canWrite ? (
           <Menu
@@ -342,6 +362,11 @@ export function InvestorPage({
             {who ? <p className="text-muted">{who}</p> : null}
             <div className="flex flex-wrap gap-4">
               <Chip tone="type">{INVESTOR_TYPE_LABEL[inv.type]}</Chip>
+              {inv.stage_focus.map((st) => (
+                <Chip key={`sf-${st}`} tone="tag">
+                  {stageFocusLabel(st)}
+                </Chip>
+              ))}
               {inv.industries.map((i) => (
                 <Chip key={i} tone="industry">
                   {i}
@@ -355,7 +380,7 @@ export function InvestorPage({
             </div>
             <LinkButtons linkedin={inv.linkedin_url} website={inv.website_url} x={inv.x_url} email={inv.email} className="mt-4" />
           </header>
-          <div className="rounded-md border border-line bg-surface p-16">
+          <div className="rounded-md border border-line bg-surface px-16 pt-16 pb-8">
             <InvestorProfile client={client} investor={inv} currency={currency} canWrite={canWrite} onSaved={setInv} />
           </div>
           <div className="rounded-md border border-line bg-surface p-16">
@@ -427,6 +452,11 @@ export function InvestorPage({
               items={timeline}
               timeZone={tz}
               currency={currency}
+              roundLabel={
+                parts.length > 1
+                  ? (a) => (a.round_id ? (roundsById[a.round_id]?.name ?? null) : null)
+                  : undefined
+              }
               filterable
               empty="Nothing logged yet."
               renderExtra={(a) =>

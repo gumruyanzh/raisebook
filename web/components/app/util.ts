@@ -140,7 +140,7 @@ export function downloadText(filename: string, text: string, type = "text/csv;ch
 
 /** Display name for a member or owner: name, else the email's local part. */
 export function personName(p: { name?: string | null; email: string }): string {
-  return p.name?.trim() || p.email.split("@")[0] || p.email;
+  return p.name?.trim() || p.email;
 }
 
 /** A short, stable key for "something happened" idempotency in the log composer. */

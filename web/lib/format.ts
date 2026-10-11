@@ -207,6 +207,31 @@ export function followUpLabel(on: string, state: FollowUpState, today?: string):
   return `Follow up ${formatDate(on, today)}`;
 }
 
+/**
+ * Follow-up date for tables, never color alone (SYSTEM §5): "Today", "Oct 6 · 4d late",
+ * or the date.
+ */
+export function followUpCellText(on: string, today: string): string {
+  const late = daysBetween(on, today);
+  if (late === 0) return "Today";
+  if (late > 0) return `${formatDate(on, today)} · ${late}d late`;
+  return formatDate(on, today);
+}
+
+/** Stage focus as people write it: "pre-seed" → "Pre-seed", "series a" → "Series A". */
+export function stageFocusLabel(s: string): string {
+  const t = s.trim();
+  if (!t) return t;
+  const fixed = t.replace(/\bseries ([a-z])\b/i, (_m, l: string) => `Series ${l.toUpperCase()}`);
+  return fixed.charAt(0).toUpperCase() + fixed.slice(1);
+}
+
+/** "—" for a missing firm, "Independent" for an angel without one. */
+export function firmText(firm: string | null | undefined, type?: string | null): string {
+  if (firm) return firm;
+  return type === "angel" ? "Independent" : "—";
+}
+
 /** Initials for the account circle: "Sam Rivera" → "SR", "dana@example.com" → "D". */
 export function initials(nameOrEmail: string): string {
   const base = nameOrEmail.includes("@") ? nameOrEmail.split("@")[0]! : nameOrEmail;

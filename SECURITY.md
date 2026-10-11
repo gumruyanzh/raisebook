@@ -58,4 +58,19 @@ Self-hosters should update regularly (`deploy/README.md`).
   workspace; an agent's key can never widen its own access.
 - Logs never contain request bodies, query strings, investor fields, emails or tokens.
 - No third-party scripts, trackers or analytics; fonts are self-hosted.
+- Removing a member, demoting an owner or deleting an account revokes every API key that
+  person created, in the same transaction.
+- Sign-in links are spent only when the person presses Continue (link scanners that run
+  JavaScript cannot burn them), and a link never silently replaces a different signed-in
+  account (409 `session_conflict` unless the person chooses to switch).
+- Sessions slide for 30 days of use and end 90 days after sign-in at the latest; the Account
+  page lists signed-in browsers and can sign out the others.
+- Failed API-key lookups, invites per person and new workspaces per person are rate limited,
+  and invite emails carry a fixed subject, so Raisebook can't be used as a spam relay.
+
+## Known issues
+
+- None open. (Next 15.5.27 bundles a postcss with build-time-only advisories,
+  GHSA-qx2v-qp2m-jg93 and GHSA-6g55-p6wh-862q; `web/package.json` overrides it to postcss
+  8.5.29, and `npm audit --omit=dev` is clean.)
 - Deletes are hard deletes in one transaction; backups expire within 14 days.

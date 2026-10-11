@@ -112,7 +112,7 @@ export function CloseButton({
       onClick={onClick}
       aria-label={label}
       className={cn(
-        "inline-flex size-32 shrink-0 items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg",
+        "inline-flex size-32 shrink-0 items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg focus-visible:outline-offset-1",
         className,
       )}
     >

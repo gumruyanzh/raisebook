@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { NamePrompt } from "@/components/app/NamePrompt";
 import { AppShell } from "@/components/ui";
 import { listRounds, type Round } from "@/lib/api/core";
 import { authBypass, getSession, serverApi } from "@/lib/api/server";
@@ -71,7 +72,10 @@ export default async function WorkspaceLayout({
 
   return (
     <WorkspaceProvider workspace={workspace} rounds={rounds}>
-      <AppShell topBar={<WorkspaceTopBar />}>{children}</AppShell>
+      <AppShell topBar={<WorkspaceTopBar />}>
+        <NamePrompt />
+        {children}
+      </AppShell>
     </WorkspaceProvider>
   );
 }

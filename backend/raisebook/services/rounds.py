@@ -52,6 +52,11 @@ async def _by_name(
     return row
 
 
+async def find_by_name(db: AsyncSession, ws: WorkspaceContext, name: str) -> Round | None:
+    """A round by exact (case-insensitive) name, after the usual name cleaning."""
+    return await _by_name(db, ws, clean_round_name(name))
+
+
 async def _unique_slug(
     db: AsyncSession, ws: WorkspaceContext, name: str, exclude: UUID | None = None
 ) -> str:

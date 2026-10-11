@@ -52,6 +52,7 @@ under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` 
 | `maybe` / `maybe-soft` | `#6B7A8F` / `#E9EDF2` | `#A3AFC0` / `#232B38` | Priority "Maybe" (fit 3). |
 | `good` / `good-soft` | `#15803D` / `#DCF3E3` | `#4ADE80` / `#15301F` | Committed money, meter fill, fit pips, "Saved". |
 | `bad` / `bad-soft` | `#B42318` / `#FBE1DE` | `#F87171` / `#3A1C1C` | Overdue follow-up, errors, destructive buttons. |
+| `hot-ink`, `warm-ink`, `maybe-ink`, `good-ink` | `#A3360A`, `#8A5A0F`, `#4F5D70`, `#11652F` | same as the base hue | **Text** in these hues: chip labels on the soft tints, follow-up dates and amounts on canvas or surface. They clear 4.5:1 in light mode (5.2–6.1:1), where the base hues do not (3.2–4.4:1). Fills, the meter, pips and stage dots keep the base hue. Never write `text-warm` etc.; write `text-warm-ink`. |
 | `agent` / `agent-soft` | `#A1307A` / `#F8E4F0` | `#F08BC8` / `#3A1E31` | **Orchid = an agent did this.** Agent names, agent timeline nodes, agent-made rows (a 2px left rule), the agent marker glyph. Text, rules and soft tints only; never a button fill. |
 
 **Color grammar**
@@ -195,7 +196,7 @@ are at most four chips on a board card. Extra tags collapse to "+3".
 ### 2.5 Actor rendering
 | Actor | Render |
 |---|---|
-| agent | Agent marker glyph (a 7px orchid diamond, CSS-drawn) + name in `agent` 500 + model in `agent` at 75% opacity in mono ("claude-code · claude-opus-4-5") |
+| agent | Agent marker glyph (a 7px orchid diamond, CSS-drawn) + name in `agent` 500 + model in `agent` at full strength in mono ("claude-code · claude-opus-4-5"); the mono face is the difference, so it stays 4.5:1 on the agent tint |
 | user | Name in `fg` 500 (the role appears only in member lists) |
 | system | "Raisebook" in `muted` |
 

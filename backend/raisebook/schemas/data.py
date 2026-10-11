@@ -12,7 +12,7 @@ from raisebook.schemas.common import StrictInput, Timestamp
 ImportFormatName = Literal["csv", "prototype_json"]
 OnDuplicateImport = Literal["skip", "fill_empty", "update"]
 RowAction = Literal["create", "update", "skip", "error"]
-MatchedOnName = Literal["email", "linkedin", "name_firm"]
+MatchedOnName = Literal["email", "linkedin", "name_firm", "name"]
 
 MAX_CONTENT_CHARS = 5 * 1024 * 1024
 
@@ -120,10 +120,19 @@ class ResultError(BaseModel):
     message: str
 
 
+class CreatedRow(BaseModel):
+    row: int
+    id: UUID
+    name: str
+
+
 class ImportResult(BaseModel):
     import_run_id: UUID
     counts: ResultCounts
     errors: list[ResultError]
+    created: list[CreatedRow] = Field(
+        default_factory=list, description="Investors this import created (row number, id, name)."
+    )
     round: dict[str, str] | None = None  # {id, slug, name} when a round was targeted
 
 

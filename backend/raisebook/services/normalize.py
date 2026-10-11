@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 
 from raisebook.core.errors import ValidationFailed
 
-MatchedOn = Literal["email", "linkedin", "name_firm"]
+MatchedOn = Literal["email", "linkedin", "name_firm", "name"]
 
 # Column limits (SPEC §3.4 CHECKs). Services validate before the database does.
 TEXT_LIMITS: dict[str, int] = {

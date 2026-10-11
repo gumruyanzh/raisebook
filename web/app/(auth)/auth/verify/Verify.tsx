@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui";
 import { ApiError, api, errorMessage, setCsrfToken } from "@/lib/api/client";
-import { verifyMagicLink } from "@/lib/api/core";
+import { peekMagicLink, verifyMagicLink } from "@/lib/api/core";
 
 type State =
-  | { kind: "working" }
-  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "ready"; emailHint: string | null }
+  | { kind: "working"; emailHint: string | null }
+  | { kind: "conflict"; signedInAs: string; linkFor: string }
   | { kind: "done" }
   | { kind: "failed"; message: string; code?: string; retry: boolean };
 
@@ -19,61 +21,82 @@ function safePath(p: string | null | undefined): string | null {
   return p;
 }
 
+const INCOMPLETE: State = {
+  kind: "failed",
+  message: "This sign-in link is incomplete. Open the full link from the email, or request a new one.",
+  code: "invalid_token",
+  retry: false,
+};
+const USED: State = {
+  kind: "failed",
+  message: "That link was already used or expired. Request a new one.",
+  code: "invalid_token",
+  retry: false,
+};
+
 /**
- * Posts the token to /v1/auth/verify once on load (a POST, so link scanners that prefetch GET
- * URLs cannot burn it), with "Continue" as the fallback (SPEC §4.1, SYSTEM §4.12).
+ * The emailed link lands here. Nothing is spent on load: the page shows who the link signs in
+ * (a non-consuming peek) and POSTs the token only when the person presses Continue, so mail
+ * scanners that run JavaScript cannot burn it, and a forwarded link cannot silently swap a
+ * signed-in person into someone else's account (SPEC §4.1, SYSTEM §4.12).
  */
 export function Verify({ token }: { token: string | null }) {
   const router = useRouter();
-  const started = useRef(false);
-  const [state, setState] = useState<State>(
-    token
-      ? { kind: "working" }
-      : {
-          kind: "failed",
-          message: "This sign-in link is incomplete. Open the full link from the email, or request a new one.",
-          code: "invalid_token",
-          retry: false,
-        },
-  );
-
-  const run = useCallback(async () => {
-    if (!token) return;
-    setState({ kind: "working" });
-    try {
-      const res = await verifyMagicLink(api, token);
-      setCsrfToken(res.csrf_token);
-      setState({ kind: "done" });
-      const target = safePath(res.redirect_path) ?? (res.workspaces.length ? "/app" : "/onboarding");
-      router.replace(target);
-      router.refresh();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 400) {
-        setState({
-          kind: "failed",
-          message: "That link was already used or expired. Request a new one.",
-          code: err.code,
-          retry: false,
-        });
-      } else if (err instanceof ApiError && err.status === 429) {
-        setState({ kind: "failed", message: err.message, code: err.code, retry: true });
-      } else {
-        setState({
-          kind: "failed",
-          message: errorMessage(err),
-          code: err instanceof ApiError ? err.code : undefined,
-          retry: true,
-        });
-      }
-    }
-  }, [token, router]);
+  const [state, setState] = useState<State>(token ? { kind: "checking" } : INCOMPLETE);
 
   useEffect(() => {
-    // Strict Mode mounts twice in dev; the token is single-use, so post it exactly once.
-    if (started.current || !token) return;
-    started.current = true;
-    void run();
-  }, [run, token]);
+    if (!token) return;
+    let live = true;
+    peekMagicLink(api, token)
+      .then((p) => {
+        if (!live) return;
+        setState(p.valid ? { kind: "ready", emailHint: p.email_hint ?? null } : USED);
+      })
+      .catch(() => {
+        // The peek is only a courtesy: fall back to a plain Continue.
+        if (live) setState({ kind: "ready", emailHint: null });
+      });
+    return () => {
+      live = false;
+    };
+  }, [token]);
+
+  const run = useCallback(
+    async (switchAccount = false) => {
+      if (!token) return;
+      setState((s) => ({ kind: "working", emailHint: "emailHint" in s ? s.emailHint : null }));
+      try {
+        const res = await verifyMagicLink(api, token, switchAccount);
+        setCsrfToken(res.csrf_token);
+        setState({ kind: "done" });
+        const target =
+          safePath(res.redirect_path) ?? (res.workspaces.length ? "/app" : "/onboarding");
+        router.replace(target);
+        router.refresh();
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "session_conflict") {
+          const d = (err.details ?? {}) as { signed_in_as?: string; link_for?: string };
+          setState({
+            kind: "conflict",
+            signedInAs: d.signed_in_as ?? "another account",
+            linkFor: d.link_for ?? "another account",
+          });
+        } else if (err instanceof ApiError && err.status === 400) {
+          setState(USED);
+        } else if (err instanceof ApiError && err.status === 429) {
+          setState({ kind: "failed", message: err.message, code: err.code, retry: true });
+        } else {
+          setState({
+            kind: "failed",
+            message: errorMessage(err),
+            code: err instanceof ApiError ? err.code : undefined,
+            retry: true,
+          });
+        }
+      }
+    },
+    [token, router],
+  );
 
   if (state.kind === "failed") {
     return (
@@ -86,7 +109,7 @@ export function Verify({ token }: { token: string | null }) {
         <div className="flex flex-wrap items-center gap-10">
           {state.retry ? (
             <Button variant="primary" onClick={() => void run()}>
-              Continue
+              Try again
             </Button>
           ) : null}
           <Link href="/signin" className={state.retry ? "link" : "link font-medium"}>
@@ -97,19 +120,55 @@ export function Verify({ token }: { token: string | null }) {
     );
   }
 
+  if (state.kind === "conflict") {
+    return (
+      <div className="flex flex-col gap-14">
+        <h1 className="t-display-s">Switch accounts?</h1>
+        <p>
+          This browser is signed in as <span className="font-mono">{state.signedInAs}</span>. The
+          link signs in <span className="font-mono">{state.linkFor}</span>.
+        </p>
+        <p className="text-muted">
+          Only continue if you asked for this link yourself. Someone else&apos;s link would put you
+          in their account.
+        </p>
+        <div className="flex flex-wrap items-center gap-10">
+          <Button variant="primary" onClick={() => void run(true)}>
+            Sign out and continue as {state.linkFor}
+          </Button>
+          <Link href="/app" className="link">
+            Stay signed in as {state.signedInAs}
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const hint = state.kind === "ready" || state.kind === "working" ? state.emailHint : null;
   return (
     <div className="flex flex-col gap-14">
-      <h1 className="t-display-s">{state.kind === "done" ? "Signed in" : "Signing you in…"}</h1>
+      <h1 className="t-display-s">
+        {state.kind === "done" ? "Signed in" : "Sign in to Raisebook"}
+      </h1>
       <p className="text-muted" role="status">
-        {state.kind === "done"
-          ? "Opening your workspace."
-          : "This takes a moment. If nothing happens, press Continue."}
+        {state.kind === "done" ? (
+          "Opening your workspace."
+        ) : state.kind === "checking" ? (
+          "Checking the link…"
+        ) : hint ? (
+          <>
+            Continue as <span className="font-mono text-fg">{hint}</span>.
+          </>
+        ) : (
+          "Press Continue to finish signing in."
+        )}
       </p>
       <Button
+        variant="primary"
         className="self-start"
         onClick={() => void run()}
         busy={state.kind === "working" ? "Signing in…" : false}
-        disabled={state.kind === "done"}
+        disabled={state.kind === "done" || state.kind === "checking"}
       >
         Continue
       </Button>

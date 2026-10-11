@@ -140,6 +140,7 @@ async def make_api_key(
     agent_name: str | None = None,
     expires_at: datetime | None = None,
     revoked: bool = False,
+    created_by: User | None = None,
 ) -> tuple[ApiKey, str]:
     """``(ApiKey, plaintext)``. Mode follows the workspace (sandbox → ``rb_test_``)."""
     created = await create_api_key(
@@ -150,6 +151,7 @@ async def make_api_key(
         scopes=scopes,
         now=get_now(),
         agent_name=agent_name,
+        created_by_user_id=created_by.id if created_by is not None else None,
     )
     if expires_at is not None:
         created.key.expires_at = expires_at

@@ -204,6 +204,8 @@ export interface Member {
   role: Role;
   joined_at: Timestamp;
   is_you: boolean;
+  /** Active API keys this person created; revoked if they are removed or (owner) demoted. */
+  active_api_keys?: number;
 }
 
 export interface Invite {
@@ -415,6 +417,23 @@ export interface Me {
   email: string;
   name?: string | null;
   created_at: Timestamp;
+}
+
+/** A signed-in browser (`GET /v1/me/sessions`). */
+export interface UserSessionInfo {
+  id: UUID;
+  created_at: Timestamp;
+  last_seen_at?: Timestamp | null;
+  expires_at: Timestamp;
+  user_agent?: string | null;
+  ip?: string | null;
+  current: boolean;
+}
+
+/** `GET /v1/auth/verify/peek`: does not spend the token. */
+export interface VerifyPeek {
+  valid: boolean;
+  email_hint?: string | null;
 }
 
 export interface WorkspaceCreate {

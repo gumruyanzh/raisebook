@@ -281,9 +281,22 @@ export function StagesEditor({
                 </Td>
                 <Td variant="num">{num(r.count)}</Td>
                 <Td className="text-right">
-                  <Button size="sm" variant="ghost" disabled={ro} onClick={() => remove(r)}>
-                    Remove
-                  </Button>
+                  {(() => {
+                    // The only committed or passed stage can't go: every round needs one of each.
+                    const sole =
+                      (r.kind === "won" || r.kind === "lost") && rows.filter((x) => x.kind === r.kind).length <= 1;
+                    return (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={ro || sole}
+                        title={sole ? "Every round needs one committed and one passed stage" : undefined}
+                        onClick={() => remove(r)}
+                      >
+                        Remove
+                      </Button>
+                    );
+                  })()}
                 </Td>
               </Tr>
             ))}
@@ -295,7 +308,7 @@ export function StagesEditor({
           Add stage
         </Button>
         <Button
-          variant="primary"
+          variant={dirty ? "primary" : "secondary"}
           size="sm"
           disabled={ro || !dirty}
           busy={state === "saving" ? "Saving…" : false}
@@ -316,7 +329,7 @@ export function StagesEditor({
             Discard changes
           </Button>
         ) : null}
-        {problem && dirty ? <span className="t-body-s text-warm">{problem}</span> : null}
+        {problem && dirty ? <span className="t-body-s text-warm-ink">{problem}</span> : null}
       </div>
       {error ? <p className="t-body-s mt-8 text-bad">{error}</p> : null}
 

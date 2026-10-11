@@ -43,6 +43,9 @@ BucketKind = Literal[
     "invite",
     "anon_ip",
     "mcp_protocol",
+    "auth_fail",
+    "invite_user",
+    "invite_user_new",
 ]
 
 
@@ -64,6 +67,12 @@ LIMITS: dict[str, Limit] = {
     "invite": Limit(50, 86400),
     "anon_ip": Limit(120, 60),
     "mcp_protocol": Limit(300, 60),
+    # Requests that present an API key which does not authenticate, per client IP.
+    "auth_fail": Limit(60, 60),
+    # Invites sent by one person across all their workspaces (per day); accounts younger
+    # than a day get the tighter ``invite_user_new`` bucket on top.
+    "invite_user": Limit(20, 86400),
+    "invite_user_new": Limit(5, 86400),
 }
 
 

@@ -70,7 +70,7 @@ check the promise in the code.
   and keyboard), Table (sort, filter), Investor sheet. Round overview page. Investors directory
   and investor page.
 - Workspace API keys with scopes, a REST API under `/v1` with OpenAPI, and an MCP server at
-  `/mcp` with the 15 tools in §6. Rate limits per key.
+  `/mcp` with the 17 tools in §6. Rate limits per key.
 - CSV import (mapping, preview, dedupe), CSV and JSON export, prototype JSON import (should
   have, built after CSV).
 - Sample (sandbox) workspace with fictional data.
@@ -571,9 +571,14 @@ Input parsing accepts labels and common aliases case-insensitively: `VC`, `ventu
    `${RAISEBOOK_APP_URL}/auth/verify?token=<token>`. In dev, when the API's public URL is a
    localhost host (smmist's `echo_magic_links` rule), the response also contains
    `"dev_link"` and the link is logged.
-2. The web page `/auth/verify` POSTs the token to `POST /v1/auth/verify {token}`
-   automatically on load, with a "Continue" button as a fallback. Using a POST means link
-   scanners that prefetch GET URLs cannot burn the single-use token.
+2. The web page `/auth/verify` never spends the token on load. It shows "Sign in as
+   j***@example.com" (from `GET /v1/auth/verify/peek?token=`, which only reports `{valid,
+   email_hint}`) and POSTs `POST /v1/auth/verify {token, switch_account?}` when the person
+   presses Continue, so link scanners (including ones that run JavaScript) cannot burn it.
+   If the request already carries a valid session for a *different* user, verify returns 409
+   `session_conflict` (details `signed_in_as`, `link_for`, masked) and spends nothing, unless
+   `switch_account: true`, which revokes the old session. A forwarded link can therefore never
+   silently swap someone into another account. (Polish pass.)
 3. Verify: the token must exist, be unexpired and unconsumed. It is consumed atomically
    (`UPDATE … WHERE consumed_at IS NULL RETURNING`). The service upserts the user by email,
    sets `last_signin_at`, creates a `user_sessions` row, sets the cookies and returns
@@ -586,7 +591,10 @@ Input parsing accepts labels and common aliases case-insensitively: `VC`, `ventu
 - `rb_session` = `<session_id hex>.<secret>.<HMAC-SHA256(session_key, id.secret)>`. Flags:
   HttpOnly, Secure (`RAISEBOOK_SESSION_COOKIE_SECURE`, false only in dev), SameSite=Lax,
   Path=/, Domain=`RAISEBOOK_SESSION_COOKIE_DOMAIN` (unset locally), 30-day sliding expiry
-  (touched at most every 5 min).
+  (touched at most every 5 min), and an absolute lifetime of 90 days from sign-in
+  (`RAISEBOOK_SESSION_MAX_DAYS`). `GET /v1/me/sessions`, `DELETE /v1/me/sessions/{id}` and
+  `POST /v1/me/sessions/revoke-others` let a person see and end their sessions. Every subdomain
+  of the cookie domain receives the session cookie, so all of them must be first-party.
 - `rb_csrf` (readable cookie) and `GET /v1/auth/session` both carry the CSRF token
   `HMAC(session_key, "csrf:" + session_id)`. Every cookie-authenticated unsafe method must send
   `X-CSRF-Token` and, when `Origin` is present, an allowed origin (`RAISEBOOK_APP_URL`,
@@ -613,6 +621,12 @@ Input parsing accepts labels and common aliases case-insensitively: `VC`, `ventu
   `WWW-Authenticate: Bearer realm="raisebook"`. `last_used_at` is touched at most once per 60s.
 - Keys are created and revoked only by an owner through a session (never by an API key, so an
   agent cannot mint or widen its own access).
+- A key ends with its creator's access: removing a member (or a member leaving), demoting an
+  owner, and deleting an account revoke every active key that person created, in the same
+  transaction. `Member.active_api_keys` lets the UI warn before it happens. (Polish pass.)
+- Requests presenting a key that fails to authenticate count against a per-IP `auth_fail`
+  bucket (60/min, then 429), on `/v1` and `/mcp`. On `/mcp` a rejected key gets "Invalid or
+  revoked Raisebook API key…" and a missing key setup guidance, not a generic 401.
 
 ### 4.5 Scopes and roles
 
@@ -662,7 +676,10 @@ Every write produces activities stamped with:
 Agent name (`actor_label`): the `X-Agent-Name` request header (≤60 chars, same pattern as
 `api_keys.agent_name`; invalid values are ignored), else `api_keys.agent_name`, else
 `api_keys.name`. Agent model (`agent_model`): the `X-Agent-Model` header (≤80 printable
-chars), else NULL. The MCP setup snippets (§6.5) set both headers. `core/actor.py` defines
+chars), else NULL. The MCP setup snippets (§6.5) set `X-Agent-Name`; `X-Agent-Model` is
+offered as an optional extra header (it is static in a client config, so the snippets say to
+update it when the model changes). MCP `clientInfo` is not available per call on the
+stateless transport, so there is no automatic fallback. `core/actor.py` defines
 `Actor(type, user_id, api_key_id, label, model, via)`, and every service write takes an
 `actor: Actor`.
 
@@ -916,8 +933,11 @@ type ImportResult = { import_run_id: string; counts: { rows, created, updated, s
   three closest names (trigram similarity) as `details.suggestions`. More than one match →
   `ambiguous_reference` with candidates.
 - **round** (string): UUID, slug, or name (case-insensitive). For tools where the round is
-  *required*, omitting it uses the only open round if exactly one exists; otherwise the tool
-  fails with `round_required` and lists the open rounds. Where the round is *optional
+  *required*, omitting it uses the only open round if exactly one exists; with several open
+  rounds, participant-scoped tools (`add_to_round`, `move_stage`, `set_follow_up`,
+  `record_commitment`) use the investor's only open-round participation when there is
+  exactly one; otherwise the tool fails with `round_required` and lists the open rounds. With
+  no open round the message points to `create_round`. Where the round is *optional
   context* (`add_investor`, `import_investors_csv`, `search_investors` without round filters,
   `get_investor`, `log_activity`), omitting it means no round. `list_due_follow_ups` without a
   round covers all open rounds.
@@ -997,11 +1017,21 @@ Output: `{investor: Investor, participations: Participant[], timeline: Activity[
 timeline_truncated: boolean}`.
 
 #### 6. `add_investor` (write, idempotent)
-*"Add an investor contact, or return the existing one. Dedupes by email, then LinkedIn
-profile, then name+firm; `matched_on` tells you which. on_duplicate: return_existing (default,
-changes nothing), fill_empty (fill only fields that are empty, merge tags), create_anyway
-(ignore a name+firm match; email/LinkedIn duplicates are never created). Pass `round` (and
-optionally `stage`, `fit`) to also put them on that round's board. Leave unknown fields out."*
+*"Add an investor contact, or find the existing one and fill in what it is missing. Dedupes by
+email, then LinkedIn profile, then name+firm, then the name alone when there is exactly one
+person with that name; `matched_on` tells you which. on_duplicate: fill_empty (default: fill
+empty fields, merge tags, and append new notes as a dated paragraph; it never overwrites),
+return_existing (change nothing; `not_applied` lists the fields you sent that were not
+saved), create_anyway (ignore name matches; email/LinkedIn duplicates are never created).
+Pass `round` (and optionally `stage`, `fit`, `follow_up_on`, `follow_up_note`, `next_step`,
+`amount_soft`) to also put them on that round's board in the same call. Leave unknown fields
+out."*
+
+(Polish pass, from a real Claude Code run: the old `return_existing` default silently dropped
+the notes and new email an agent sent for an existing investor. Name-only matching applies
+when no email/LinkedIn conflicts; several same-name people give `ambiguous_reference` with
+candidates. REST `POST /v1/investors` keeps `return_existing` as its default and also returns
+`not_applied`.)
 Input:
 ```json
 {"name": "string (required, 1-200)", "firm": "string?", "title": "string?",
@@ -1010,11 +1040,13 @@ Input:
  "location": "string?", "check_min": "integer?", "check_max": "integer?", "check_note": "string?",
  "stage_focus": "string[]?", "industries": "string[]?", "tags": "string[]?", "notes": "string?",
  "source": "string?", "warm_intro_by": "string?",
- "on_duplicate": "return_existing|fill_empty|create_anyway = return_existing",
- "round": "string?", "stage": "string?", "fit": "integer 0-5?"}
+ "on_duplicate": "fill_empty|return_existing|create_anyway = fill_empty",
+ "round": "string?", "stage": "string?", "fit": "integer 0-5?",
+ "follow_up_on": "date?", "follow_up_note": "string?", "next_step": "string?", "amount_soft": "integer?"}
 ```
-Output: `{investor: Investor, created: boolean, matched_on?: "email"|"linkedin"|"name_firm",
-filled_fields?: string[], participant?: Participant}`.
+Output: `{investor, created, matched_on?: "email"|"linkedin"|"name_firm"|"name",
+filled_fields?, not_applied?, hint?, round?, participant?, warning?}` (compact shapes, see
+§6.6).
 
 #### 7. `update_investor` (write, not idempotent when append_notes is used)
 *"Change an investor's contact fields. Only keys in `set` change; null clears a field. Use
@@ -1134,6 +1166,28 @@ publishing, and records the date checked on the docs page. The API host in snipp
 from `NEXT_PUBLIC_PUBLIC_API_URL`.
 
 ---
+
+### 6.6 Polish pass additions (binding)
+- **Two more tools.** `create_round` (write, idempotent by name; returns the round with its
+  stage keys) and `add_investors` (write; up to 50 `add_investor` items, optional shared
+  `round`, one compact result line per item, a failed item does not stop the rest). 17 tools.
+- **Compact results.** Tools return compact JSON text (no pretty-printing, no
+  `outputSchema`). Nulls and empty lists are pruned; stages are `{key, label}` (kind only in
+  the funnel and `get_workspace`); UI-only fields (color, position, created_at, updated_at,
+  stage_changed_at) are dropped; activities are `{id, kind, at, body?, data?, round?,
+  investor?, by}` with `by` like `"claude-code · claude-opus-4-5 (agent via mcp)"`;
+  `type: other` is omitted. Import dry runs list only rows that are not plain creates; commits
+  return `created: [{row, id, name}]`. Import rows whose round columns are ignored because of
+  `on_duplicate=skip` carry a warning.
+- **Errors.** `<code>: <message>` without the SDK prefix. Argument validation reads
+  `validation_error: fit must be at most 5 (got 7)`. Enum labels are accepted ("VC",
+  "Family Office", "Call") and amounts may be written "250k" / "$1.5M". Messages name MCP tools,
+  not REST paths. Unknown emails/LinkedIn URLs get suggestions by the same kind of key.
+- **Tool list.** A key without `raisebook:write` sees only the read tools.
+- **Dates.** `get_workspace` and `list_due_follow_ups` include `weekday`; `set_follow_up`,
+  `add_to_round` and `add_investor` add a `warning` for a date before today;
+  `list_due_follow_ups.counts` always has `next_7_days` and `next_due_on`.
+- `serverInfo.version` is the Raisebook version.
 
 ## 7. Rate limits
 

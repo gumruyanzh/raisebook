@@ -20,7 +20,7 @@ from raisebook.auth.principal import user_workspaces
 from raisebook.auth.session import create_user_session
 from raisebook.config import get_settings
 from raisebook.core import ratelimit
-from raisebook.core.errors import InvalidToken, ValidationFailed
+from raisebook.core.errors import InvalidToken, SessionConflict, ValidationFailed
 from raisebook.core.logging import hash_email
 from raisebook.models.enums import Role
 from raisebook.models.user import User, UserSession
@@ -92,6 +92,20 @@ class VerifyResult:
     workspaces: list[tuple[Workspace, Role]]
 
 
+@dataclass(frozen=True)
+class PeekResult:
+    valid: bool
+    email_hint: str | None
+
+
+async def peek(db: AsyncSession, token: str, *, now: datetime) -> PeekResult:
+    """Whether a sign-in link is still usable, and a masked email (does not spend it)."""
+    row = await magic_link.peek_login_token(db, token, now=now)
+    if row is None:
+        return PeekResult(False, None)
+    return PeekResult(True, invites_svc.email_hint(str(row.email)))
+
+
 async def verify(
     db: AsyncSession,
     token: str,
@@ -99,7 +113,24 @@ async def verify(
     now: datetime,
     user_agent: str | None = None,
     ip: str | None = None,
+    signed_in_email: str | None = None,
+    switch_account: bool = False,
 ) -> VerifyResult:
+    """Spend the token and start a session.
+
+    When the browser is already signed in as a different user, nothing is spent
+    and 409 ``session_conflict`` is raised unless ``switch_account`` is set. This
+    stops a forwarded link from silently swapping someone into another account.
+    """
+    if signed_in_email is not None and not switch_account:
+        pending = await magic_link.peek_login_token(db, token, now=now)
+        if pending is not None and str(pending.email).lower() != signed_in_email.lower():
+            raise SessionConflict(
+                details={
+                    "signed_in_as": invites_svc.email_hint(signed_in_email),
+                    "link_for": invites_svc.email_hint(str(pending.email)),
+                }
+            )
     login = await magic_link.consume_login_token(db, token, now=now)
     if login is None:
         raise InvalidToken(

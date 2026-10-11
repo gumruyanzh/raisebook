@@ -75,7 +75,9 @@ export default function Privacy() {
         minWidth={460}
         rows={[
           ["Your email address and, if you add it, your name", "To sign you in and show who did what to your co-founders."],
-          ["Sign-in sessions: when they started, the browser's user agent and IP address", "To keep you signed in, and so you can see and end sessions."],
+          ["Sign-in sessions: when they started and were last used, the browser's user agent and IP address", "To keep you signed in, and so you can see and end them under Account → Signed-in browsers. A session ends after 30 days without use, or 90 days after sign-in at the latest."],
+          ["Sign-in requests: the email address and IP that asked for a link", "To send the link and limit abuse. Deleted about a day after the link expires, whether or not it was used."],
+          ["Pending invites: the invited email address and role", "To let them join. Deleted once revoked, or a week after they expire; accepted invites become a membership."],
           ["Your workspaces: rounds, stages, investors, notes, follow-ups, amounts and the timeline", "This is the product. It is shown only to the workspace's members and keys."],
           ["API keys, stored as a one-way hash, plus their name, scopes and last use", "To let your agents in without storing a usable secret."],
           ["Short-lived counters per key, per IP and per hashed email", "Rate limits. They are deleted after a day."],
@@ -100,7 +102,7 @@ export default function Privacy() {
         head={["Name", "Kind", "Purpose"]}
         minWidth={460}
         rows={[
-          ["rb_session", "cookie, HttpOnly", "Keeps you signed in. 30 days, renewed while you use the app."],
+          ["rb_session", "cookie, HttpOnly", "Keeps you signed in. 30 days, renewed while you use the app, 90 days at most."],
           ["rb_csrf", "cookie", "Protects your account from forged requests."],
           ["rb-theme", "localStorage", "Light, dark or system."],
           ["rb-last-ws", "localStorage", "Opens the workspace you used last."],

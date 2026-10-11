@@ -168,7 +168,7 @@ export function DataSettings({
               detail={`CSV of the pipeline (${plural(r.participant_count, "investor")}). It re-imports unchanged.`}
               label="Download CSV"
               secondary={{
-                label: "JSON",
+                label: "Download JSON",
                 busy: busy === `${r.id}:json`,
                 onClick: () =>
                   void download(`${r.id}:json`, {
@@ -251,7 +251,7 @@ function ExportRow({
       </div>
       <div className="flex gap-8">
         {secondary ? (
-          <Button size="sm" variant="ghost" onClick={secondary.onClick} busy={secondary.busy ? "Preparing…" : false}>
+          <Button size="sm" onClick={secondary.onClick} busy={secondary.busy ? "Preparing…" : false}>
             {secondary.label}
           </Button>
         ) : null}

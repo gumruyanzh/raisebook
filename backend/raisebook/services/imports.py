@@ -40,6 +40,7 @@ from raisebook.models.round import DEFAULT_STAGES, Round, RoundParticipant, Roun
 from raisebook.models.user import User
 from raisebook.models.workspace import Membership
 from raisebook.schemas.data import (
+    CreatedRow,
     ImportPreview,
     ImportRequest,
     ImportResult,
@@ -853,6 +854,11 @@ def _plan_participation(
         return PlannedParticipation(rnd, True, st, initial, p.notes, pv)
     # Already in the round (in the workspace, or added by an earlier row of this file).
     if mode == "skip":
+        if values or stage is not None:
+            pr.rec.warnings.append(
+                "Existing investor; the stage/fit/follow-up/amount columns in this row were not "
+                "applied (on_duplicate=skip). Use on_duplicate='update' to apply them."
+            )
         return PlannedParticipation(rnd, False, None, {}, [], _unchanged(rnd))
     changes: dict[str, Any] = {}
     for f, v in values.items():
@@ -986,6 +992,7 @@ async def commit(
 
     result = ResultCounts(rows=len(p.rows))
     errors: list[ResultError] = []
+    created_rows: list[CreatedRow] = []
     created_ids: dict[int, UUID] = {}  # id(Target) → investor created by an earlier row
     for r in p.rows:
         if r.action == "error":
@@ -1039,6 +1046,7 @@ async def commit(
         if new_id is not None:
             created_ids[id(t)] = new_id
             result.created += 1
+            created_rows.append(CreatedRow(row=r.rec.row, id=new_id, name=inv.name))
         elif r.action == "update":
             result.updated += 1
         else:
@@ -1051,6 +1059,7 @@ async def commit(
         import_run_id=run.id,
         counts=result,
         errors=errors,
+        created=created_rows,
         round={"id": str(rnd.id), "slug": str(rnd.slug), "name": rnd.name} if rnd else None,
     )
 

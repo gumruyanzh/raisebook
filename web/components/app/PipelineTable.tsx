@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import {
   AgentMarker,
   FitMeter,
+  FollowUpChip,
   PriorityChip,
   StagePill,
   Table,
@@ -18,7 +19,15 @@ import {
 import type { Investor, Participant, Round } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
-import { formatDate, money, moneyCompact, relativeTime } from "@/lib/format";
+import {
+  firmText,
+  followUpCellText,
+  formatDate,
+  isoDate,
+  money,
+  moneyCompact,
+  relativeTime,
+} from "@/lib/format";
 
 import type { AgentMark } from "./PipelineBoard";
 import { personName } from "./util";
@@ -148,7 +157,39 @@ export function PipelineTable({
   const minWidth = Math.max(640, cols.length * 108);
 
   return (
-    <TableScroll maxHeight="78vh">
+    <>
+    {/* Phones: a stacked list (who on the left; stage and follow-up on the right), never a
+        sideways-scrolling grid. */}
+    <ul className="m-0 flex list-none flex-col rounded-md border border-line bg-surface p-0 sm:hidden">
+      {sorted.map((p) => {
+        const id = p.investor.id;
+        const mark = agentMarks[id];
+        const who = [p.investor.title, firmText(p.investor.firm, p.investor.type)].filter((x) => x && x !== "—").join(" · ");
+        return (
+          <li key={id} className={cn("border-b border-line last:border-b-0", mark && "border-l-2 border-l-agent")}>
+            <button
+              type="button"
+              onClick={() => onOpen(id)}
+              aria-current={selectedId === id || undefined}
+              className="flex w-full items-start gap-10 border-0 bg-transparent px-12 py-10 text-left hover:bg-sunk"
+            >
+              <span className="flex min-w-0 flex-1 flex-col gap-2">
+                <span className="flex items-center gap-6 font-semibold">
+                  <span className="truncate">{p.investor.name}</span>
+                  {mark ? <AgentMarker label={mark.tip} /> : null}
+                </span>
+                {who ? <span className="t-body-s truncate text-muted">{who}</span> : null}
+              </span>
+              <span className="flex shrink-0 flex-col items-end gap-4">
+                <StagePill color={p.stage.color} label={p.stage.label} />
+                <FollowUpChip on={p.follow_up_on} state={p.follow_up_state} today={today} />
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+    <TableScroll maxHeight="78vh" className="max-sm:hidden">
       <Table minWidth={minWidth}>
         <THead>
           <Tr>
@@ -191,7 +232,11 @@ export function PipelineTable({
                         </Td>
                       );
                     case "firm":
-                      return <Td key={c.key}>{p.investor.firm ?? ""}</Td>;
+                      return (
+                        <Td key={c.key} className={p.investor.firm ? undefined : "text-muted"}>
+                          {firmText(p.investor.firm, p.investor.type)}
+                        </Td>
+                      );
                     case "stage":
                       return (
                         <Td key={c.key}>
@@ -220,11 +265,11 @@ export function PipelineTable({
                           key={c.key}
                           className={cn(
                             "t-data whitespace-nowrap",
-                            st === "overdue" || st === "today" ? "text-bad" : st === "soon" ? "text-warm" : "text-muted",
+                            st === "overdue" || st === "today" ? "text-bad" : st === "soon" ? "text-warm-ink" : "text-muted",
                           )}
                           title={p.follow_up_note ?? undefined}
                         >
-                          {p.follow_up_on ? (st === "today" ? "Today" : formatDate(p.follow_up_on, today)) : ""}
+                          {p.follow_up_on ? followUpCellText(p.follow_up_on, today) : ""}
                         </Td>
                       );
                     }
@@ -239,7 +284,7 @@ export function PipelineTable({
                         <Td
                           key={c.key}
                           variant="num"
-                          className={p.amount_committed ? "text-good" : undefined}
+                          className={p.amount_committed ? "text-good-ink" : undefined}
                           title={p.amount_committed ? money(p.amount_committed, cur) : undefined}
                         >
                           {p.amount_committed ? moneyCompact(p.amount_committed, cur) : ""}
@@ -253,8 +298,12 @@ export function PipelineTable({
                       );
                     case "last_activity":
                       return (
-                        <Td key={c.key} className="t-data whitespace-nowrap text-muted">
-                          {p.last_activity_at ? relativeTime(p.last_activity_at, now, timeZone) : ""}
+                        <Td
+                          key={c.key}
+                          className="t-data whitespace-nowrap text-muted"
+                          title={p.last_activity_at ? relativeTime(p.last_activity_at, now, timeZone) : undefined}
+                        >
+                          {p.last_activity_at ? formatDate(isoDate(p.last_activity_at, timeZone), today) : ""}
                         </Td>
                       );
                     case "next_step":
@@ -271,5 +320,6 @@ export function PipelineTable({
         </TBody>
       </Table>
     </TableScroll>
+    </>
   );
 }

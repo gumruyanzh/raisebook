@@ -4,8 +4,10 @@ A token is 32 random bytes (base64url) emailed as
 ``${RAISEBOOK_APP_URL}/auth/verify?token=<token>``; only its sha256 is stored. It
 lives 15 minutes and is consumed atomically (``UPDATE … WHERE consumed_at IS NULL
 AND expires_at > now RETURNING``), so two clicks can never yield two sessions.
-The web page POSTs the token (``POST /v1/auth/verify``), so link scanners that
-prefetch GET URLs cannot burn it.
+The web page shows "Sign in as j***@example.com" (from the non-consuming
+``GET /v1/auth/verify/peek``) and POSTs the token (``POST /v1/auth/verify``) only
+when the person clicks Continue, so link scanners, including ones that run
+JavaScript, cannot burn it.
 """
 
 from __future__ import annotations
@@ -118,3 +120,17 @@ async def consume_login_token(db: AsyncSession, raw: str, *, now: datetime) -> L
         .execution_options(synchronize_session=False)
     )
     return result.scalar_one_or_none()
+
+
+async def peek_login_token(db: AsyncSession, raw: str, *, now: datetime) -> LoginToken | None:
+    """The live (unused, unexpired) token row for ``raw``, without spending it."""
+    if not raw or len(raw) > MAX_TOKEN_LEN:
+        return None
+    row: LoginToken | None = await db.scalar(
+        select(LoginToken).where(
+            LoginToken.token_hash == hash_token(raw),
+            LoginToken.consumed_at.is_(None),
+            LoginToken.expires_at > now,
+        )
+    )
+    return row

@@ -110,6 +110,14 @@ async def create_invite(
             details={"limit": LIMITS["members"]},
         )
     await ratelimit.enforce("invite", str(ws.workspace_id), now=now)
+    inviter_id = ws.principal.user_id
+    if inviter_id is not None:
+        # Per person across every workspace, so creating workspaces in a loop does not
+        # multiply the per-workspace allowance; brand-new accounts get a tighter cap.
+        await ratelimit.enforce("invite_user", str(inviter_id), now=now)
+        joined = await db.scalar(select(User.created_at).where(User.id == inviter_id))
+        if joined is not None and now - joined < timedelta(hours=24):
+            await ratelimit.enforce("invite_user_new", str(inviter_id), now=now)
     raw, digest = new_token()
     inv = Invite(
         workspace_id=ws.workspace_id,

@@ -42,17 +42,19 @@ The details are on [raisebook.org/privacy](https://raisebook.org/privacy).
 - **A pipeline page**: a ledger strip with committed against target, the funnel and due
   follow-ups; a board you can drag (or drive with Alt+← / Alt+→); a sortable, filterable
   table; and an investor sheet with the full timeline.
-- **Investor contacts** shared across rounds, with dedupe on email, LinkedIn and name + firm.
+- **Investor contacts** shared across rounds, with dedupe on email, LinkedIn, name + firm
+  and (when it is unambiguous) the name alone. An agent adding someone you already have fills
+  in what is missing instead of creating a duplicate or dropping its notes.
 - **An append-only timeline** that records who did what, people and agents alike. Agent
   actions are marked in their own color, with the agent's name and model.
 - **Co-founders and advisors** as owners, editors and viewers.
 - **CSV import** with column mapping, preview and dedupe. **CSV and JSON export** of a round,
   all investors or the whole workspace. Hard delete of anything, at any time.
-- **A REST API** under `/v1` and **an MCP server** at `/mcp` with 15 tools.
+- **A REST API** under `/v1` and **an MCP server** at `/mcp` with 17 tools (no deletes).
 
-## Connect your agent
+## Connect your agent (MCP quickstart)
 
-Create a key in Settings → API keys, then:
+Create a key in Settings → Connect an agent (it is shown once), then:
 
 ```bash
 claude mcp add --transport http raisebook \
@@ -60,6 +62,10 @@ claude mcp add --transport http raisebook \
   --header "Authorization: Bearer rb_live_XXXX" \
   --header "X-Agent-Name: claude-code"
 ```
+
+Keep the default (local) scope or use `--scope user`. Never use `--scope project` with a
+literal key: that writes it to a shared `.mcp.json`. An optional
+`--header "X-Agent-Model: <model>"` shows the model next to the agent's name on the timeline.
 
 Codex (`~/.codex/config.toml`):
 
@@ -70,7 +76,9 @@ bearer_token_env_var = "RAISEBOOK_API_KEY"
 http_headers = { "X-Agent-Name" = "codex" }
 ```
 
-Cursor (`.cursor/mcp.json` or `~/.cursor/mcp.json`):
+Then `export RAISEBOOK_API_KEY=rb_live_…` in the shell that starts Codex.
+
+Cursor (`~/.cursor/mcp.json`; start Cursor from a terminal so it sees `RAISEBOOK_API_KEY`):
 
 ```json
 {
@@ -86,8 +94,11 @@ Cursor (`.cursor/mcp.json` or `~/.cursor/mcp.json`):
 }
 ```
 
-Then ask: "What follow-ups are due this week in Seed?" Setup for other clients and the full
-tool reference: [raisebook.org/docs/mcp](https://raisebook.org/docs/mcp).
+Then ask: "What follow-ups are due this week in Seed?" or "Add these five investors from my
+notes to Seed and remind me Friday." The agent starts with `get_workspace`, can create a
+round (`create_round`), add up to 50 investors at once (`add_investors`) and set follow-ups
+in the same call. A read-only key only sees the read tools. Setup for other clients and the
+full tool reference: [raisebook.org/docs/mcp](https://raisebook.org/docs/mcp).
 
 ## Quick start (development)
 
@@ -131,8 +142,11 @@ cp deploy/.env.example deploy/.env   # fill in the hosts and secrets
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-Step by step: [raisebook.org/docs/self-hosting](https://raisebook.org/docs/self-hosting) and
-[`docs/DEPLOY.md`](docs/DEPLOY.md).
+Step by step: [raisebook.org/docs/self-hosting](https://raisebook.org/docs/self-hosting),
+[`docs/DEPLOY.md`](docs/DEPLOY.md) and the trust boundaries in
+[`deploy/README.md`](deploy/README.md): never expose the API port directly with
+`FORWARDED_ALLOW_IPS=*`, and keep every subdomain of your cookie domain first-party.
+Run `rbctl housekeeping` daily; it deletes expired sign-in requests, sessions and dead invites.
 
 ## Repository
 

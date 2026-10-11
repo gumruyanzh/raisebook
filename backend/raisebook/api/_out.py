@@ -51,6 +51,7 @@ def member_out(m: MemberRow, you: UUID | None) -> MemberOut:
         role=m.role,
         joined_at=m.joined_at,
         is_you=m.user_id == you,
+        active_api_keys=m.active_api_keys,
     )
 
 

@@ -103,6 +103,24 @@ async def _add(call: Call, t: Two) -> None:
     not_found(await call("add_investor", {"name": "Someone New", "round": t.b_round.slug}))
 
 
+@case("add_investors")
+async def _add_many(call: Call, t: Two) -> None:
+    items = [{"name": B_NAME, "email": B_EMAIL}, {"name": "Someone Else"}]
+    res = await call("add_investors", {"items": items})
+    assert res.ok, res.text
+    assert [r["created"] for r in res.data["results"]] == [True, True]
+    assert str(t.b_inv.id) not in json.dumps(res.data)
+    res = await call("add_investors", {"items": [{"name": "Other"}], "round": t.b_round.slug})
+    assert res.ok and res.data["results"][0]["error"].startswith("not_found"), res.text
+
+
+@case("create_round")
+async def _create_round(call: Call, t: Two) -> None:
+    res = await call("create_round", {"name": t.b_round.name})
+    assert res.ok and res.data["created"] is True, res.text  # B's round name is free in A
+    assert res.data["round"]["id"] != str(t.b_round.id)
+
+
 @case("update_investor")
 async def _update(call: Call, t: Two) -> None:
     for ref in b_investor_refs(t):

@@ -39,7 +39,7 @@ const ENTRIES: Entry[] = [
       {
         label: "Agents",
         items: [
-          "An MCP server at /mcp with 15 tools, for Claude Code, Codex, Cursor and other MCP clients.",
+          "An MCP server at /mcp with 17 tools, for Claude Code, Codex, Cursor and other MCP clients.",
           "Workspace API keys with read, write and admin scopes. Agent actions are marked in orchid.",
           "A REST API under /v1 that mirrors the MCP tools.",
         ],

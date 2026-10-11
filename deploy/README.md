@@ -54,13 +54,30 @@ docker compose -f deploy/docker-compose.yml up -d --build   # migrate runs befor
 dc="docker compose -f deploy/docker-compose.yml"
 $dc exec api rbctl --help                          # admin CLI
 $dc exec api rbctl seed-demo --email you@example.com   # fictional sample workspace
-$dc exec api rbctl housekeeping                    # expired tokens and old rate-limit windows
+$dc exec api rbctl housekeeping                    # expired tokens/sessions, dead invites, old rate-limit windows
 $dc logs -f api                                    # JSON logs; no request bodies, emails or investor data
 ```
 
 Run `rbctl housekeeping` daily from cron. Back up with `deploy/backup.sh` (see the header of
 the script). Restore a dump into an empty database with
 `pg_restore --clean --if-exists --no-owner -d raisebook <file>`.
+
+## Trust boundaries
+
+- **Forwarded client IPs.** The API trusts `X-Forwarded-For` only from `FORWARDED_ALLOW_IPS`
+  (default `172.30.0.0/24`, the compose network's fixed subnet, where only Caddy reaches the
+  API). Per-IP limits (sign-in emails, failed API keys, anonymous lookups) depend on it. If you
+  publish the API port directly or run behind a different proxy, set `FORWARDED_ALLOW_IPS` to
+  that proxy's address. **Never set it to `*` when the API is reachable without the proxy**:
+  anyone could then spoof their IP and bypass those limits.
+- **Session cookie domain.** `rb_session` and `rb_csrf` are scoped to
+  `RAISEBOOK_SESSION_COOKIE_DOMAIN` (the parent domain), so every subdomain of it receives the
+  session cookie. Every subdomain must be first-party, run by you, inside the same trust
+  boundary. Never point a subdomain at third-party hosting (status pages, docs builders,
+  landing-page tools), remove DNS records for anything you shut down so it cannot be taken
+  over, and run staging on a separate registrable domain, not `staging.raisebook.org`.
+- **Backups.** `backup.sh` writes dumps with `umask 077` into a `700` directory. Encrypt a dump
+  (for example with `age` and an offline key) before it leaves the host.
 
 ## Local check without a domain
 

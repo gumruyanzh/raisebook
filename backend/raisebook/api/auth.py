@@ -1,9 +1,11 @@
 """Sign-in: ``/v1/auth`` (magic link → session cookie), SPEC §4.1, §5.4.
 
 1. ``POST /v1/auth/magic-link {email}`` → always 202 (no account enumeration).
-2. The emailed link opens the web page ``/auth/verify?token=…``, which POSTs the
-   token to ``POST /v1/auth/verify``; that sets ``rb_session`` (HttpOnly) and
-   ``rb_csrf`` (readable) and returns the user, CSRF token and workspaces.
+2. The emailed link opens the web page ``/auth/verify?token=…``. It shows the
+   masked email (``GET /v1/auth/verify/peek``, which does not spend the token)
+   and POSTs the token to ``POST /v1/auth/verify`` only when the person clicks
+   Continue; that sets ``rb_session`` (HttpOnly) and ``rb_csrf`` (readable) and
+   returns the user, CSRF token and workspaces.
 3. Unsafe cookie requests send ``X-CSRF-Token``.
 """
 
@@ -11,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +42,7 @@ from raisebook.schemas.auth import (
     SessionOut,
     UserOut,
     VerifyOut,
+    VerifyPeekOut,
     VerifyRequest,
 )
 from raisebook.schemas.common import ERROR_RESPONSES
@@ -86,6 +89,22 @@ async def request_magic_link(
     return MagicLinkOut(sent=True, dev_link=result.link)
 
 
+@router.get(
+    "/verify/peek",
+    response_model=VerifyPeekOut,
+    dependencies=[Depends(rate_limit("anon_ip"))],
+)
+async def verify_peek(
+    token: str = Query(..., min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_session),
+    now: datetime = Depends(get_now),
+) -> JSONResponse:
+    """Whether a sign-in link is still valid, with a masked email. Does not spend it."""
+    res = await auth_svc.peek(db, token, now=now)
+    out = VerifyPeekOut(valid=res.valid, email_hint=res.email_hint)
+    return JSONResponse(out.model_dump(mode="json"), headers=NO_STORE)
+
+
 @router.post("/verify", response_model=VerifyOut, dependencies=[Depends(rate_limit("anon_ip"))])
 async def verify(
     body: VerifyRequest,
@@ -94,10 +113,20 @@ async def verify(
     now: datetime = Depends(get_now),
 ) -> JSONResponse:
     """Spend a sign-in token: sets the session cookies. 400 ``invalid_token`` when the
-    token is unknown, used or expired."""
+    token is unknown, used or expired. 409 ``session_conflict`` when this browser is
+    signed in as a different user and ``switch_account`` is not true (nothing is spent)."""
+    current = await load_session(db, request.cookies.get(SESSION_COOKIE), now=now)
     res = await auth_svc.verify(
-        db, body.token, now=now, user_agent=request.headers.get("user-agent"), ip=_ip(request)
+        db,
+        body.token,
+        now=now,
+        user_agent=request.headers.get("user-agent"),
+        ip=_ip(request),
+        signed_in_email=str(current[1].email) if current else None,
+        switch_account=body.switch_account,
     )
+    if current is not None and current[1].id != res.user.id:
+        await revoke_session(db, current[0].id, now=now)
     out = VerifyOut(
         user=UserOut.model_validate(res.user),
         csrf_token=csrf_token_for(res.session.id),

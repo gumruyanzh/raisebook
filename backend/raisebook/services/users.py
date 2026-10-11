@@ -25,7 +25,8 @@ def display_name(user: User | None) -> str:
         return FORMER_MEMBER
     if user.name:
         return user.name
-    return str(user.email).split("@", 1)[0]
+    # Only accounts from before names were asked for: the full address, never a bare handle.
+    return str(user.email)
 
 
 async def get_by_email(db: AsyncSession, email: str) -> User | None:
@@ -51,6 +52,9 @@ def clean_name(raw: str | None) -> str | None:
         return None
     if len(name) > 120:
         raise ValidationFailed("name", "Name must be at most 120 characters.")
+    from raisebook.services.workspaces import reject_links
+
+    reject_links("name", name, "Your name")
     return name
 
 

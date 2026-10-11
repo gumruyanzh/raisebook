@@ -70,7 +70,8 @@ export function FitMeter({
     set(n);
     focusValue(e.currentTarget, n);
   };
-  // A radio group of six (0–5): the "0" item clears, pips 1–5 set the fit. Roving tabindex.
+  // A radio group of six (0–5): the "0" item (shown as a small "clear" once a fit is set)
+  // clears, pips 1–5 set the fit. Roving tabindex.
   return (
     <span
       role="radiogroup"
@@ -89,17 +90,18 @@ export function FitMeter({
           role="radio"
           data-fit={i}
           aria-checked={i === v}
-          aria-label={`${i} of 5`}
-          tabIndex={disabled ? -1 : i === v ? 0 : -1}
+          aria-label={i === 0 ? "Unrated (clear fit)" : `${i} of 5`}
+          tabIndex={disabled ? -1 : i === (v === 0 ? 1 : v) ? 0 : -1}
           onClick={() => set(i)}
           className={cn(
             "flex items-center justify-center rounded-xs",
             disabled ? "cursor-not-allowed" : "cursor-pointer",
-            i === 0 ? "mr-4 h-14 w-12 hover:text-fg" : "h-14 w-8",
+            i === 0 ? "order-last ml-6 h-14 font-body text-micro hover:text-fg focus-visible:text-fg" : "h-14 w-8",
+            i === 0 && v === 0 && "sr-only",
           )}
         >
           {i === 0 ? (
-            <span aria-hidden className={cn(v === 0 && "text-fg")}>0</span>
+            <span aria-hidden>clear</span>
           ) : (
             <i
               className={cn(
@@ -111,7 +113,7 @@ export function FitMeter({
         </span>
       ))}
       <span className="ml-4" aria-hidden>
-        {v}/5
+        {v ? `${v}/5` : "unrated"}
       </span>
     </span>
   );

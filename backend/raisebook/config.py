@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     session_cookie_domain: str | None = None
     session_cookie_secure: bool = True
     session_ttl_hours: int = 24 * 30
+    # Absolute lifetime: a session ends this many days after sign-in, however active.
+    session_max_days: int = 90
     session_touch_interval_s: int = 300
     magic_link_ttl_minutes: int = 15
     invite_ttl_days: int = 7

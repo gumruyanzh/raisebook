@@ -9,9 +9,9 @@ export default function NotFound() {
         title="There is no page at this address"
         actions={
           <>
-            <ButtonLink href="/app">Open Raisebook</ButtonLink>
+            <ButtonLink href="/app">Go to your workspace</ButtonLink>
             <ButtonLink href="/" variant="ghost">
-              Home
+              Marketing site
             </ButtonLink>
           </>
         }

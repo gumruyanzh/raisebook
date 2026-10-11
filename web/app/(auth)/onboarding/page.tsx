@@ -22,7 +22,11 @@ export default async function OnboardingPage() {
   }
   return (
     <Suspense>
-      <Onboarding csrf={s.session.csrf_token} workspaces={s.session.workspaces} />
+      <Onboarding
+        csrf={s.session.csrf_token}
+        workspaces={s.session.workspaces}
+        userName={s.session.user.name ?? null}
+      />
     </Suspense>
   );
 }

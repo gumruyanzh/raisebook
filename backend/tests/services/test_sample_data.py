@@ -29,7 +29,7 @@ async def test_sample_workspace_shape(db: AsyncSession, frozen_now: Any) -> None
     investors = list(await db.scalars(select(Investor).where(Investor.workspace_id == ws.id)))
     assert len(investors) == len(PEOPLE) == 40
     for inv in investors:
-        assert inv.email is None or str(inv.email).endswith("@example.com")
+        assert inv.email is None or str(inv.email).split("@")[1].endswith("example.com")
         assert inv.linkedin_url is None or "/in/example-" in inv.linkedin_url
         # Derived columns are exactly what the services compute.
         state = {
@@ -118,3 +118,32 @@ async def test_sample_workspace_shape(db: AsyncSession, frozen_now: Any) -> None
         )
         > 150
     )
+
+
+async def test_sample_data_reads_like_a_real_raise(db: AsyncSession, frozen_now: Any) -> None:
+    """Review fix: plausible soft-circle, varied notes and times, contacts predate history."""
+    user = await make_user(db)
+    ws = await create_sample_workspace(db, user=user, now=frozen_now)
+    seed = await db.scalar(select(Round).where(Round.workspace_id == ws.id, Round.name == "Seed"))
+    assert seed is not None
+    rows = (
+        await db.execute(
+            select(RoundParticipant, RoundStage)
+            .join(RoundStage, RoundStage.id == RoundParticipant.stage_id)
+            .where(RoundParticipant.round_id == seed.id)
+        )
+    ).tuples()
+    parts = list(rows)
+    soft = sum(p.amount_soft or 0 for p, st in parts if st.kind in ("open", "active"))
+    assert 1.5 * seed.target_amount <= soft <= 2.5 * seed.target_amount, soft
+    notes = {p.follow_up_note for p, _ in parts if p.follow_up_note}
+    assert len(notes) >= 8
+    acts = list(await db.scalars(select(Activity).where(Activity.workspace_id == ws.id)))
+    times = {a.occurred_at.astimezone().strftime("%H:%M") for a in acts}
+    assert len(times) >= 10
+    first: dict[Any, Any] = {}
+    for a in acts:
+        if a.investor_id not in first or a.occurred_at < first[a.investor_id]:
+            first[a.investor_id] = a.occurred_at
+    for inv in await db.scalars(select(Investor).where(Investor.workspace_id == ws.id)):
+        assert inv.created_at <= first[inv.id], inv.name

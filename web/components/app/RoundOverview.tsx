@@ -6,6 +6,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import {
   ActorName,
+  Button,
   DefList,
   Ledger,
   ledgerFromSummary,
@@ -105,11 +106,16 @@ export function RoundOverview({
     }
   }, [client, round.id, toast]);
 
-  const bump = async (f: FollowUpItem) => {
+  const closed = round.status === "closed";
+  const followUpAction = async (f: FollowUpItem, action: "done" | "snooze") => {
     setBusy(f.investor.id);
     try {
-      await setFollowUp(client, round.id, f.investor.id, { in_days: 7 });
-      toast.show(`Next follow-up with ${f.investor.name} set for a week from today.`);
+      await setFollowUp(client, round.id, f.investor.id, action === "done" ? { clear: true } : { in_days: 7 });
+      toast.show(
+        action === "done"
+          ? `Follow-up with ${f.investor.name} marked done.`
+          : `Follow-up with ${f.investor.name} moved to a week from today.`,
+      );
       await reload();
     } catch (err) {
       toast.show(errorMessage(err));
@@ -118,9 +124,11 @@ export function RoundOverview({
     }
   };
 
+  // "Reached": the share of active (not passed) investors who got at least this far, so the
+  // first stage is 100% and Passed never dilutes the funnel.
   const funnelRows = useMemo(() => {
-    const total = summary.counts.total || 0;
     const nonLost = summary.funnel.filter((f) => f.kind !== "lost");
+    const total = nonLost.reduce((s, x) => s + x.count, 0);
     return summary.funnel.map((f) => {
       const reached =
         f.kind === "lost" || total === 0
@@ -142,6 +150,10 @@ export function RoundOverview({
   const agents = useMemo(() => agentRows(agentActivity), [agentActivity]);
   const daysLeft = summary.round.days_to_close;
   const ledger = ledgerFromSummary(summary);
+  // Overdue lives in the ledger and Follow-ups, quiet conversations in Going quiet: only the
+  // rest (an amount missing in Committed, a passed target date) is said here, once, quietly.
+  const notes = summary.warnings.filter((w) => !/overdue|no activity/i.test(w));
+  const hasProbabilities = summary.money.weighted_pipeline > 0 || summary.money.soft_circled === 0;
 
   return (
     <div className="grid grid-cols-1 gap-14 xl:grid-cols-12">
@@ -149,19 +161,14 @@ export function RoundOverview({
         <Ledger
           {...ledger}
           variant="full"
+          today={today}
+          hasProbabilities={hasProbabilities}
           onStageSelect={(key) => router.push(`${pipeline}?stage=${encodeURIComponent(key)}`)}
           onDueSelect={(id) => router.push(`${pipeline}?investor=${id}`)}
+          onDueFilter={() => router.push(`${pipeline}?view=table&follow=due&sort=follow_up`)}
         />
 
-        {summary.warnings.length ? (
-          <ul className="m-0 flex list-none flex-col gap-4 rounded-md border border-warm bg-warm-soft p-12 text-fg">
-            {summary.warnings.map((w) => (
-              <li key={w} className="t-body-s">
-                {w}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        {notes.length ? <p className="t-body-s -mt-4 text-muted">{notes.join(" ")}</p> : null}
 
         <section aria-label="Funnel">
           <SectionLabel>Funnel</SectionLabel>
@@ -173,7 +180,11 @@ export function RoundOverview({
                   <Th align="right">Investors</Th>
                   <Th align="right">Soft</Th>
                   <Th align="right">Committed</Th>
-                  <Th align="right">Reached</Th>
+                  {closed ? null : (
+                    <Th align="right">
+                      <span title="Share of active investors who got at least this far">Reached</span>
+                    </Th>
+                  )}
                 </Tr>
               </THead>
               <TBody>
@@ -186,12 +197,14 @@ export function RoundOverview({
                     <Td variant="num" title={f.amount_soft ? money(f.amount_soft, cur) : undefined}>
                       {f.amount_soft ? moneyCompact(f.amount_soft, cur) : ""}
                     </Td>
-                    <Td variant="num" className={f.amount_committed ? "text-good" : undefined} title={f.amount_committed ? money(f.amount_committed, cur) : undefined}>
+                    <Td variant="num" className={f.amount_committed ? "text-good-ink" : undefined} title={f.amount_committed ? money(f.amount_committed, cur) : undefined}>
                       {f.amount_committed ? moneyCompact(f.amount_committed, cur) : ""}
                     </Td>
-                    <Td variant="num" className="text-muted">
-                      {f.reached === null ? "" : pct(Math.round(f.reached * 100))}
-                    </Td>
+                    {closed ? null : (
+                      <Td variant="num" className="text-muted">
+                        {f.reached === null ? "" : pct(Math.round(f.reached * 100))}
+                      </Td>
+                    )}
                   </Tr>
                 ))}
               </TBody>
@@ -207,6 +220,7 @@ export function RoundOverview({
             timeZone={tz}
             currency={cur}
             withInvestor
+            investorHref={(a) => `${pipeline}?investor=${a.investor_id}`}
             filterable
             empty="Nothing has happened in this round yet."
           />
@@ -214,6 +228,7 @@ export function RoundOverview({
       </div>
 
       <aside className="flex min-w-0 flex-col gap-14 xl:col-span-4" aria-label="Round details">
+        {closed ? null : (
         <Panel
           title="Follow-ups"
           aside={
@@ -255,15 +270,26 @@ export function RoundOverview({
                               {f.follow_up_note || f.next_step || ""}
                             </p>
                             {canWrite ? (
-                              <button
-                                type="button"
-                                disabled={busy === f.investor.id}
-                                onClick={() => void bump(f)}
-                                className="link t-body-s shrink-0 border-0 bg-transparent p-0 whitespace-nowrap disabled:opacity-50"
-                                title="Mark done and follow up again in 7 days"
-                              >
-                                {busy === f.investor.id ? "Saving…" : "Done → +7d"}
-                              </button>
+                              <span className="flex shrink-0 items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={busy === f.investor.id}
+                                  onClick={() => void followUpAction(f, "done")}
+                                  title="Clear this follow-up"
+                                >
+                                  Done
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={busy === f.investor.id}
+                                  onClick={() => void followUpAction(f, "snooze")}
+                                  title="Follow up a week from today instead"
+                                >
+                                  Snooze 7d
+                                </Button>
+                              </span>
                             ) : null}
                           </div>
                         </li>
@@ -281,6 +307,7 @@ export function RoundOverview({
             </div>
           )}
         </Panel>
+        )}
 
         <Panel
           title="Round terms"
@@ -323,7 +350,15 @@ export function RoundOverview({
           />
         </Panel>
 
-        <Panel title="Going quiet" aside={<span className="t-micro text-muted">No activity in 14+ days</span>}>
+        {closed ? null : (
+        <Panel
+          title="Going quiet"
+          aside={
+            <span className="t-micro text-muted">
+              {summary.stale.length ? `${num(summary.stale.length)} · ` : ""}no activity in 14+ days
+            </span>
+          }
+        >
           {summary.stale.length === 0 ? (
             <p className="t-body-s text-muted">Every active conversation has moved in the last two weeks.</p>
           ) : (
@@ -340,6 +375,7 @@ export function RoundOverview({
             </ul>
           )}
         </Panel>
+        )}
 
         <Panel title="Agents" aside={<span className="t-micro text-muted">Last 7 days</span>}>
           {agents.length === 0 ? (

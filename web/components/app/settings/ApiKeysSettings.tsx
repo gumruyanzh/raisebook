@@ -100,11 +100,11 @@ export function ApiKeysSettings({ keys: k0, today }: { keys: ApiKey[] | null; to
     });
 
   return (
-    <div className="flex max-w-[1040px] flex-col gap-24">
+    <div className="flex flex-col gap-24">
       <section aria-label="API keys">
         <SectionLabel
           aside={
-            isOwner ? (
+            isOwner && keys.length > 0 ? (
               <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
                 Create key
               </Button>

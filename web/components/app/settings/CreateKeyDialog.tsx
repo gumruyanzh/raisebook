@@ -61,7 +61,13 @@ export function KeyFields({ d, set, compact }: { d: KeyDraft; set: (d: KeyDraft)
       </div>
       <fieldset className="m-0 flex flex-col gap-8 border-0 p-0">
         <legend className="mb-6 text-[12px] text-muted">Scopes</legend>
-        <Checkbox checked disabled label="Read" hint="Rounds, investors, timelines, follow-ups and exports. Always on." />
+        <Checkbox
+          checked
+          disabled
+          label="Read"
+          badge="Always on"
+          hint="Rounds, investors, timelines, follow-ups and exports."
+        />
         <Checkbox
           checked={d.write || d.admin}
           disabled={d.admin}

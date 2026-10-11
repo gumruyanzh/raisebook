@@ -131,7 +131,7 @@ async def test_sample_workspace(db: AsyncSession, session_client: Any, frozen_no
     )
     assert n_inv == 40
     investors = list(await db.scalars(select(Investor).where(Investor.workspace_id == wid)))
-    assert all(i.email is None or i.email.endswith("@example.com") for i in investors)
+    assert all(i.email is None or i.email.split("@")[1].endswith("example.com") for i in investors)
     assert all(
         i.linkedin_url is None or i.linkedin_url.startswith("https://www.linkedin.com/in/example-")
         for i in investors

@@ -37,7 +37,7 @@ export function Meter({
         />
       </div>
       {over ? (
-        <span className="t-micro whitespace-nowrap text-good">
+        <span className="t-micro whitespace-nowrap text-good-ink">
           {pct(Math.round(ratio))} of target
         </span>
       ) : null}

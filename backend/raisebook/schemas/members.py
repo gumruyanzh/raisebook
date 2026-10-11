@@ -19,6 +19,11 @@ class MemberOut(BaseModel):
     role: RoleName
     joined_at: Timestamp
     is_you: bool
+    active_api_keys: int = Field(
+        0,
+        description="Active API keys this person created. They are revoked if the member "
+        "is removed, leaves, or (for an owner) is demoted.",
+    )
 
 
 class MemberUpdate(StrictInput):

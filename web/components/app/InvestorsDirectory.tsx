@@ -30,7 +30,7 @@ import { listInvestors, type InvestorQuery, type InvestorSort } from "@/lib/api/
 import { bulkAddParticipants } from "@/lib/api/rounds";
 import type { Investor, InvestorType, Page, Round } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
-import { formatDate, isoDate, num, plural } from "@/lib/format";
+import { formatDate, isoDate, num, plural, stageFocusLabel, firmText } from "@/lib/format";
 import { useWorkspace } from "@/lib/session";
 
 import { AddInvestorDialog } from "./AddInvestorDialog";
@@ -316,12 +316,12 @@ export function InvestorsDirectory({
                         </Link>
                         {i.title ? <span className="t-body-s block text-muted">{i.title}</span> : null}
                       </Td>
-                      <Td>{i.firm ?? ""}</Td>
+                      <Td className={i.firm ? undefined : "text-muted"}>{firmText(i.firm, i.type)}</Td>
                       <Td variant="muted" className="whitespace-nowrap">
                         {INVESTOR_TYPE_LABEL[i.type]}
                       </Td>
                       <Td className="t-data whitespace-nowrap">{checkSize(i, workspace.default_currency)}</Td>
-                      <Td variant="muted">{i.stage_focus.join(", ")}</Td>
+                      <Td variant="muted">{i.stage_focus.map(stageFocusLabel).join(", ")}</Td>
                       <Td variant="muted">{i.location ?? ""}</Td>
                       <Td>
                         <span className="flex flex-col gap-2">

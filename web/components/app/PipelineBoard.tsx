@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
 
 import { Board, BoardCard, BoardColumn, Menu, StageDot } from "@/components/ui";
 import type { Investor, Participant, Round, Stage } from "@/lib/api/types";
@@ -47,6 +55,31 @@ export function PipelineBoard({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [shown, setShown] = useState<Record<string, number>>({});
   const boardRef = useRef<HTMLDivElement>(null);
+  // The lost stage (Passed) starts as a 44px rail from 640px up, so the stages that matter fit.
+  const [lostOpen, setLostOpen] = useState(false);
+  const [wide, setWide] = useState(false);
+  const [fade, setFade] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 640px)");
+    const on = () => setWide(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const updateFade = useCallback(() => {
+    const el = boardRef.current;
+    if (!el) return;
+    setFade(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
+  }, []);
+  useEffect(() => {
+    updateFade();
+    window.addEventListener("resize", updateFade);
+    return () => window.removeEventListener("resize", updateFade);
+  }, [updateFade, lostOpen, wide, stages.length]);
+  const collapsedKey = wide && !lostOpen ? (stages.find((s) => s.kind === "lost")?.key ?? null) : null;
+  const columns = collapsedKey
+    ? stages.map((s) => (s.key === collapsedKey ? "44px" : "minmax(var(--col-min), 1fr)")).join(" ")
+    : undefined;
 
   const byStage = useMemo(() => {
     const m: Record<string, Participant[]> = {};
@@ -106,7 +139,8 @@ export function PipelineBoard({
   };
 
   return (
-    <Board ref={boardRef} aria-label={`${round.name} board`}>
+    <div className="relative">
+    <Board ref={boardRef} aria-label={`${round.name} board`} columns={columns} onScroll={updateFade}>
       {stages.map((s) => {
         const cards = byStage[s.key] ?? [];
         const limit = shown[s.key] ?? PAGE;
@@ -117,6 +151,9 @@ export function PipelineBoard({
         return (
           <BoardColumn
             key={s.key}
+            collapsed={s.key === collapsedKey}
+            onExpand={() => setLostOpen(true)}
+            onCollapse={wide && s.kind === "lost" && lostOpen ? () => setLostOpen(false) : undefined}
             label={s.label}
             color={s.color}
             count={cards.length}
@@ -169,6 +206,7 @@ export function PipelineBoard({
                     agentMark={agentMarks[id] ? { tip: agentMarks[id].tip } : null}
                     dragging={dragId === id}
                     draggable={canWrite}
+                    hint={canWrite ? undefined : "View only"}
                     aria-keyshortcuts={canWrite ? "Alt+ArrowRight Alt+ArrowLeft M" : undefined}
                     aria-label={`${p.investor.name}${p.investor.firm ? `, ${p.investor.firm}` : ""}. ${s.label}.`}
                     onClick={() => onOpen(id)}
@@ -215,5 +253,12 @@ export function PipelineBoard({
         );
       })}
     </Board>
+      {fade ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute top-0 right-0 bottom-8 w-48 bg-linear-to-l from-canvas to-transparent"
+        />
+      ) : null}
+    </div>
   );
 }

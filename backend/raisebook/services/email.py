@@ -118,12 +118,15 @@ def magic_link_email(to: str, link: str, *, ttl_minutes: int) -> OutboundEmail:
 def invite_email(
     to: str, link: str, *, workspace_name: str, inviter: str | None, role: str, ttl_days: int
 ) -> OutboundEmail:
-    who = inviter or "A teammate"
+    # The subject is fixed: names are user-supplied, so they only appear in the body,
+    # quoted, and never decide what the email claims to be.
+    who = f'"{inviter}"' if inviter else "A teammate"
     return OutboundEmail(
         to=to,
-        subject=f"{who} invited you to {workspace_name} on Raisebook",
+        subject="You're invited to a workspace on Raisebook",
         text=(
-            f"{who} invited you to join {workspace_name} on Raisebook as {role}.\n\n"
+            f'{who} invited you to join the workspace "{workspace_name}" on Raisebook as '
+            f"{role}.\n\n"
             f"Accept within {ttl_days} days:\n\n{link}\n\n"
             "Raisebook is a free, open-source fundraising CRM. If you were not expecting this "
             "invite, ignore this email.\n"

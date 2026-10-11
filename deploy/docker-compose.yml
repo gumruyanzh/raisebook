@@ -113,3 +113,8 @@ volumes:
 
 networks:
   internal:
+    # Fixed subnet: the API trusts X-Forwarded-For only from here (FORWARDED_ALLOW_IPS in
+    # api.Dockerfile). Change both together.
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

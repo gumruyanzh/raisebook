@@ -15,14 +15,14 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import typer
-from sqlalchemy import delete, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.magic_link import normalize_email
 from raisebook.core.clock import get_now
 from raisebook.core.database import dispose_engine, get_sessionmaker
 from raisebook.core.errors import APIError
-from raisebook.models.user import LoginToken, User, UserSession
+from raisebook.models.user import User
 from raisebook.models.workspace import ApiKey, Membership, Workspace
 from raisebook.services import api_keys as keys_svc
 from raisebook.services import workspaces as ws_svc
@@ -245,29 +245,17 @@ def seed_demo(
 
 @app.command("housekeeping")
 def housekeeping() -> None:
-    """Delete expired sign-in tokens and sessions, and rate-limit windows older than a day."""
+    """Delete expired sign-in tokens and sessions, revoked or long-expired invites, and
+    rate-limit windows older than a day."""
     from raisebook.core.ratelimit import delete_old_windows
+    from raisebook.services.housekeeping import purge
 
     async def go(s: AsyncSession) -> dict[str, int]:
         now = get_now()
-        tokens = await s.execute(
-            delete(LoginToken).where(LoginToken.expires_at < now - timedelta(days=1))
-        )
-        sessions = await s.execute(
-            delete(UserSession).where(
-                or_(
-                    UserSession.expires_at < now,
-                    UserSession.revoked_at < now - timedelta(days=1),
-                )
-            )
-        )
+        counts = await purge(s, now=now)
         await s.commit()
-        windows = await delete_old_windows(now - timedelta(days=1))
-        return {
-            "login_tokens": int(getattr(tokens, "rowcount", 0) or 0),
-            "sessions": int(getattr(sessions, "rowcount", 0) or 0),
-            "rate_limit_windows": windows,
-        }
+        counts["rate_limit_windows"] = await delete_old_windows(now - timedelta(days=1))
+        return counts
 
     _emit({"deleted": _run(go)})
 

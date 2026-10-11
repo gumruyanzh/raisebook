@@ -10,7 +10,11 @@ export type ButtonSize = "sm" | "md" | "lg";
 
 const VARIANT: Record<ButtonVariant, string> = {
   // One primary per view: the main action (SYSTEM 3.1).
-  primary: "bg-accent text-accent-ink border border-accent hover:brightness-110",
+  // Disabled (not busy) primaries drop the cobalt: a washed-out accent reads as "broken".
+  primary:
+    "bg-accent text-accent-ink border border-accent hover:brightness-110 " +
+    "disabled:[&:not([aria-busy=true])]:bg-sunk disabled:[&:not([aria-busy=true])]:text-muted " +
+    "disabled:[&:not([aria-busy=true])]:border-line disabled:[&:not([aria-busy=true])]:opacity-100",
   secondary: "bg-surface text-fg border border-line hover:border-muted",
   ghost: "bg-transparent text-muted border border-transparent hover:bg-sunk hover:text-fg",
   // Only inside confirm dialogs (at most one solid red element per view).

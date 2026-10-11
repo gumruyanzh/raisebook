@@ -274,7 +274,7 @@ export function ImportFlow({ initialRound }: { initialRound?: string }) {
             </p>
             <div className="flex flex-wrap gap-8">
               <Button
-                variant="primary"
+                variant={text.trim() ? "primary" : "secondary"}
                 disabled={!text.trim()}
                 busy={busy}
                 onClick={() => void loadPreview(false, format === "csv" ? "columns" : "review")}
@@ -562,7 +562,7 @@ function CountsStrip({ preview, roundName }: { preview: ImportPreview; roundName
 function Warnings({ items }: { items: string[] }) {
   if (!items.length) return null;
   return (
-    <ul className="t-body-s flex flex-col gap-4 text-warm">
+    <ul className="t-body-s flex flex-col gap-4 text-warm-ink">
       {items.map((w) => (
         <li key={w}>{w}</li>
       ))}

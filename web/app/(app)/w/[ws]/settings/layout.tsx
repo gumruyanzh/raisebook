@@ -16,7 +16,7 @@ export default async function SettingsLayout({
       <PageHeader title="Settings" />
       <div className="grid grid-cols-1 gap-16 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-24">
         <SettingsNav base={base} />
-        <div className="min-w-0">{children}</div>
+        <div className="min-w-0 max-w-[960px]">{children}</div>
       </div>
     </>
   );

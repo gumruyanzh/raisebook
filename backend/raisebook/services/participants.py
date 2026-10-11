@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raisebook.auth.principal import WorkspaceContext
 from raisebook.core.actor import Actor
 from raisebook.core.errors import NotFound, NotInRound, ValidationFailed
-from raisebook.core.refs import resolve_stage
+from raisebook.core.refs import how, resolve_stage
 from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant, RoundStage
 from raisebook.models.user import User
@@ -97,8 +97,9 @@ async def require_participant(
     row = await get_participant(db, ws, rnd.id, inv.id)
     if row is None:
         raise NotInRound(
-            f"{inv.name} is not in round {rnd.name}. Add them with add_to_round "
-            f"(POST /v1/rounds/{rnd.slug}/participants).",
+            f"{inv.name} is not in round {rnd.name}. Add them with "
+            + how(ws, "add_to_round", f"POST /v1/rounds/{rnd.slug}/participants")
+            + ".",
             details={"investor_id": str(inv.id), "round": str(rnd.slug)},
         )
     return row
@@ -137,7 +138,9 @@ async def owner_from_email(db: AsyncSession, ws: WorkspaceContext, email: str) -
     )
     if uid is None:
         raise ValidationFailed(
-            "owner_email", f"{email!r} is not a member of this workspace (GET /v1/members)."
+            "owner_email",
+            f"{email!r} is not a member of this workspace "
+            + how(ws, "(use a member's sign-in email).", "(GET /v1/members)."),
         )
     return uid
 

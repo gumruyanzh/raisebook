@@ -21,4 +21,4 @@ export const SPONSOR_URL =
 export const SNIPPETS_CHECKED_ON = "2026-10-10";
 
 /** Number of MCP tools (SPEC §6.4). */
-export const MCP_TOOL_COUNT = 15;
+export const MCP_TOOL_COUNT = 17;

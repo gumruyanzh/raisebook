@@ -118,17 +118,17 @@ async def round_summary(
             f"{_plural(won_without_amount, 'investor', 'investors')} {verb} in {won_label} "
             "without an amount."
         )
-    if due.counts.overdue:
+    is_open = rnd.status == "open"
+    if is_open and due.counts.overdue:
         warnings.append(f"{_plural(due.counts.overdue, 'follow-up is', 'follow-ups are')} overdue.")
-    if stale:
+    if is_open and stale:
         warnings.append(
             f"{_plural(len(stale), 'conversation has', 'conversations have')} had no activity "
             f"for {STALE_DAYS}+ days."
         )
     if rnd.status == "open" and days_to_close is not None and days_to_close < 0:
         warnings.append(f"The target close date passed {-days_to_close} days ago.")
-    if target and committed > target:
-        warnings.append("Committed money is above the target (oversubscribed).")
+    # Oversubscription is good news, not a warning: money.pct_of_target already says it.
 
     return RoundSummaryOut(
         round=RoundWithClose(**base.model_dump(), days_to_close=days_to_close),

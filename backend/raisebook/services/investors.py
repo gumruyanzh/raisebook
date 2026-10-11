@@ -25,7 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import WorkspaceContext
 from raisebook.core.actor import Actor
-from raisebook.core.errors import Duplicate, LimitReached, ValidationFailed, not_found
+from raisebook.core.errors import (
+    AmbiguousReference,
+    Duplicate,
+    LimitReached,
+    ValidationFailed,
+    not_found,
+)
 from raisebook.models.enums import Via
 from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant, RoundStage
@@ -42,6 +48,7 @@ from raisebook.services.normalize import (
     derived_fields,
     linkedin_key,
     merge_lists,
+    name_key,
     normalize_investor_input,
 )
 from raisebook.services.stages import stage_out
@@ -69,6 +76,7 @@ class AddResult:
     created: bool
     matched_on: MatchedOn | None = None
     filled_fields: list[str] | None = None
+    not_applied: list[str] = field(default_factory=list)
 
 
 def _state(inv: Investor) -> dict[str, Any]:
@@ -311,6 +319,84 @@ async def update(
     return UpdateResult(investor, changed)
 
 
+async def _same_name(db: AsyncSession, ws: WorkspaceContext, name: str) -> list[Investor]:
+    """Investors whose normalized name equals ``name``'s (any firm)."""
+    prefix = name_key(name, None)  # "<norm name>|"
+    like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = await db.scalars(
+        select(Investor)
+        .where(Investor.workspace_id == ws.workspace_id, Investor.name_key.like(like, escape="\\"))
+        .order_by(Investor.created_at, Investor.id)
+        .limit(6)
+    )
+    return list(rows)
+
+
+def _compatible(inv: Investor, clean: Mapping[str, Any]) -> bool:
+    """False when the stored contact clearly belongs to someone else (different email,
+    LinkedIn profile or firm)."""
+    email = clean.get("email")
+    if email and inv.email and str(inv.email).lower() != str(email).lower():
+        return False
+    lk = linkedin_key(clean.get("linkedin_url"))
+    if lk and inv.linkedin_key and inv.linkedin_key != lk:
+        return False
+    firm = clean.get("firm")
+    return not (firm and inv.firm and name_key("x", inv.firm) != name_key("x", firm))
+
+
+async def _name_match(
+    db: AsyncSession, ws: WorkspaceContext, clean: Mapping[str, Any]
+) -> Match | None:
+    """Name-only dedupe for agents working from notes ("Jonas Feld", no firm).
+
+    Without a firm: the one same-name investor whose email/LinkedIn do not conflict.
+    With a firm: the one same-name investor that has no firm yet. Several candidates
+    raise 409 ``ambiguous_reference`` listing them (``create_anyway`` skips this).
+    """
+    name = clean.get("name")
+    if not name:
+        return None
+    rows = [r for r in await _same_name(db, ws, str(name)) if _compatible(r, clean)]
+    if clean.get("firm"):
+        rows = [r for r in rows if not r.firm]
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return Match(rows[0], "name")
+    raise AmbiguousReference(
+        f"Several investors are named {name!r}. Pass their firm, email or LinkedIn URL to pick "
+        "one (or use their id with update_investor), or on_duplicate='create_anyway' to add "
+        "a new person.",
+        details={
+            "candidates": [
+                {"id": str(r.id), "name": r.name, "firm": r.firm, "email": r.email} for r in rows
+            ]
+        },
+    )
+
+
+def _not_applied(before: Mapping[str, Any], clean: Mapping[str, Any]) -> list[str]:
+    """Fields the caller sent whose value differs from what is stored (lists: items the
+    stored list lacks)."""
+    out: list[str] = []
+    for f, value in clean.items():
+        if f not in INVESTOR_FIELDS or _empty(value):
+            continue
+        stored = before.get(f)
+        if f in LIST_FIELDS:
+            have = {str(x).casefold() for x in stored or []}
+            if any(str(x).casefold() not in have for x in value):
+                out.append(f)
+        elif f == "name":
+            continue  # the match itself; spelling differences are not data
+        elif f == "type" and value == "other":
+            continue
+        elif stored is None or str(stored).casefold() != str(value).casefold():
+            out.append(f)
+    return out
+
+
 async def add(
     db: AsyncSession,
     ws: WorkspaceContext,
@@ -322,19 +408,40 @@ async def add(
 ) -> AddResult:
     """``add_investor`` / ``POST /v1/investors``: create, or return the duplicate.
 
-    ``return_existing`` changes nothing; ``fill_empty`` fills empty fields and merges
-    lists; ``create_anyway`` ignores a name+firm match (email/LinkedIn duplicates are
-    never created).
+    Matching: email → LinkedIn → name+firm, then the name alone (see
+    :func:`_name_match`). ``return_existing`` changes nothing and lists in
+    ``not_applied`` every field sent that differs from the stored row;
+    ``fill_empty`` fills empty fields, merges lists and appends new notes as a dated
+    paragraph (it never overwrites; conflicting values are listed in ``not_applied``);
+    ``create_anyway`` ignores name matches (email/LinkedIn duplicates are never created).
     """
     clean = normalize_investor_input(fields, partial=False)
+    sent = dict(clean)
     match = await find_match(db, ws, clean, include_name_firm=on_duplicate != "create_anyway")
+    if match is None and on_duplicate != "create_anyway":
+        match = await _name_match(db, ws, clean)
     if match is None:
         inv = await create(db, ws, clean, now=now, actor=actor)
         return AddResult(inv, True)
+    existing = match.investor
     if on_duplicate == "fill_empty":
-        res = await update(db, ws, match.investor, clean, now=now, actor=actor, fill_empty=True)
-        return AddResult(match.investor, False, match.matched_on, res.changed_fields)
-    return AddResult(match.investor, False, match.matched_on)
+        before = _state(existing)
+        fill = {k: v for k, v in sent.items() if k != "notes"}
+        notes = sent.get("notes")
+        append = None
+        if notes and before.get("notes") and str(notes).strip() not in str(before["notes"]):
+            append = str(notes)
+        elif notes and not before.get("notes"):
+            fill["notes"] = notes
+        res = await update(
+            db, ws, existing, fill, now=now, actor=actor, fill_empty=True, append_notes=append
+        )
+        after = _state(existing)
+        skipped = [
+            f for f in _not_applied(after, sent) if f != "notes" and f not in res.changed_fields
+        ]
+        return AddResult(existing, False, match.matched_on, res.changed_fields, skipped)
+    return AddResult(existing, False, match.matched_on, None, _not_applied(_state(existing), sent))
 
 
 async def delete_investor(db: AsyncSession, ws: WorkspaceContext, investor: Investor) -> None:

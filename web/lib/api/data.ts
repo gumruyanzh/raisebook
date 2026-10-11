@@ -144,6 +144,8 @@ export interface ImportResult {
     added_to_round: number;
   };
   errors: { row: number; field: string; message: string }[];
+  /** Investors this import created. */
+  created?: { row: number; id: UUID; name: string }[];
   round?: { id: UUID; slug: string; name: string } | null;
 }
 

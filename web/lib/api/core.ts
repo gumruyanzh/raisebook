@@ -14,6 +14,8 @@ import type {
   Round,
   RoundStatus,
   SessionInfo,
+  UserSessionInfo,
+  VerifyPeek,
   VerifyResult,
   Workspace,
   WorkspaceCreate,
@@ -29,9 +31,20 @@ export * from "./types";
 export const requestMagicLink = (c: ApiClient, body: MagicLinkRequest) =>
   c.post<MagicLinkResult>("/v1/auth/magic-link", body, { workspace: null });
 
-/** Consumes the single-use token and sets the session cookies. 400 `invalid_token`. */
-export const verifyMagicLink = (c: ApiClient, token: string) =>
-  c.post<VerifyResult>("/v1/auth/verify", { token }, { workspace: null });
+/** Whether a sign-in link is still valid, with a masked email. Does not spend it. */
+export const peekMagicLink = (c: ApiClient, token: string) =>
+  c.get<VerifyPeek>("/v1/auth/verify/peek", { token }, { workspace: null });
+
+/**
+ * Consumes the single-use token and sets the session cookies. 400 `invalid_token`; 409
+ * `session_conflict` when this browser is signed in as someone else (pass `switchAccount`).
+ */
+export const verifyMagicLink = (c: ApiClient, token: string, switchAccount = false) =>
+  c.post<VerifyResult>(
+    "/v1/auth/verify",
+    switchAccount ? { token, switch_account: true } : { token },
+    { workspace: null },
+  );
 
 export const getSessionInfo = (c: ApiClient) =>
   c.get<SessionInfo>("/v1/auth/session", undefined, { workspace: null });
@@ -45,6 +58,15 @@ export const getMe = (c: ApiClient) => c.get<Me>("/v1/me", undefined, { workspac
 
 export const updateMe = (c: ApiClient, body: { name?: string | null }) =>
   c.patch<Me>("/v1/me", body, { workspace: null });
+
+export const listMySessions = (c: ApiClient) =>
+  c.get<DataList<UserSessionInfo>>("/v1/me/sessions", undefined, { workspace: null });
+
+export const endMySession = (c: ApiClient, id: string) =>
+  c.del<void>(`/v1/me/sessions/${seg(id)}`, undefined, { workspace: null });
+
+export const endOtherSessions = (c: ApiClient) =>
+  c.post<void>("/v1/me/sessions/revoke-others", undefined, { workspace: null });
 
 /** 409 `transfer_ownership_first` lists the workspaces that block the delete. */
 export const deleteMe = (c: ApiClient, confirmEmail: string) =>

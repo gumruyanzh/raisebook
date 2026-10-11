@@ -96,10 +96,19 @@ export function Ul({ children, ordered }: { children: ReactNode; ordered?: boole
   );
 }
 
-/** Inline code: mono on sunk. */
+/**
+ * Inline code: mono on sunk. Short tokens never break ("X-API-Key" stays whole); only long
+ * ones (URLs, long paths) may wrap, so a phone never scrolls sideways.
+ */
 export function C({ children }: { children: ReactNode }) {
+  const short = typeof children === "string" && children.length <= 32;
   return (
-    <code className="rounded-xs bg-sunk px-4 py-1 font-mono text-[0.86em] [overflow-wrap:anywhere]">
+    <code
+      className={
+        "rounded-xs bg-sunk px-4 py-1 font-mono text-[0.86em] " +
+        (short ? "whitespace-nowrap" : "[overflow-wrap:anywhere]")
+      }
+    >
       {children}
     </code>
   );

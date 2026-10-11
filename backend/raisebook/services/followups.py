@@ -143,3 +143,38 @@ async def list_due(
         data=items,
         counts=FollowUpCounts(overdue=int(overdue), today=int(today_n), upcoming=int(upcoming)),
     )
+
+
+async def upcoming_outlook(
+    db: AsyncSession, ws: WorkspaceContext, *, now: datetime, round_id: UUID | None = None
+) -> tuple[int, date | None]:
+    """``(follow-ups in the next 7 days after today, the next future follow-up date)`` over
+    the same participants as :func:`list_due` (open rounds, lost stages skipped)."""
+    today = ws.today(now)
+    conds = [
+        RoundParticipant.workspace_id == ws.workspace_id,
+        RoundParticipant.follow_up_on > today,
+        RoundStage.kind != "lost",
+    ]
+    if round_id is not None:
+        conds.append(RoundParticipant.round_id == round_id)
+    else:
+        conds.append(Round.status == "open")
+    stmt = (
+        select(
+            func.count().filter(RoundParticipant.follow_up_on <= today + timedelta(days=7)),
+            func.min(RoundParticipant.follow_up_on),
+        )
+        .select_from(RoundParticipant)
+        .join(
+            Round,
+            and_(
+                Round.id == RoundParticipant.round_id,
+                Round.workspace_id == RoundParticipant.workspace_id,
+            ),
+        )
+        .join(RoundStage, RoundStage.id == RoundParticipant.stage_id)
+        .where(*conds)
+    )
+    n, first = (await db.execute(stmt)).one()
+    return int(n or 0), first

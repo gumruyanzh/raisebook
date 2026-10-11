@@ -352,7 +352,12 @@ async def get_principal(
         credential = extract_credential(request)
         if credential is None and not has_api_credential(request):
             raise Unauthorized()
-        principal = await principal_from_api_key(db, credential, now=now)
+        try:
+            principal = await principal_from_api_key(db, credential, now=now)
+        except InvalidApiKey:
+            # Throttle failed key lookups per IP so bad keys cannot buy unlimited DB work.
+            await ratelimit.enforce("auth_fail", ratelimit.client_ip(request), now=now)
+            raise
         kind: ratelimit.BucketKind = (
             "key_read" if request.method.upper() in ("GET", "HEAD", "OPTIONS") else "key_write"
         )

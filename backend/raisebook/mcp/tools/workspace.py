@@ -32,6 +32,7 @@ def register(server: FastMCP) -> None:
                     "is_sandbox": ws.is_sandbox,
                     "timezone": ws.timezone,
                     "today": ws.today(Clock.now()).isoformat(),
+                    "weekday": ws.today(Clock.now()).strftime("%A"),
                     "default_currency": ws.currency,
                 },
                 "you": {

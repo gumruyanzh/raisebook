@@ -465,6 +465,42 @@ export function Kit() {
           </Specimen>
         </Section>
 
+        <Section
+          id="focus"
+          title="Focus"
+          note="Every interactive control shows a 2px cobalt ring on keyboard focus (:focus-visible). These specimens draw the ring statically so a regression is visible at a glance; bordered square buttons use a 1px offset so the ring doesn't read as a doubled box."
+        >
+          <Specimen>
+            {() => (
+              <Row label="Focused">
+                <Button variant="primary" className="outline-2 outline-offset-2 outline-accent outline-solid">
+                  Add investor
+                </Button>
+                <Button className="outline-2 outline-offset-2 outline-accent outline-solid">Import CSV</Button>
+                <Button variant="ghost" className="outline-2 outline-offset-2 outline-accent outline-solid">
+                  Cancel
+                </Button>
+                <button
+                  type="button"
+                  aria-label="Close (specimen)"
+                  className="inline-flex size-28 items-center justify-center rounded-sm border border-line bg-transparent text-muted outline-2 outline-offset-1 outline-accent outline-solid"
+                >
+                  ✕
+                </button>
+                <span className="w-[200px]">
+                  <Input defaultValue="Dana Whitfield" className="outline-2 outline-offset-2 outline-accent outline-solid" />
+                </span>
+                <Chip as="button" tone="due" className="outline-2 outline-offset-2 outline-accent outline-solid">
+                  Mara Quist
+                </Chip>
+                <a href="#focus" className="link outline-2 outline-offset-2 outline-accent outline-solid">
+                  Edit round
+                </a>
+              </Row>
+            )}
+          </Specimen>
+        </Section>
+
         <Section id="fields" title="Fields" note="Canvas background inside forms and sheets; surface in toolbars. Errors carry the API code in mono.">
           <Specimen>
             {() => (
@@ -796,7 +832,7 @@ export function Kit() {
               <div className="flex flex-col gap-12">
                 <CodeBlock tabs={MCP_SNIPPETS} />
                 <CodeBlock title="Terminal" lang="shell" code={`git clone https://github.com/gumruyanzh/raisebook && cd raisebook\ndocker compose -f deploy/docker-compose.yml up`} />
-                <SecretReveal secret="rb_live_3fK9aQ2mXv7LpT0cR8sYb1NwE4uHdZ6j" />
+                <SecretReveal secret="rb_live_EXAMPLE_not_a_real_key_000000" />
               </div>
             )}
           </Specimen>

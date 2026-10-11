@@ -11,34 +11,38 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from raisebook.auth.scopes import SCOPE_WRITE
 from raisebook.core.refs import resolve_investor, resolve_round
 from raisebook.mcp import shaping
 from raisebook.mcp.annotations import read_only, write
+from raisebook.mcp.tools._args import (
+    Amount,
+    DateArg,
+    Fit,
+    InvestorArg,
+    LoggableKind,
+    Probability,
+    RoundArg,
+    StageArg,
+    parse_amount_arg,
+)
 from raisebook.mcp.tools._common import Clock, parse_date, tool_call
 from raisebook.services import activities as act_svc
 from raisebook.services import participants as parts_svc
-from raisebook.services.followups import list_due
+from raisebook.services.followups import list_due, upcoming_outlook
 from raisebook.services.stages import stage_out
 
-InvestorArg = Annotated[
-    str,
-    Field(
-        description='Investor id, email, LinkedIn URL, exact "Name", or "Name @ Firm".',
-        min_length=1,
-        max_length=500,
-    ),
-]
-RoundArg = Annotated[
-    str | None,
-    Field(
-        description="Round id, slug or name. Omit when the workspace has exactly one open round.",
-        max_length=200,
-    ),
-]
-DateArg = Annotated[str | None, Field(description="YYYY-MM-DD", max_length=10)]
+
+def _past_warning(ws: Any, now: Any, on: Any, what: str) -> str | None:
+    today = ws.today(now)
+    if on is not None and on < today:
+        return (
+            f"{what} {on.isoformat()} is before today ({today.isoformat()}, "
+            f"{today.strftime('%A')}); it shows as overdue. Check the year."
+        )
+    return None
 
 
 def register(server: FastMCP) -> None:
@@ -46,14 +50,15 @@ def register(server: FastMCP) -> None:
     async def add_to_round(
         investor: InvestorArg,
         round: RoundArg = None,
-        stage: Annotated[str | None, Field(description="Stage key or label.")] = None,
-        fit: Annotated[int | None, Field(ge=0, le=5)] = None,
-        probability: Annotated[int | None, Field(ge=0, le=100)] = None,
-        amount_soft: Annotated[
-            int | None, Field(ge=0, description="Soft-circled amount, whole currency units.")
-        ] = None,
+        stage: StageArg = None,
+        fit: Fit = None,
+        probability: Probability = None,
+        amount_soft: Amount = None,
         next_step: Annotated[str | None, Field(max_length=500)] = None,
         follow_up_on: DateArg = None,
+        follow_up_note: Annotated[
+            str | None, Field(max_length=500, description="What the follow-up is for.")
+        ] = None,
         owner_email: Annotated[
             str | None, Field(description="A workspace member's email.", max_length=254)
         ] = None,
@@ -63,16 +68,18 @@ def register(server: FastMCP) -> None:
         async with tool_call(ctx, SCOPE_WRITE) as (db, ws):
             now = Clock.now()
             inv = await resolve_investor(db, ws, investor)
-            rnd = await resolve_round(db, ws, round, required=True)
+            rnd = await resolve_round(db, ws, round, required=True, investor=inv)
             assert rnd is not None
             changes: dict[str, Any] = {}
+            fu = parse_date(follow_up_on, "follow_up_on")
             for key, value in (
                 ("stage", stage),
                 ("fit", fit),
                 ("probability", probability),
                 ("amount_soft", amount_soft),
                 ("next_step", next_step),
-                ("follow_up_on", parse_date(follow_up_on, "follow_up_on")),
+                ("follow_up_on", fu),
+                ("follow_up_note", follow_up_note),
             ):
                 if value is not None:
                     changes[key] = value
@@ -80,11 +87,15 @@ def register(server: FastMCP) -> None:
                 changes["owner_user_id"] = await parts_svc.owner_from_email(db, ws, owner_email)
             res = await parts_svc.upsert(db, ws, rnd, inv, changes, now=now)
             part = await parts_svc.present_one(db, ws, res.participant, now=now)
-            return {
+            out: dict[str, Any] = {
                 "participant": shaping.participant(part),
                 "created": res.created,
                 "changed": res.changed,
             }
+            warning = _past_warning(ws, now, fu, "follow_up_on")
+            if warning:
+                out["warning"] = warning
+            return out
 
     @server.tool(annotations=write("Move stage", idempotent=True))
     async def move_stage(
@@ -100,21 +111,21 @@ def register(server: FastMCP) -> None:
         async with tool_call(ctx, SCOPE_WRITE) as (db, ws):
             now = Clock.now()
             inv = await resolve_investor(db, ws, investor)
-            rnd = await resolve_round(db, ws, round, required=True)
+            rnd = await resolve_round(db, ws, round, required=True, investor=inv)
             assert rnd is not None
             res = await parts_svc.move_stage(db, ws, rnd, inv, stage, note=note, now=now)
             part = await parts_svc.present_one(db, ws, res.participant, now=now)
             return {
                 "participant": shaping.participant(part),
                 "changed": res.changed,
-                "from": shaping.dump(stage_out(res.from_stage)),
-                "to": shaping.dump(stage_out(res.to_stage)),
+                "from": shaping.stage_brief(stage_out(res.from_stage)),
+                "to": shaping.stage_brief(stage_out(res.to_stage)),
             }
 
     @server.tool(annotations=write("Log activity", idempotent=False))
     async def log_activity(
         investor: InvestorArg,
-        kind: Literal["note", "email", "call", "meeting"],
+        kind: LoggableKind,
         body: Annotated[
             str, Field(description="What happened, in plain words.", min_length=1, max_length=20000)
         ],
@@ -173,33 +184,51 @@ def register(server: FastMCP) -> None:
         async with tool_call(ctx, SCOPE_WRITE) as (db, ws):
             now = Clock.now()
             inv = await resolve_investor(db, ws, investor)
-            rnd = await resolve_round(db, ws, round, required=True)
+            rnd = await resolve_round(db, ws, round, required=True, investor=inv)
             assert rnd is not None
+            on_date = parse_date(on, "on")
             part, changed = await parts_svc.set_follow_up(
                 db,
                 ws,
                 rnd,
                 inv,
-                on=parse_date(on, "on"),
+                on=on_date,
                 in_days=in_days,
                 clear=clear,
                 note=note,
                 now=now,
             )
             out = await parts_svc.present_one(db, ws, part, now=now)
-            return {"participant": shaping.participant(out), "changed": changed}
+            result: dict[str, Any] = {
+                "participant": shaping.participant(out),
+                "changed": changed,
+            }
+            warning = _past_warning(ws, now, on_date, "on")
+            if warning:
+                result["warning"] = warning
+            return result
 
     @server.tool(annotations=read_only("Due follow-ups"))
     async def list_due_follow_ups(
         round: Annotated[
             str | None, Field(description="Round id, slug or name. Omit for all open rounds.")
         ] = None,
-        within_days: Annotated[int, Field(ge=0, le=60)] = 0,
-        include_overdue: bool = True,
+        within_days: Annotated[
+            int,
+            Field(
+                ge=0,
+                le=60,
+                description="Also list follow-ups in the next N days. Default 0 = overdue and "
+                "today only. For 'this week', pass 7.",
+            ),
+        ] = 0,
+        include_overdue: Annotated[
+            bool, Field(description="Include follow-ups whose date has passed. Default true.")
+        ] = True,
         limit: Annotated[int, Field(ge=1, le=200)] = 50,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Follow-ups that are due: overdue first, then today, then (with within_days > 0) the next N days. Without `round`, it covers all open rounds. Use it to plan the founder's outreach for the day."""  # noqa: E501
+        """Follow-ups that are due: overdue first, then today, then (with within_days > 0) the next N days. Without `round`, it covers all open rounds. Use it to plan the founder's outreach for the day; for 'this week', pass within_days=7. `counts` always includes next_7_days and next_due_on, so an empty list never hides a busy week ahead."""  # noqa: E501
         async with tool_call(ctx) as (db, ws):
             rnd = await resolve_round(db, ws, round, required=False)
             res = await list_due(
@@ -215,20 +244,34 @@ def register(server: FastMCP) -> None:
             for item in res.data:
                 d = shaping.dump(item)
                 d["stage"] = shaping.stage_brief(d["stage"])
-                if d["investor"].get("tags") == []:
-                    d["investor"].pop("tags")
+                d["investor"] = shaping.investor(d["investor"])
+                d["round"] = d["round"]["slug"]
+                d.pop("last_activity_at", None)
                 items.append(d)
+            week, next_on = await upcoming_outlook(
+                db, ws, now=Clock.now(), round_id=rnd.id if rnd else None
+            )
+            counts = shaping.dump(res.counts)
+            counts["next_7_days"] = week
+            if next_on is not None:
+                counts["next_due_on"] = next_on.isoformat()
             return {
                 "today": res.today.isoformat(),
+                "weekday": res.today.strftime("%A"),
                 "items": items,
-                "counts": shaping.dump(res.counts),
+                "counts": counts,
             }
 
     @server.tool(annotations=write("Record commitment", idempotent=True))
     async def record_commitment(
         investor: InvestorArg,
         amount: Annotated[
-            int, Field(ge=0, description="Total commitment in whole currency units; 0 clears.")
+            int,
+            BeforeValidator(parse_amount_arg),
+            Field(
+                ge=0,
+                description="Total commitment in whole currency units ('250k' works); 0 clears.",
+            ),
         ],
         round: RoundArg = None,
         committed_on: Annotated[
@@ -242,7 +285,7 @@ def register(server: FastMCP) -> None:
         async with tool_call(ctx, SCOPE_WRITE) as (db, ws):
             now = Clock.now()
             inv = await resolve_investor(db, ws, investor)
-            rnd = await resolve_round(db, ws, round, required=True)
+            rnd = await resolve_round(db, ws, round, required=True, investor=inv)
             assert rnd is not None
             res = await parts_svc.record_commitment(
                 db,

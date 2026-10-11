@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 
 import { Field, Input, Segmented, Select, Textarea } from "@/components/ui";
+import type { InputProps } from "@/components/ui/Field";
 import type { RoundInput } from "@/lib/api/rounds";
 import type { Instrument, Round } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -66,6 +67,43 @@ export function roundBody(d: RoundDraft): { body?: RoundInput & { name: string }
   };
 }
 
+function currencySymbol(currency: string): string {
+  try {
+    const part = new Intl.NumberFormat("en", {
+      style: "currency",
+      currency,
+      currencyDisplay: "narrowSymbol",
+    })
+      .formatToParts(0)
+      .find((p) => p.type === "currency");
+    return part?.value ?? currency;
+  } catch {
+    return currency;
+  }
+}
+
+/** A money input with the currency symbol inside the box, so "2,000,000" reads as money. */
+export function MoneyInput({ currency, className, ...rest }: InputProps & { currency: string }) {
+  const sym = currencySymbol(currency);
+  return (
+    <div className="relative">
+      <span
+        aria-hidden
+        className="pointer-events-none absolute top-1/2 left-9 -translate-y-1/2 font-mono text-sm text-muted"
+      >
+        {sym}
+      </span>
+      <Input
+        inputMode="decimal"
+        mono
+        {...rest}
+        className={className}
+        style={{ paddingLeft: `${14 + sym.length * 8}px` }}
+      />
+    </div>
+  );
+}
+
 const INSTRUMENTS: { value: Instrument; label: string }[] = [
   { value: "safe", label: "SAFE" },
   { value: "priced", label: "Priced" },
@@ -99,10 +137,9 @@ export function RoundFields({
       <Field label="Round name" error={errors.name} className="sm:col-span-2">
         <Input value={draft.name} maxLength={80} disabled={disabled} onChange={(e) => set("name", e.target.value)} placeholder="Seed" />
       </Field>
-      <Field label="Target amount" error={errors.target} hint="Whole units, e.g. 2M or 750k.">
-        <Input
-          inputMode="decimal"
-          mono
+      <Field label="Target amount" error={errors.target} hint="2M, 750k or 2,000,000 all work.">
+        <MoneyInput
+          currency={draft.currency}
           value={draft.target}
           disabled={disabled}
           onChange={(e) => set("target", e.target.value)}
@@ -110,7 +147,7 @@ export function RoundFields({
             const v = parseMoney(draft.target);
             if (!Number.isNaN(v)) set("target", moneyInput(v));
           }}
-          placeholder="2,000,000"
+          placeholder="e.g. 2M"
         />
       </Field>
       <Field label="Currency">
@@ -136,9 +173,8 @@ export function RoundFields({
       </div>
       {priced ? (
         <Field label="Pre-money valuation" optional error={errors.preMoney}>
-          <Input
-            inputMode="decimal"
-            mono
+          <MoneyInput
+            currency={draft.currency}
             value={draft.preMoney}
             disabled={disabled}
             onChange={(e) => set("preMoney", e.target.value)}
@@ -146,14 +182,13 @@ export function RoundFields({
               const v = parseMoney(draft.preMoney);
               if (!Number.isNaN(v)) set("preMoney", moneyInput(v));
             }}
-            placeholder="12,000,000"
+            placeholder="e.g. 12M"
           />
         </Field>
       ) : (
         <Field label="Valuation cap" optional error={errors.cap}>
-          <Input
-            inputMode="decimal"
-            mono
+          <MoneyInput
+            currency={draft.currency}
             value={draft.cap}
             disabled={disabled}
             onChange={(e) => set("cap", e.target.value)}
@@ -161,7 +196,7 @@ export function RoundFields({
               const v = parseMoney(draft.cap);
               if (!Number.isNaN(v)) set("cap", moneyInput(v));
             }}
-            placeholder="16,000,000"
+            placeholder="e.g. 16M"
           />
         </Field>
       )}

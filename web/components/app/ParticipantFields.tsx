@@ -8,6 +8,7 @@ import {
   Field,
   FitMeter,
   Input,
+  Textarea,
   SaveState,
   SectionLabel,
   Select,
@@ -234,7 +235,7 @@ export function ParticipantFields({
   return (
     <section className={className} aria-label={title ?? "Round fields"}>
       <SectionLabel aside={<SaveState state={state} />}>{title ?? `In ${round.name}`}</SectionLabel>
-      <div className="grid grid-cols-2 gap-10">
+      <div className="grid grid-cols-1 gap-10 sm:grid-cols-2">
         <Field label="Follow up on">
           <Input
             type="date"
@@ -246,13 +247,31 @@ export function ParticipantFields({
             onChange={(e) => void save({ follow_up_on: e.target.value || null })}
           />
         </Field>
-        <Field label="Follow-up note">
-          <Input
+        <Field label="Owner">
+          <Select
+            value={p.owner?.user_id ?? ""}
+            disabled={ro}
+            title={roTitle}
+            onChange={(e) => void save({ owner_user_id: e.target.value || null })}
+          >
+            <option value="">No owner</option>
+            {owners.map((m) => (
+              <option key={m.user_id} value={m.user_id}>
+                {personName(m)}
+                {m.is_you ? " (you)" : ""}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Follow-up note" className="sm:col-span-2">
+          <Textarea
             value={fuNote}
+            rows={2}
             maxLength={500}
             placeholder="What it’s for"
             disabled={ro}
             title={roTitle}
+            className="min-h-[52px] resize-none [field-sizing:content]"
             onChange={(e) => setFuNote(e.target.value)}
             onBlur={() => {
               const v = fuNote.trim() || null;
@@ -275,7 +294,7 @@ export function ParticipantFields({
         <Field
           label={`Committed (${round.currency})`}
           error={fieldErr.committed}
-          hint={won ? `Counts toward the round in ${won.label}.` : undefined}
+          hint={won ? `Counts once they are in ${won.label}.` : undefined}
         >
           <Input
             inputMode="decimal"
@@ -317,23 +336,7 @@ export function ParticipantFields({
             />
           </div>
         </div>
-        <Field label="Owner">
-          <Select
-            value={p.owner?.user_id ?? ""}
-            disabled={ro}
-            title={roTitle}
-            onChange={(e) => void save({ owner_user_id: e.target.value || null })}
-          >
-            <option value="">No owner</option>
-            {owners.map((m) => (
-              <option key={m.user_id} value={m.user_id}>
-                {personName(m)}
-                {m.is_you ? " (you)" : ""}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Next step" className="col-span-2">
+        <Field label="Next step" className="sm:col-span-2">
           <Input
             value={next}
             maxLength={500}

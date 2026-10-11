@@ -30,6 +30,8 @@ ALL_TOOLS = {
     "record_commitment",
     "import_investors_csv",
     "export_round",
+    "add_investors",
+    "create_round",
 }
 READ_ONLY = {
     "get_workspace",
@@ -42,6 +44,8 @@ READ_ONLY = {
 }
 WRITE_IDEMPOTENT = {
     "add_investor",
+    "add_investors",
+    "create_round",
     "add_to_round",
     "move_stage",
     "set_follow_up",
@@ -70,9 +74,13 @@ DESCRIPTION_SNIPPETS = {
 
 async def test_tool_list_annotations_and_descriptions(db: AsyncSession, mcp_rpc: Any) -> None:
     w = await world(db)
-    r = await mcp_rpc(w.reader, "tools/list", {})
+    r = await mcp_rpc(w.key, "tools/list", {})
     tools = {t["name"]: t for t in r.json()["result"]["tools"]}
     assert set(tools) == ALL_TOOLS
+    assert r.json()["result"]["tools"][0].get("outputSchema") is None
+    # A read-only key only sees the read tools (writes would fail with insufficient_scope).
+    r = await mcp_rpc(w.reader, "tools/list", {})
+    assert {t["name"] for t in r.json()["result"]["tools"]} == READ_ONLY
     for name, t in tools.items():
         ann = t["annotations"]
         assert ann["destructiveHint"] is False, name
@@ -134,7 +142,8 @@ async def test_round_summary_and_round_required(
     assert res.ok, res.text
     assert res.data["money"]["committed"] == 500_000
     assert res.data["money"]["pct_of_target"] == 25.0
-    assert res.data["round"]["stages"][0] == {"key": "new", "label": "New", "kind": "open"}
+    assert "stages" not in res.data["round"]
+    assert res.data["funnel"][0] == {"key": "new", "label": "New", "kind": "open"}
     await make_round(db, w.ws, name="Bridge", slug="bridge")
     res = await mcp_call(w.reader, "get_round_summary")
     assert not res.ok and res.code == "round_required"
@@ -282,8 +291,8 @@ async def test_get_investor_timeline_and_truncation(
     assert len(d["investor"]["notes"]) <= 8_000 + 20
     assert len(d["timeline"]) == 2 and d["timeline_truncated"] is True
     assert d["timeline"][0]["body_truncated"] is True
-    assert d["timeline"][0]["actor"]["label"] == "claude-code"
-    assert d["timeline"][0]["actor"]["type"] == "agent"
+    assert d["timeline"][0]["by"] == "claude-code · claude-opus-5-5 (agent via api)"
+    assert "investor_id" not in d["timeline"][0] and "investor" not in d["timeline"][0]
     assert d["participations"][0]["stage"]["key"] == "meeting"
 
 
@@ -363,17 +372,23 @@ async def test_pipeline_tools_and_idempotency(
 
     res = await mcp_call(w.reader, "list_due_follow_ups", {"within_days": 7})
     assert res.ok and res.data["today"] == "2026-10-12"
-    assert res.data["counts"] == {"overdue": 0, "today": 0, "upcoming": 1}
-    assert res.data["items"][0]["stage"] == {
-        "key": "committed",
-        "label": "Committed",
-        "kind": "won",
+    assert res.data["counts"] == {
+        "overdue": 0,
+        "today": 0,
+        "upcoming": 1,
+        "next_7_days": 1,
+        "next_due_on": "2026-10-16",
     }
+    assert res.data["items"][0]["stage"] == {"key": "committed", "label": "Committed"}
+    # The default (overdue + today) is empty but still says a follow-up is coming.
+    res = await mcp_call(w.reader, "list_due_follow_ups")
+    assert res.data["items"] == []
+    assert res.data["counts"]["next_7_days"] == 1
 
 
 async def test_add_to_round_owner_and_not_in_round(db: AsyncSession, mcp_call: Any) -> None:
     w = await world(db)
-    owner_email, owner_id = str(w.owner.email), str(w.owner.id)
+    owner_email = str(w.owner.email)
     await dana(db, w.ws)
     res = await mcp_call(w.key, "move_stage", {"investor": "Dana Whitfield", "stage": "dd"})
     assert not res.ok and res.code == "not_in_round" and "add_to_round" in res.text
@@ -382,7 +397,7 @@ async def test_add_to_round_owner_and_not_in_round(db: AsyncSession, mcp_call: A
         "add_to_round",
         {"investor": "Dana Whitfield", "owner_email": owner_email},
     )
-    assert res.ok and res.data["participant"]["owner"]["user_id"] == owner_id
+    assert res.ok and res.data["participant"]["owner"]["email"] == owner_email
     res = await mcp_call(
         w.key, "add_to_round", {"investor": "Dana Whitfield", "owner_email": "x@example.com"}
     )

@@ -72,7 +72,7 @@ export default function McpSetup() {
               <C>Authorization: Bearer rb_live_…</C> or <C>X-API-Key: rb_live_…</C>
             </span>,
           ],
-          [<span key="o" className="text-muted">Tools</span>, <A key="l" href="/docs/mcp-tools">15 tools, no deletes</A>],
+          [<span key="o" className="text-muted">Tools</span>, <A key="l" href="/docs/mcp-tools">17 tools, no deletes</A>],
         ]}
       />
 

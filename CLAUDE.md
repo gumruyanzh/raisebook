@@ -57,7 +57,10 @@ NEXT_PUBLIC_API_URL=http://localhost:8100 NEXT_PUBLIC_SITE_URL=http://localhost:
 npx next start -p 3100
 ```
 `RAISEBOOK_CORS_ORIGINS` takes a comma-separated list or a JSON list. Final screenshots of every
-route (light, dark, 390px) are in `design/screens/final/`.
+route (light, dark, 390px) are in `design/screens/final/`. Signing in by script: request a link
+(`POST /v1/auth/magic-link`), open the `dev_link` and press **Continue**: the verify page never
+spends the token on load. Use a throwaway database (for example `raisebook_shots`) and
+`RAISEBOOK_RATE_LIMIT_BACKEND=off` for screenshot runs.
 
 ## Tests
 - Local Homebrew **Postgres 17**: databases `raisebook_dev` and `raisebook_test` exist, with
@@ -102,3 +105,23 @@ route (light, dark, 390px) are in `design/screens/final/`.
 - Demo, test and docs data is **fictional only** (example.com emails, made-up people and
   firms). Never commit real people's data.
 - Never print or commit secrets (API keys, session secrets, SMTP passwords).
+
+## Invariants added in the polish pass (keep them)
+- API keys die with their creator's access: `services/members.revoke_keys_created_by` runs on
+  remove, leave, owner demotion and account deletion (`tests/test_key_lifecycle.py`).
+- `/auth/verify` POSTs only on a click; a different signed-in user gets 409
+  `session_conflict` unless `switch_account` (`tests/test_auth_hardening.py`). Sessions end
+  90 days after sign-in (`session_max_days`); `/v1/me/sessions` lists and ends them.
+- Per-IP `auth_fail`, per-person `invite_user`/`invite_user_new` buckets, and
+  `workspaces_per_user` caps. Invite subjects are fixed; names cannot contain links.
+- MCP: `mcp/server.RaisebookMCP` returns compact JSON text (no outputSchema), rewrites
+  argument validation errors to `validation_error: …`, hides write tools from read-only keys
+  and reports the Raisebook version. Shapes live in `mcp/shaping.py`; shared argument types
+  (descriptions, "VC"/"250k" leniency) in `mcp/tools/_args.py`. Error text names MCP tools
+  for MCP callers (`core.refs.how`) and REST paths for REST callers.
+- `add_investor` defaults to `fill_empty`, appends notes on a match, reports `not_applied`,
+  and matches by name alone when exactly one person has that name. Omitted rounds resolve
+  to the investor's only open round when several are open.
+- Web: text on soft tints uses the `*-ink` tokens (`text-warm-ink`, …), never the fill hue.
+  Round views share `RoundHeader` (no second tab row). Phones get a compact ledger, a
+  stacked pipeline list and single-column sheet fields.
