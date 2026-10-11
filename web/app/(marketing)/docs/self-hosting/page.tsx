@@ -44,16 +44,19 @@ const UPDATE = [
 ].join("\n");
 
 const LOCAL = [
-  "# API and MCP on :8000 (needs Postgres 17 on localhost)",
+  "createdb raisebook_dev",
+  "psql raisebook_dev -c 'CREATE EXTENSION IF NOT EXISTS citext; CREATE EXTENSION IF NOT EXISTS pg_trgm;'",
+  "",
+  "# terminal 1, from the repo root: API and MCP on :8000",
   "cd backend && uv sync",
   "RAISEBOOK_DATABASE_URL=postgresql://localhost/raisebook_dev uv run alembic upgrade head",
   "RAISEBOOK_ENV=dev uv run uvicorn --factory raisebook.main:create_app --reload",
   "",
-  "# web on :3000",
+  "# terminal 2, from the repo root: web on :3000",
   "cd web && npm ci && npm run dev",
   "",
-  "# a sample workspace with fictional investors",
-  "cd backend && uv run rbctl seed-demo --email you@example.com",
+  "# optional, from backend/: a sample workspace with fictional investors",
+  "uv run rbctl seed-demo --email you@example.com",
 ].join("\n");
 
 export default function SelfHosting() {
@@ -143,6 +146,10 @@ export default function SelfHosting() {
         <C>BACKUP_RETENTION_DAYS</C> (14 by default). The hosted service promises that deleted
         data leaves backups within 14 days; keep the same limit if you make that promise to your
         team. Run it from cron, as the comment at the top of the script shows.
+      </P>
+      <P>
+        Also run <C>docker compose -f deploy/docker-compose.yml exec api rbctl housekeeping</C>{" "}
+        once a day. It removes expired sign-in links, sessions and old rate-limit counters.
       </P>
 
       <H2>Run it locally</H2>

@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 
 const CONTACT_FIELDS: [string, string, string][] = [
   ["name", "name, full name, investor, investor name, contact, person", "Required. Or first name + last name."],
-  ["first_name, last_name", "first name, last name", "Joined into name when there is no name column."],
+  ["first_name, last_name", "first name, given name; last name, surname, family name", "Joined into name when there is no name column."],
   ["firm", "firm, fund, company, organization, org, vc firm", ""],
   ["title", "title, role, position, job title", ""],
   ["type", "type, investor type, category", "VC, Angel, Family Office, Corporate VC, Accelerator, Scout, Other (and aliases such as FO, CVC, venture)."],
@@ -45,6 +45,7 @@ const ROUND_FIELDS: [string, string, string][] = [
   ["stage", "pipeline stage, status, round stage", "A stage key or label in the round."],
   ["fit", "fit, priority, score", "0 to 5, or hot / warm / maybe / low (5 / 4 / 3 / 1)."],
   ["follow_up_on", "follow up, follow-up date, next follow up, follow up on", "A date."],
+  ["follow_up_note", "follow up note, follow-up note", "What the follow-up is for."],
   ["amount_soft", "soft, soft circle, ask, target amount", "Money."],
   ["amount_committed", "committed, commitment, amount committed, invested", "Money."],
   ["probability", "probability, likelihood, %", "0 to 100."],
@@ -103,7 +104,8 @@ export default function CsvFormat() {
       <P>
         Headers are matched without regard to case, spaces or punctuation, so{" "}
         <C>E-mail</C>, <C>email</C> and <C>Email Address</C> all map to email. You can change any
-        mapping, or ignore a column, before importing.
+        mapping, or ignore a column, before importing. The field names themselves are
+        recognized too, so a CSV exported from Raisebook imports back without any mapping.
       </P>
       <DocTable
         caption="Contact fields"
