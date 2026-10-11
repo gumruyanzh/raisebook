@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   Button,
@@ -26,7 +26,7 @@ import { deleteMe, signOut, updateMe } from "@/lib/api/core";
 import { removeMember } from "@/lib/api/settings";
 import type { Me, Workspace } from "@/lib/api/types";
 import { ROLE_LABEL } from "@/lib/api/types";
-import { formatDate } from "@/lib/format";
+import { formatDate, isoDate } from "@/lib/format";
 import { useSession } from "@/lib/session";
 
 export interface WorkspaceMembership extends Workspace {
@@ -42,6 +42,9 @@ export function Account({ me, workspaces, today }: { me: Me; workspaces: Workspa
   const [name, setName] = useState(me.name ?? "");
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [leaving, setLeaving] = useState<WorkspaceMembership | null>(null);
+  // The sign-up day in the viewer's own calendar (the server render uses the UTC date).
+  const [since, setSince] = useState(me.created_at.slice(0, 10));
+  useEffect(() => setSince(isoDate(me.created_at)), [me.created_at]);
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaveErr, setLeaveErr] = useState<string | null>(null);
   const [del, setDel] = useState(false);
@@ -87,7 +90,7 @@ export function Account({ me, workspaces, today }: { me: Me; workspaces: Workspa
           <Field label="Email" hint="You sign in with a link sent here.">
             <Input value={me.email} readOnly mono className="text-muted" />
           </Field>
-          <p className="t-body-s text-muted sm:col-span-2">Member since {formatDate(me.created_at.slice(0, 10), today)}.</p>
+          <p className="t-body-s text-muted sm:col-span-2">Member since {formatDate(since, today)}.</p>
         </div>
       </section>
 

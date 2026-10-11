@@ -40,9 +40,16 @@ export function RoundPicker({
   if (activeRound && !visible.includes(activeRound)) visible = [...visible.slice(0, max - 1), activeRound];
   const overflow = ordered.filter((r) => !visible.includes(r));
 
-  const pill = "inline-flex h-26 items-center rounded-pill px-12 font-medium whitespace-nowrap transition-colors duration-[120ms]";
+  const pill = "inline-flex h-26 shrink-0 items-center rounded-pill px-12 font-medium whitespace-nowrap transition-colors duration-[120ms]";
+  // Many or long round names scroll sideways inside the track instead of widening the page.
   return (
-    <nav aria-label="Rounds" className={cn("inline-flex max-w-full items-center gap-2 rounded-pill bg-sunk p-3", className)}>
+    <nav
+      aria-label="Rounds"
+      className={cn(
+        "inline-flex max-w-full items-center gap-2 overflow-x-auto rounded-pill bg-sunk p-3 [scrollbar-width:none]",
+        className,
+      )}
+    >
       {visible.map((r) => {
         const on = r.slug === active;
         return (

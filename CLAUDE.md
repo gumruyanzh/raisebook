@@ -46,6 +46,19 @@ npm run dev                                        # :3000, needs the API on :80
 npm run lint && npm run typecheck && npm run build
 ```
 
+## End-to-end run (integrator recipe, no Docker)
+```bash
+# API on :8100 (from backend/); the web origin on :3100 is RAISEBOOK_APP_URL, so it is allowed.
+RAISEBOOK_ENV=dev RAISEBOOK_PUBLIC_BASE_URL=http://localhost:8100 \
+  RAISEBOOK_APP_URL=http://localhost:3100 RAISEBOOK_SESSION_COOKIE_SECURE=false \
+  uv run uvicorn --factory raisebook.main:create_app --port 8100
+# Web production build on :3100 (from web/); NEXT_PUBLIC_* are baked in at build time.
+NEXT_PUBLIC_API_URL=http://localhost:8100 NEXT_PUBLIC_SITE_URL=http://localhost:3100 npm run build
+npx next start -p 3100
+```
+`RAISEBOOK_CORS_ORIGINS` takes a comma-separated list or a JSON list. Final screenshots of every
+route (light, dark, 390px) are in `design/screens/final/`.
+
 ## Tests
 - Local Homebrew **Postgres 17**: databases `raisebook_dev` and `raisebook_test` exist, with
   `citext` and `pg_trgm`. Override the test DB with `RAISEBOOK_TEST_DATABASE_URL`. There is no

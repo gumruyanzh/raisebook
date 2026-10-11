@@ -170,12 +170,28 @@ export function BoardCard({
         ) : null}
       </span>
       {who ? <span className="t-body-s w-full truncate text-muted">{who}</span> : null}
-      <span className="flex flex-wrap items-center gap-4">
-        <PriorityChip fit={fit} />
-        {typeLabel ? <Chip tone="type">{typeLabel}</Chip> : null}
-        {industry ? <Chip tone="industry">{industry}</Chip> : null}
-        {extraTagCount > 0 ? <Chip tone="tag">+{extraTagCount}</Chip> : null}
-        <FitMeter value={fit} />
+      {/* SYSTEM 3.13 row 3: priority, type, first industry + FitMeter, on one line. Only the
+          industry chip gives way (ellipsis), so the fit pips never wrap onto a second line. */}
+      <span className="flex w-full min-w-0 flex-nowrap items-center gap-4 overflow-hidden">
+        <PriorityChip fit={fit} className="shrink-0" />
+        {typeLabel ? (
+          <Chip tone="type" className="shrink-0">
+            {typeLabel}
+          </Chip>
+        ) : null}
+        {industry ? (
+          <Chip
+            tone="industry"
+            className="min-w-0 shrink overflow-hidden"
+            style={{ paddingInline: 0 }}
+            title={extraTagCount > 0 ? `${industry} and ${extraTagCount} more` : industry}
+          >
+            {/* Padding lives on the text, so a fully squeezed chip disappears instead of
+                leaving an empty pill. */}
+            <span className="min-w-0 truncate px-7">{industry}</span>
+          </Chip>
+        ) : null}
+        <FitMeter value={fit} className="ml-auto shrink-0 pl-2" />
       </span>
       {(followUpState && followUpState !== "later") || amount ? (
         <span className="flex flex-wrap items-center gap-4">

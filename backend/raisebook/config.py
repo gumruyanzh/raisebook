@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -35,7 +36,8 @@ class Settings(BaseSettings):
     # Hosts.
     public_base_url: str = "http://localhost:8000"  # where this API is reachable
     app_url: str = "http://localhost:3000"  # where the web app lives (magic links point here)
-    cors_origins: list[str] = Field(default_factory=list)
+    # Comma-separated or a JSON list; empty means none (NoDecode skips the JSON-only parse).
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # Sessions (magic-link sign-in) and API keys.
     session_secret: SecretStr = SecretStr("")
@@ -68,8 +70,11 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
-        if isinstance(v, str) and not v.strip().startswith("["):
-            return [p.strip() for p in v.split(",") if p.strip()]
+        if isinstance(v, str):
+            raw = v.strip()
+            if raw.startswith("["):
+                return json.loads(raw)
+            return [p.strip() for p in raw.split(",") if p.strip()]
         return v
 
     @property

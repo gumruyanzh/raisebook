@@ -112,14 +112,20 @@ export function Ledger(p: LedgerProps) {
           max={p.target}
           label={`Committed toward ${p.roundName}`}
         />
-        <p className="t-body-s mt-8 flex flex-wrap gap-x-6 gap-y-2 text-muted">
-          {stats.map((s, i) => (
-            <span key={s.label}>
-              {i > 0 ? <span aria-hidden className="mr-6">·</span> : null}
-              <b className="tnum font-semibold text-fg">{s.n}</b> {s.label}
-            </span>
-          ))}
-        </p>
+        {/* Dots sit in a 12px gutter left of each item; the gutter of an item that starts a
+            line falls in the clipped -12px margin, so a wrapped line never starts with "·". */}
+        <div className="mt-8 overflow-hidden">
+          <p className="t-body-s -ml-12 flex flex-wrap gap-y-2 text-muted">
+            {stats.map((s) => (
+              <span
+                key={s.label}
+                className="relative pl-12 before:absolute before:left-3 before:content-['·'] before:text-muted"
+              >
+                <b className="tnum font-semibold text-fg">{s.n}</b> {s.label}
+              </span>
+            ))}
+          </p>
+        </div>
         {variant === "full" && p.weightedPipeline !== undefined ? (
           <p className="t-body-s mt-4 text-muted">
             Weighted pipeline{" "}

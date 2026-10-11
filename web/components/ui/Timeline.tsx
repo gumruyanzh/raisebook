@@ -65,9 +65,13 @@ export function activitySentence(
     }
     case "follow_up_set": {
       const to = s(d.to);
-      return to
-        ? `set a follow-up${who ? ` for ${who}` : ""} on ${formatDate(to)}`
-        : `cleared the follow-up${who ? ` for ${who}` : ""}`;
+      const note = s(d.note);
+      if (!to) return `cleared the follow-up${who ? ` for ${who}` : ""}`;
+      const onlyNote = s(d.from) === to && note;
+      const head = onlyNote
+        ? `changed the follow-up note${who ? ` for ${who}` : ""} (${formatDate(to)})`
+        : `set a follow-up${who ? ` for ${who}` : ""} on ${formatDate(to)}`;
+      return note ? `${head}: ${note}` : head;
     }
     case "commitment": {
       const amount = typeof d.amount === "number" ? d.amount : 0;
