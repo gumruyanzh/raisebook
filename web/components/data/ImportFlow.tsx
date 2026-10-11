@@ -15,6 +15,7 @@ import {
   Radio,
   SectionLabel,
   Select,
+  StagePill,
   Table,
   TableScroll,
   TBody,
@@ -316,7 +317,12 @@ export function ImportFlow({ initialRound }: { initialRound?: string }) {
           <SectionLabel id="imp-review">Review</SectionLabel>
           <CountsStrip preview={preview} roundName={round?.name ?? roundNameFromMap(roundMap, rounds)} />
           <Warnings items={preview.warnings} />
-          <RowsTable rows={preview.rows} currency={round?.currency ?? workspace.default_currency} />
+          <RowsTable
+            rows={preview.rows}
+            rounds={rounds}
+            fallbackRound={round}
+            currency={round?.currency ?? workspace.default_currency}
+          />
           {preview.row_count > preview.rows.length ? (
             <p className="t-micro text-muted">
               Showing the first {num(preview.rows.length)} of {num(preview.row_count)} rows. The counts cover every row.
@@ -332,7 +338,7 @@ export function ImportFlow({ initialRound }: { initialRound?: string }) {
               disabled={importable(preview) === 0}
               onClick={() => void commit()}
             >
-              Import {plural(importable(preview), "investor")}
+              {importLabel(preview)}
             </Button>
           </div>
         </section>
@@ -352,8 +358,19 @@ export function ImportFlow({ initialRound }: { initialRound?: string }) {
   );
 }
 
+/** Rows that change something: new or updated investors, or existing ones added to a round. */
 function importable(p: ImportPreview): number {
-  return p.counts.create + p.counts.update + p.counts.skip;
+  return p.counts.create + p.counts.update + p.counts.add_to_round;
+}
+
+/** "Import 2 new investors, update 1" — says what the click writes, never counts skipped rows. */
+function importLabel(p: ImportPreview): string {
+  const c = p.counts;
+  const parts: string[] = [];
+  if (c.create) parts.push(plural(c.create, "new investor"));
+  if (c.update) parts.push(`update ${num(c.update)}`);
+  if (!parts.length) return c.add_to_round ? `Add ${plural(c.add_to_round, "investor")} to the round` : "Nothing to import";
+  return `Import ${parts.join(", ")}`;
 }
 
 function roundNameFromMap(m: Record<string, { round: string }>, rounds: Round[]): string | undefined {
@@ -553,7 +570,21 @@ function Warnings({ items }: { items: string[] }) {
   );
 }
 
-function RowsTable({ rows, currency }: { rows: ImportRow[]; currency: string }) {
+function RowsTable({
+  rows,
+  rounds,
+  fallbackRound,
+  currency,
+}: {
+  rows: ImportRow[];
+  rounds: Round[];
+  fallbackRound?: Round;
+  currency: string;
+}) {
+  const stageOf = (roundSlug: string | null | undefined, key: string) => {
+    const r = (roundSlug && rounds.find((x) => x.slug === roundSlug)) || fallbackRound;
+    return r?.stages.find((s) => s.key === key);
+  };
   return (
     <TableScroll maxHeight="60vh">
       <Table minWidth={860}>
@@ -582,7 +613,14 @@ function RowsTable({ rows, currency }: { rows: ImportRow[]; currency: string }) 
                 <Td className="t-body-s whitespace-nowrap">
                   {p?.stage ? (
                     <span className="inline-flex items-center gap-6">
-                      <span className="font-mono">{p.stage}</span>
+                      {(() => {
+                        const st = stageOf(p.round, p.stage);
+                        return st ? (
+                          <StagePill color={st.color} label={st.label} />
+                        ) : (
+                          <span className="font-mono">{p.stage}</span>
+                        );
+                      })()}
                       {p.fit != null ? <span className="text-muted">fit {p.fit}</span> : null}
                       {p.amount_committed ? (
                         <Chip tone="money">{moneyCompact(p.amount_committed, currency)}</Chip>
@@ -628,7 +666,7 @@ function ResultView({ result, wsSlug, onAgain }: { result: ImportResult; wsSlug:
   const parts = [
     `Imported ${plural(c.created, "new investor")}`,
     c.updated ? `updated ${num(c.updated)}` : null,
-    c.skipped ? `skipped ${num(c.skipped)} that were already there` : null,
+    c.skipped ? `skipped ${num(c.skipped)} that ${c.skipped === 1 ? "was" : "were"} already there` : null,
   ].filter(Boolean);
   return (
     <section aria-live="polite" className="flex flex-col gap-12 rounded-md border border-line bg-surface p-16">
