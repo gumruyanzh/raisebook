@@ -1,6 +1,10 @@
-// STUB by Foundation-web. Owner: App-UI (docs/OWNERSHIP.md) — replace freely.
-import { Stub } from "@/app/_stub/Stub";
+import type { Metadata } from "next";
 
-export default function Page() {
-  return <Stub title="Connect an agent" subline="Claude Code, Codex, Cursor and other MCP clients." owner="App-UI" />;
+import { ConnectAgent } from "@/components/app/settings/ConnectAgent";
+
+export const metadata: Metadata = { title: "Connect an agent" };
+
+/** Settings → Connect an agent (SYSTEM §4.9). */
+export default function ConnectAgentPage() {
+  return <ConnectAgent />;
 }

@@ -1,20 +1,28 @@
-// STUB by Foundation-web. Owner: App-UI (docs/OWNERSHIP.md) — replace freely.
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
-import { Wordmark } from "@/components/ui";
+import { Onboarding } from "@/components/app/onboarding/Onboarding";
+import { ApiErrorState } from "@/components/app/ApiErrorState";
+import { getSession } from "@/lib/api/server";
 
-import { Stub } from "@/app/_stub/Stub";
-
+export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Get started", robots: { index: false } };
 
-export default function OnboardingPage() {
-  return (
-    <div className="mx-auto w-full max-w-flow pt-24 pb-48">
-      <div className="mb-32 flex items-center">
-        <Wordmark size={20} href="/" />
-        <span className="t-micro ml-auto text-muted">1 / 3</span>
+/** Onboarding (SYSTEM §4.11): company → first round → bring investors. */
+export default async function OnboardingPage() {
+  const s = await getSession();
+  if (s.status === "signed_out") redirect("/signin?next=%2Fonboarding");
+  if (s.status === "error") {
+    return (
+      <div className="mx-auto w-full max-w-flow pt-48">
+        <ApiErrorState error={s.error} title="Raisebook can't reach its API right now" retryHref="/onboarding" />
       </div>
-      <Stub title="What are you raising for?" owner="App-UI" />
-    </div>
+    );
+  }
+  return (
+    <Suspense>
+      <Onboarding csrf={s.session.csrf_token} workspaces={s.session.workspaces} />
+    </Suspense>
   );
 }
