@@ -41,6 +41,29 @@ The production setup for raisebook.org (DigitalOcean, DNS records, backups) is i
    work. To check email without a provider, set `RAISEBOOK_EMAIL_BACKEND=log` and read the
    link from `docker compose logs api`, then switch back.
 
+## "Continue with Google" (optional)
+
+Off until both `RAISEBOOK_GOOGLE_CLIENT_ID` and `RAISEBOOK_GOOGLE_CLIENT_SECRET` are set in
+`deploy/.env`. The sign-in page asks `GET /v1/auth/providers` and hides the button while
+they are empty.
+
+1. In Google Cloud Console, open APIs & Services > OAuth consent screen and set it up
+   (External, app name "Raisebook", scopes `openid`, `email`, `profile`; these are not
+   sensitive scopes, so Google does not need to review the app).
+2. Credentials > Create credentials > OAuth client ID, type "Web application". Add exactly one
+   authorized redirect URI, `https://$API_HOST/v1/auth/google/callback` (for raisebook.org:
+   `https://api.raisebook.org/v1/auth/google/callback`). It is derived from
+   `RAISEBOOK_PUBLIC_BASE_URL`, so it must match character for character. No JavaScript
+   origin is needed.
+3. Put the client ID and secret in `deploy/.env`, then
+   `docker compose -f deploy/docker-compose.yml up -d api` (no rebuild; the web reads the
+   provider list at request time).
+
+A Google sign-in uses the same account as the emailed link for that address. Google must
+report the address as verified. The first Google sign-in binds the Google account to the
+Raisebook account, and a different Google account claiming the same address later is
+refused.
+
 ## Updating
 
 ```bash

@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
-import { getSession } from "@/lib/api/server";
+import { GoogleSignIn } from "@/components/app/auth/GoogleButton";
+import { googleEnabled } from "@/lib/api/auth-providers";
+import { getSession, serverApi } from "@/lib/api/server";
 
 import { AuthColumn, safeNext } from "../_auth";
 import { SignInForm } from "./SignInForm";
@@ -20,10 +22,16 @@ export default async function SignInPage({
   // Already signed in: go where they were headed.
   const session = await getSession();
   if (session.status === "ok") redirect(next ?? "/app");
+  const google = await googleEnabled(await serverApi());
 
   return (
     <AuthColumn>
       <h1 className="t-display-s mb-18">Sign in or create an account</h1>
+      <GoogleSignIn
+        enabled={google}
+        next={next ?? (invite ? `/invite/${encodeURIComponent(invite)}` : undefined)}
+        error={sp.error}
+      />
       <SignInForm next={next} inviteToken={invite} />
     </AuthColumn>
   );

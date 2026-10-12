@@ -16,6 +16,7 @@ dependencies = [
     "mcp>=1.23,<2",
     "structlog>=24.4",
     "typer>=0.15",
+    "pyjwt[crypto]>=2.10",
 ]
 
 [project.scripts]

@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     invite_ttl_days: int = 7
     api_key_touch_interval_s: int = 60
 
+    # "Continue with Google" (OpenID Connect). Both unset or empty = the feature is off and
+    # the sign-in page hides the button. Redirect URI to register in Google Cloud:
+    # {public_base_url}/v1/auth/google/callback
+    google_client_id: str | None = None
+    google_client_secret: SecretStr | None = None
+    google_max_per_window: int = 10  # sign-ins per account per magic_link_ttl_minutes
+
     # Outbound email (magic links, invites).
     email_backend: Literal["log", "smtp", "memory"] = "log"
     email_from: str = "Raisebook <login@raisebook.org>"

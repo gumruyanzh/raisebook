@@ -20,6 +20,8 @@ class User(TimestampMixin, Base):
     email: Mapped[str] = mapped_column(CITEXT, nullable=False, unique=True)
     name: Mapped[str | None] = mapped_column(Text)
     last_signin_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Google account id (OIDC ``sub``), bound on the first "Continue with Google" sign-in.
+    google_sub: Mapped[str | None] = mapped_column(Text, unique=True)
 
 
 class LoginToken(CreatedAtMixin, Base):
