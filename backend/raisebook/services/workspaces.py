@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import WorkspaceContext
+from raisebook.config import get_settings
 from raisebook.core.errors import LimitReached, ValidationFailed, WorkspaceNotFound
 from raisebook.models.enums import Role
 from raisebook.models.user import User
@@ -31,7 +32,6 @@ LIMITS: dict[str, int] = {
     "rounds": 50,
     "investors": 20_000,
     "activities": 1_000_000,
-    "workspaces_per_user": 10,  # real (non-sample) workspaces a person owns
     "sample_workspaces_per_user": 3,
 }
 
@@ -164,12 +164,19 @@ async def _check_owned_limit(db: AsyncSession, user: User, *, sample: bool) -> N
             Workspace.is_sandbox.is_(sample),
         )
     )
-    key = "sample_workspaces_per_user" if sample else "workspaces_per_user"
-    if int(owned or 0) >= LIMITS[key]:
+    settings = get_settings()
+    if sample:
+        limit = LIMITS["sample_workspaces_per_user"]
+    else:
+        exempt = {e.strip().lower() for e in settings.workspace_limit_exempt_emails}
+        if (user.email or "").lower() in exempt:
+            return
+        limit = settings.max_workspaces_per_user
+    if int(owned or 0) >= limit:
         kind = "sample workspaces" if sample else "workspaces"
         raise LimitReached(
-            f"You can own {LIMITS[key]} {kind}. Delete one you no longer use first.",
-            details={"limit": LIMITS[key]},
+            f"You can own {limit} {kind}. Delete one you no longer use first.",
+            details={"limit": limit},
         )
 
 

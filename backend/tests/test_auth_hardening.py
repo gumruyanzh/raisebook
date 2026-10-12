@@ -173,15 +173,28 @@ async def test_new_accounts_get_a_tighter_invite_cap(
 async def test_workspace_count_is_capped_per_owner(
     db: AsyncSession, session_client: Any, monkeypatch: Any
 ) -> None:
-    from raisebook.services.workspaces import LIMITS as WS_LIMITS
+    from raisebook.config import get_settings
 
-    monkeypatch.setitem(WS_LIMITS, "workspaces_per_user", 2)
+    monkeypatch.setattr(get_settings(), "max_workspaces_per_user", 2)
     me = await make_user(db)
     c = await session_client(me)
     for i in range(2):
         assert (await c.post("/v1/workspaces", json={"name": f"Co {i}"})).status_code == 201
     r = await c.post("/v1/workspaces", json={"name": "Co 3"})
     assert r.status_code == 422 and r.json()["error"]["code"] == "limit_reached"
+
+
+async def test_exempt_owner_has_no_workspace_cap(
+    db: AsyncSession, session_client: Any, monkeypatch: Any
+) -> None:
+    from raisebook.config import get_settings
+
+    me = await make_user(db)
+    monkeypatch.setattr(get_settings(), "max_workspaces_per_user", 1)
+    monkeypatch.setattr(get_settings(), "workspace_limit_exempt_emails", [me.email.upper()])
+    c = await session_client(me)
+    for i in range(3):
+        assert (await c.post("/v1/workspaces", json={"name": f"Co {i}"})).status_code == 201
 
 
 async def test_names_cannot_carry_links(db: AsyncSession, session_client: Any) -> None:

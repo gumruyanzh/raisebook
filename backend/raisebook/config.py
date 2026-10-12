@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     smtp_starttls: bool = True
 
+    # Owned-workspace cap (anti-abuse). People listed here (operators, the founder) have no cap.
+    max_workspaces_per_user: int = 10
+    workspace_limit_exempt_emails: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
     # Rate limits (SPEC §7).
     rate_limit_backend: Literal["postgres", "memory", "off"] = "postgres"
 
@@ -69,7 +73,7 @@ class Settings(BaseSettings):
         aliases = {"dev": "development", "prod": "production", "stage": "staging"}
         return aliases.get(v, v) if isinstance(v, str) else v
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "workspace_limit_exempt_emails", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
         if isinstance(v, str):
