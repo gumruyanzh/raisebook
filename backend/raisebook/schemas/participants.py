@@ -91,6 +91,53 @@ class BulkAddOut(BaseModel):
     already: int
 
 
+BulkOp = Literal["stage", "follow_up", "owner", "fit", "add_tag", "remove_tag", "remove", "restore"]
+
+
+class BulkItem(StrictInput):
+    """One investor's values for ``op: "restore"`` (Undo). Fields that are present are
+    applied; an investor no longer in the round is added back with them."""
+
+    investor_id: UUID
+    stage: str | None = Field(None, max_length=40)
+    fit: int | None = Field(None, ge=0, le=5)
+    probability: int | None = Field(None, ge=0, le=100)
+    amount_soft: int | None = Field(None, ge=0)
+    amount_committed: int | None = Field(None, ge=0)
+    committed_on: date | None = None
+    follow_up_on: date | None = None
+    follow_up_note: str | None = Field(None, max_length=500)
+    next_step: str | None = Field(None, max_length=500)
+    owner_user_id: UUID | None = None
+
+
+class BulkUpdate(StrictInput):
+    """``POST /v1/rounds/{round}/participants/bulk-update``: one change for up to 1,000
+    investors in one transaction. ``op`` picks the field: ``stage`` (key or label),
+    ``follow_up`` (``follow_up_on``; null clears), ``owner`` (``owner_user_id``; null
+    unassigns), ``fit``, ``add_tag`` / ``remove_tag`` (``tag``), ``remove`` (take them off
+    the round), or ``restore`` (per-investor ``items``, used by Undo)."""
+
+    op: BulkOp
+    investor_ids: list[UUID] = Field(default_factory=list, max_length=1000)
+    stage: str | None = Field(None, max_length=40)
+    follow_up_on: date | None = None
+    owner_user_id: UUID | None = None
+    fit: int | None = Field(None, ge=0, le=5)
+    tag: str | None = Field(None, min_length=1, max_length=40)
+    items: list[BulkItem] | None = Field(None, max_length=1000)
+
+
+class BulkUpdateOut(BaseModel):
+    bulk_id: UUID
+    op: BulkOp
+    changed: int
+    unchanged: int
+    #: The listed investors' participations after the change (empty for ``remove``).
+    participants: list[ParticipantOut]
+    removed: list[UUID] = Field(default_factory=list)
+
+
 class StageMove(StrictInput):
     stage: str = Field(..., min_length=1, max_length=40)
     note: str | None = Field(None, max_length=2000)

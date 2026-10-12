@@ -228,3 +228,173 @@ async def test_list_filters_and_sorts(db: AsyncSession, key_client: Any, frozen_
     assert (await cl.get(url, params={"stage": "zzz"})).status_code == 422
     p = (await cl.get(f"{url}/{a.id}")).json()
     assert p["follow_up_state"] == "overdue" and p["owner"]["email"] == owner.email
+
+
+# --- bulk update (UX pass 1, P1-6) ---------------------------------------------------------
+
+
+async def _thirty(db: AsyncSession, w: Any) -> list[Any]:
+    from datetime import date
+
+    stages = ["new", "research", "contacted", "meeting", "dd"]
+    out = []
+    for i in range(30):
+        inv = await make_investor(db, w.ws, tags=["warm"] if i % 2 else [])
+        await make_participant(
+            db,
+            w.rnd,
+            inv,
+            stage=stages[i % len(stages)],
+            fit=i % 6,
+            follow_up_on=date(2026, 10, 1 + i % 20) if i % 3 else None,
+            follow_up_note="Check in" if i % 3 else None,
+        )
+        out.append(inv)
+    return out
+
+
+async def test_bulk_move_is_one_request_and_restore_undoes_it(
+    db: AsyncSession, session_client: Any, frozen_now: Any
+) -> None:
+    from sqlalchemy import select
+
+    from raisebook.models.activity import Activity
+
+    w = await world(db)
+    invs = await _thirty(db, w)
+    c = await session_client(w.owner, w.ws)
+    before = {
+        p["investor"]["id"]: p
+        for p in (await c.get("/v1/rounds/seed/participants?limit=100")).json()["data"]
+    }
+    ids = [str(i.id) for i in invs]
+
+    r = await c.post(
+        "/v1/rounds/seed/participants/bulk-update",
+        json={"op": "stage", "investor_ids": ids, "stage": "Passed"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["changed"] == 30 and body["unchanged"] == 0 and body["op"] == "stage"
+    assert {p["stage"]["key"] for p in body["participants"]} == {"passed"}
+    assert [p["investor"]["id"] for p in body["participants"]] == ids
+    acts = list(await db.scalars(select(Activity).where(Activity.kind == "stage_change")))
+    assert len(acts) == 30
+    assert {a.data["bulk_id"] for a in acts} == {body["bulk_id"]}
+
+    # Repeating it is a no-op.
+    r = await c.post(
+        "/v1/rounds/seed/participants/bulk-update",
+        json={"op": "stage", "investor_ids": ids, "stage": "passed"},
+    )
+    assert r.json()["changed"] == 0 and r.json()["unchanged"] == 30
+
+    # Undo: put every investor's previous stage back in one request.
+    items = [{"investor_id": i, "stage": before[i]["stage"]["key"]} for i in ids]
+    r = await c.post(
+        "/v1/rounds/seed/participants/bulk-update", json={"op": "restore", "items": items}
+    )
+    assert r.status_code == 200, r.text
+    after = {p["investor"]["id"]: p["stage"]["key"] for p in r.json()["participants"]}
+    assert after == {i: before[i]["stage"]["key"] for i in ids}
+
+
+async def test_bulk_follow_up_owner_fit_tags_and_remove(
+    db: AsyncSession, key_client: Any, frozen_now: Any
+) -> None:
+    w = await world(db)
+    invs = await _thirty(db, w)
+    editor = await add_member(db, w.ws, role="editor")
+    c = key_client(w.key)
+    url = "/v1/rounds/seed/participants/bulk-update"
+    ids = [str(i.id) for i in invs[:6]]
+
+    r = await c.post(
+        url, json={"op": "follow_up", "investor_ids": ids, "follow_up_on": "2026-10-19"}
+    )
+    assert r.status_code == 200, r.text
+    assert {p["follow_up_on"] for p in r.json()["participants"]} == {"2026-10-19"}
+    r = await c.post(url, json={"op": "follow_up", "investor_ids": ids, "follow_up_on": None})
+    ps = r.json()["participants"]
+    assert all(p.get("follow_up_on") is None and p.get("follow_up_note") is None for p in ps)
+
+    r = await c.post(
+        url, json={"op": "owner", "investor_ids": ids, "owner_user_id": str(editor.id)}
+    )
+    assert {p["owner"]["user_id"] for p in r.json()["participants"]} == {str(editor.id)}
+    r = await c.post(url, json={"op": "owner", "investor_ids": ids, "owner_user_id": None})
+    assert all(p.get("owner") is None for p in r.json()["participants"])
+    stranger = await make_investor(db, w.ws)  # not a member: an investor id
+    r = await c.post(
+        url, json={"op": "owner", "investor_ids": ids, "owner_user_id": str(stranger.id)}
+    )
+    assert r.status_code == 422
+
+    r = await c.post(url, json={"op": "fit", "investor_ids": ids, "fit": 5})
+    assert {p["priority"] for p in r.json()["participants"]} == {"hot"}
+
+    r = await c.post(url, json={"op": "add_tag", "investor_ids": ids, "tag": "Warm"})
+    assert r.json()["changed"] == 3  # the odd ones already have "warm"
+    for p in r.json()["participants"]:
+        assert [t.casefold() for t in p["investor"]["tags"]] == ["warm"]
+    r = await c.post(url, json={"op": "remove_tag", "investor_ids": ids, "tag": "warm"})
+    assert r.json()["changed"] == 6
+    assert all(p["investor"]["tags"] == [] for p in r.json()["participants"])
+    tagged = await activities_of(db, invs[0], "investor_updated")
+    assert tagged and tagged[-1].data["bulk_id"] == r.json()["bulk_id"]
+
+    r = await c.post(url, json={"op": "stage", "investor_ids": ids})
+    assert r.status_code == 422
+    r = await c.post(url, json={"op": "fit", "investor_ids": ids, "fit": 9})
+    assert r.status_code == 422
+    assert (
+        await c.post(url, json={"op": "stage", "investor_ids": [], "stage": "new"})
+    ).status_code == 422
+
+    r = await c.post(url, json={"op": "remove", "investor_ids": ids})
+    assert r.status_code == 200 and r.json()["removed"] == ids and r.json()["participants"] == []
+    assert await participant(db, w.rnd, invs[0]) is None
+    removed = await activities_of(db, invs[0], "removed_from_round")
+    assert removed[0].data["bulk_id"] == r.json()["bulk_id"]
+    # Undo a removal: restore adds them back with their fields.
+    items = [
+        {"investor_id": i, "stage": "meeting", "fit": 4, "next_step": "Send deck"} for i in ids
+    ]
+    r = await c.post(url, json={"op": "restore", "items": items})
+    assert r.status_code == 200, r.text
+    assert r.json()["changed"] == 6
+    assert {(p["stage"]["key"], p["fit"], p["next_step"]) for p in r.json()["participants"]} == {
+        ("meeting", 4, "Send deck")
+    }
+
+
+async def test_bulk_is_all_or_nothing(db: AsyncSession, key_client: Any, frozen_now: Any) -> None:
+    w = await world(db)
+    invs = await _thirty(db, w)
+    outsider = await make_investor(db, w.ws)  # in the workspace, not in the round
+    other = await make_investor(db, (await world(db, name="Other")).ws)
+    c = key_client(w.key)
+    url = "/v1/rounds/seed/participants/bulk-update"
+    ids = [str(i.id) for i in invs[:3]]
+
+    r = await c.post(
+        url, json={"op": "stage", "investor_ids": [*ids, str(other.id)], "stage": "passed"}
+    )
+    assert r.status_code == 404
+    r = await c.post(
+        url, json={"op": "stage", "investor_ids": [*ids, str(outsider.id)], "stage": "passed"}
+    )
+    assert r.status_code == 409 and r.json()["error"]["code"] == "not_in_round"
+    assert outsider.name in r.json()["error"]["message"]
+    for inv in invs[:3]:
+        p = await participant(db, w.rnd, inv)
+        assert p is not None
+        await db.refresh(p)
+    assert [a.kind for a in await activities_of(db, invs[0])] == []
+    r = await c.post(
+        url, json={"op": "stage", "investor_ids": [str(invs[0].id)] * 1001, "stage": "new"}
+    )
+    assert r.status_code == 422
+    reader = key_client(w.reader)
+    r = await reader.post(url, json={"op": "fit", "investor_ids": ids, "fit": 1})
+    assert r.status_code == 403

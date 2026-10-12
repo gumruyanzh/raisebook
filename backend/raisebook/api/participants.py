@@ -23,11 +23,14 @@ from raisebook.api.deps import (
     get_write_ctx,
 )
 from raisebook.api.rounds import load_round
+from raisebook.core.errors import ValidationFailed
 from raisebook.core.refs import resolve_stage
 from raisebook.schemas.common import ERROR_RESPONSES
 from raisebook.schemas.participants import (
     BulkAdd,
     BulkAddOut,
+    BulkUpdate,
+    BulkUpdateOut,
     CommitmentIn,
     CommitmentOut,
     FollowUpSet,
@@ -131,6 +134,57 @@ async def bulk_add(
     )
     await db.commit()
     return BulkAddOut(added=added, already=already)
+
+
+@router.post("/{round}/participants/bulk-update", response_model=BulkUpdateOut)
+async def bulk_update(
+    round: str,
+    body: BulkUpdate,
+    ws: WorkspaceContext = Depends(get_write_ctx),
+    db: AsyncSession = Depends(get_session),
+    now: datetime = Depends(get_now),
+) -> BulkUpdateOut:
+    """One change for up to 1,000 investors in one transaction, with one activity per
+    investor sharing ``data.bulk_id``. Any id outside the workspace is 404 and nothing is
+    written; for every op but ``restore`` they must all be in the round (409 otherwise)."""
+    rnd = await load_round(db, ws, round)
+    value_field = {
+        "stage": "stage",
+        "follow_up": "follow_up_on",
+        "owner": "owner_user_id",
+        "fit": "fit",
+        "add_tag": "tag",
+        "remove_tag": "tag",
+    }.get(body.op)
+    if value_field and value_field not in body.model_fields_set:
+        raise ValidationFailed(value_field, f"`{body.op}` needs `{value_field}`.")
+    if body.op == "restore" and not body.items:
+        raise ValidationFailed("items", "`restore` needs `items`.")
+    items = (
+        [i.model_dump(exclude_unset=True) for i in body.items]
+        if body.op == "restore" and body.items
+        else None
+    )
+    res = await parts_svc.bulk_update(
+        db,
+        ws,
+        rnd,
+        op=body.op,
+        investor_ids=body.investor_ids,
+        value=getattr(body, value_field) if value_field else None,
+        items=items,
+        now=now,
+    )
+    await db.commit()
+    fresh = await parts_svc.reload(db, ws, res.participants)
+    return BulkUpdateOut(
+        bulk_id=res.bulk_id,
+        op=body.op,
+        changed=len(res.changed),
+        unchanged=len(res.unchanged),
+        participants=await parts_svc.present(db, ws, fresh, now=now),
+        removed=res.removed,
+    )
 
 
 @router.get("/{round}/participants/{investor_id}", response_model=ParticipantOut)

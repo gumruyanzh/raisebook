@@ -158,9 +158,15 @@ async def _check_owner(db: AsyncSession, ws: WorkspaceContext, user_id: UUID) ->
 
 
 async def _clean(
-    db: AsyncSession, ws: WorkspaceContext, stages: Sequence[RoundStage], raw: Mapping[str, Any]
+    db: AsyncSession,
+    ws: WorkspaceContext,
+    stages: Sequence[RoundStage],
+    raw: Mapping[str, Any],
+    *,
+    known_owners: set[UUID] | None = None,
 ) -> dict[str, Any]:
-    """Validate the participant fields present in ``raw``."""
+    """Validate the participant fields present in ``raw``. ``known_owners`` (bulk writes)
+    caches the member check so a 1,000-row change asks the database once per owner."""
     out: dict[str, Any] = {}
     for f in PARTICIPANT_FIELDS:
         if f not in raw:
@@ -186,7 +192,10 @@ async def _clean(
         elif f == "owner_user_id":
             if v is not None:
                 uid = v if isinstance(v, UUID) else UUID(str(v))
-                await _check_owner(db, ws, uid)
+                if known_owners is None or uid not in known_owners:
+                    await _check_owner(db, ws, uid)
+                    if known_owners is not None:
+                        known_owners.add(uid)
                 out[f] = uid
             else:
                 out[f] = None
@@ -217,12 +226,17 @@ async def apply_changes(
     note: str | None = None,
     reason: str | None = None,
     import_run_id: UUID | None = None,
+    bulk_id: UUID | None = None,
+    known_owners: set[UUID] | None = None,
 ) -> list[str]:
-    """Apply participant field changes and log one activity per change type."""
+    """Apply participant field changes and log one activity per change type. ``bulk_id``
+    goes into every activity's ``data`` so the feed can group a bulk change."""
     act = actor or ws.actor
-    clean = await _clean(db, ws, stages, raw)
+    clean = await _clean(db, ws, stages, raw, known_owners=known_owners)
     by_id = {s.id: s for s in stages}
     extra: dict[str, Any] = {"import_run_id": str(import_run_id)} if import_run_id else {}
+    if bulk_id:
+        extra["bulk_id"] = str(bulk_id)
     changed: list[str] = []
     body = clean_text(note, "note", max_len=2000, multiline=True)
 
@@ -327,6 +341,8 @@ async def upsert(
     import_run_id: UUID | None = None,
     stages: Sequence[RoundStage] | None = None,
     note: str | None = None,
+    bulk_id: UUID | None = None,
+    known_owners: set[UUID] | None = None,
 ) -> UpsertResult:
     """Put ``investor`` on ``rnd`` (first stage unless ``changes["stage"]``), or apply
     ``changes`` to the existing participant (a different stage is a stage change).
@@ -351,10 +367,12 @@ async def upsert(
             actor=act,
             note=note,
             import_run_id=import_run_id,
+            bulk_id=bulk_id,
+            known_owners=known_owners,
         )
         return UpsertResult(existing, False, changed)
 
-    clean = await _clean(db, ws, stage_list, changes)
+    clean = await _clean(db, ws, stage_list, changes, known_owners=known_owners)
     stage = clean.pop("stage", None) or first_stage(stage_list)
     part = RoundParticipant(
         workspace_id=ws.workspace_id,
@@ -369,6 +387,8 @@ async def upsert(
     db.add(part)
     await db.flush()
     extra: dict[str, Any] = {"import_run_id": str(import_run_id)} if import_run_id else {}
+    if bulk_id:
+        extra["bulk_id"] = str(bulk_id)
     await activities.log(
         db,
         ws,
@@ -392,7 +412,16 @@ async def upsert(
     }
     if rest:
         await apply_changes(
-            db, ws, rnd, part, stage_list, rest, now=now, actor=act, import_run_id=import_run_id
+            db,
+            ws,
+            rnd,
+            part,
+            stage_list,
+            rest,
+            now=now,
+            actor=act,
+            import_run_id=import_run_id,
+            bulk_id=bulk_id,
         )
     await db.flush()
     changed = ["stage", *[k for k, v in clean.items() if v is not None and k != "stage"]]
@@ -552,11 +581,22 @@ async def record_commitment(
 
 
 async def remove(
-    db: AsyncSession, ws: WorkspaceContext, rnd: Round, inv: Investor, *, now: datetime
+    db: AsyncSession,
+    ws: WorkspaceContext,
+    rnd: Round,
+    inv: Investor,
+    *,
+    now: datetime,
+    part: RoundParticipant | None = None,
+    stage: RoundStage | None = None,
+    bulk_id: UUID | None = None,
 ) -> None:
     """Remove from the round (logs ``removed_from_round``; the investor stays)."""
-    part = await require_participant(db, ws, rnd, inv)
-    stage = await db.get(RoundStage, part.stage_id)
+    part = part or await require_participant(db, ws, rnd, inv)
+    stage = stage or await db.get(RoundStage, part.stage_id)
+    data: dict[str, Any] = {"stage": stage_ref(stage)} if stage else {}
+    if bulk_id:
+        data["bulk_id"] = str(bulk_id)
     await db.execute(
         delete(RoundParticipant).where(
             RoundParticipant.workspace_id == ws.workspace_id, RoundParticipant.id == part.id
@@ -569,7 +609,7 @@ async def remove(
         round_id=rnd.id,
         kind="removed_from_round",
         now=now,
-        data={"stage": stage_ref(stage)} if stage else {},
+        data=data,
     )
 
 
@@ -611,6 +651,205 @@ async def bulk_add(
         await upsert(db, ws, rnd, found[iid], {"stage": target}, now=now, stages=stages)
         added += 1
     return added, len(ids) - added
+
+
+@dataclass
+class BulkResult:
+    bulk_id: UUID
+    changed: list[UUID]
+    unchanged: list[UUID]
+    #: Participants still in the round, in the order the ids were given.
+    participants: list[RoundParticipant]
+    removed: list[UUID]
+
+
+BULK_FIELD = {"stage": "stage", "follow_up": "follow_up_on", "owner": "owner_user_id", "fit": "fit"}
+
+
+async def bulk_update(
+    db: AsyncSession,
+    ws: WorkspaceContext,
+    rnd: Round,
+    *,
+    op: str,
+    investor_ids: Sequence[UUID] = (),
+    value: Any = None,
+    items: Sequence[Mapping[str, Any]] | None = None,
+    now: datetime,
+) -> BulkResult:
+    """One change for many investors of ``rnd`` in one transaction (the caller commits).
+
+    ``op`` is ``stage`` / ``follow_up`` / ``owner`` / ``fit`` (``value`` is the new value,
+    ``None`` clears a follow-up or an owner), ``add_tag`` / ``remove_tag`` (``value`` is
+    the tag; tags live on the investor), ``remove``, or ``restore`` (``items``: one mapping
+    per investor with ``investor_id`` and the participant fields to put back; investors no
+    longer in the round are added back). Every activity carries the same ``data.bulk_id``.
+
+    All or nothing: an id outside this workspace is 404 for the whole request, and for
+    every op but ``restore`` an investor who is not in the round is 409 ``not_in_round``.
+    Nothing is written in either case.
+    """
+    from uuid import uuid4
+
+    from raisebook.services.investors import get_many
+    from raisebook.services.normalize import (
+        ARRAY_LIMITS,
+        INVESTOR_FIELDS,
+        clean_list,
+        derived_fields,
+        merge_lists,
+    )
+
+    if op == "restore":
+        rows = list(items or [])
+        ids = list(dict.fromkeys(UUID(str(r["investor_id"])) for r in rows))
+        per_id = {UUID(str(r["investor_id"])): r for r in rows}
+    else:
+        ids = list(dict.fromkeys(investor_ids))
+        per_id = {}
+    if not ids:
+        raise ValidationFailed(
+            "investor_ids", "Give at least one investor id (or `items` for restore)."
+        )
+    if len(ids) > 1000:
+        raise ValidationFailed("investor_ids", "At most 1,000 investors per bulk change.")
+
+    found = await get_many(db, ws, ids)
+    missing = [str(i) for i in ids if i not in found]
+    if missing:
+        raise NotFound(
+            f"{len(missing)} investor id(s) are not in this workspace. Nothing was changed.",
+            details={"missing": missing[:20]},
+        )
+    stages = await stages_for(db, ws, rnd.id)
+    by_stage_id = {s.id: s for s in stages}
+    parts = {
+        p.investor_id: p
+        for p in await db.scalars(
+            select(RoundParticipant).where(
+                RoundParticipant.workspace_id == ws.workspace_id,
+                RoundParticipant.round_id == rnd.id,
+                RoundParticipant.investor_id.in_(ids),
+            )
+        )
+    }
+    if op != "restore":
+        outside = [i for i in ids if i not in parts]
+        if outside:
+            names = ", ".join(found[i].name for i in outside[:3])
+            more = f" and {len(outside) - 3} more" if len(outside) > 3 else ""
+            raise NotInRound(
+                f"{names}{more} {'is' if len(outside) == 1 else 'are'} not in round "
+                f"{rnd.name}. Nothing was changed.",
+                details={"not_in_round": [str(i) for i in outside[:20]]},
+            )
+
+    bulk_id = uuid4()
+    owners: set[UUID] = set()
+    changed: list[UUID] = []
+    removed: list[UUID] = []
+
+    if op in BULK_FIELD:
+        raw = {BULK_FIELD[op]: value}
+        if op == "stage":
+            if value is None:
+                raise ValidationFailed("stage", "Give the stage to move them to.")
+            raw = {"stage": resolve_stage(list(stages), str(value))}
+        elif op == "fit" and value is None:
+            raise ValidationFailed("fit", "Give a fit from 0 to 5.")
+        for iid in ids:
+            if await apply_changes(
+                db,
+                ws,
+                rnd,
+                parts[iid],
+                stages,
+                raw,
+                now=now,
+                bulk_id=bulk_id,
+                known_owners=owners,
+            ):
+                changed.append(iid)
+    elif op in ("add_tag", "remove_tag"):
+        tags = clean_list([value] if isinstance(value, str) else value, "tag", max_items=1)
+        if not tags:
+            raise ValidationFailed("tag", "Give the tag to add or remove.")
+        tag = tags[0]
+        for iid in ids:
+            inv = found[iid]
+            before = list(inv.tags or [])
+            if op == "add_tag":
+                after = merge_lists(before, [tag])
+                if len(after) > ARRAY_LIMITS["tags"]:
+                    raise ValidationFailed(
+                        "tag", f"{inv.name} already has {ARRAY_LIMITS['tags']} tags."
+                    )
+            else:
+                after = [t for t in before if t.casefold() != tag.casefold()]
+            if after == before:
+                continue
+            inv.tags = after
+            state = {f: getattr(inv, f) for f in INVESTOR_FIELDS}
+            for k, v in derived_fields(state).items():
+                setattr(inv, k, v)
+            inv.updated_at = now
+            await activities.log(
+                db,
+                ws,
+                investor_id=inv.id,
+                kind="investor_updated",
+                now=now,
+                data={
+                    "fields": ["tags"],
+                    "changes": {"tags": {"from": before, "to": after}},
+                    "bulk_id": str(bulk_id),
+                },
+            )
+            changed.append(iid)
+        await db.flush()
+    elif op == "remove":
+        for iid in ids:
+            part = parts.pop(iid)
+            await remove(
+                db,
+                ws,
+                rnd,
+                found[iid],
+                now=now,
+                part=part,
+                stage=by_stage_id.get(part.stage_id),
+                bulk_id=bulk_id,
+            )
+            removed.append(iid)
+            changed.append(iid)
+    elif op == "restore":
+        for iid in ids:
+            fields = {k: v for k, v in per_id[iid].items() if k != "investor_id"}
+            res = await upsert(
+                db,
+                ws,
+                rnd,
+                found[iid],
+                fields,
+                now=now,
+                stages=stages,
+                bulk_id=bulk_id,
+                known_owners=owners,
+            )
+            parts[iid] = res.participant
+            if res.created or res.changed:
+                changed.append(iid)
+    else:
+        raise ValidationFailed("op", f"Unknown bulk op {op!r}.")
+
+    done = set(changed)
+    return BulkResult(
+        bulk_id=bulk_id,
+        changed=changed,
+        unchanged=[i for i in ids if i not in done],
+        participants=[parts[i] for i in ids if i in parts],
+        removed=removed,
+    )
 
 
 # --- reads -------------------------------------------------------------------------------
@@ -788,6 +1027,27 @@ async def present(
         )
         for p in parts
     ]
+
+
+async def reload(
+    db: AsyncSession, ws: WorkspaceContext, parts: Sequence[RoundParticipant]
+) -> list[RoundParticipant]:
+    """Re-read rows in one query (``last_activity_at`` is bumped in SQL by
+    ``activities.log``), keeping the given order."""
+    if not parts:
+        return []
+    rows = {
+        p.id: p
+        for p in await db.scalars(
+            select(RoundParticipant)
+            .where(
+                RoundParticipant.workspace_id == ws.workspace_id,
+                RoundParticipant.id.in_([p.id for p in parts]),
+            )
+            .execution_options(populate_existing=True)
+        )
+    }
+    return [rows[p.id] for p in parts if p.id in rows]
 
 
 async def present_one(

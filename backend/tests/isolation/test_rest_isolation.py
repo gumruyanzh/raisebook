@@ -42,6 +42,9 @@ ORGLESS = {
     ("POST", "/v1/auth/magic-link"),
     ("POST", "/v1/auth/verify"),
     ("GET", "/v1/auth/verify/peek"),
+    ("GET", "/v1/auth/providers"),
+    ("GET", "/v1/auth/google/start"),
+    ("GET", "/v1/auth/google/callback"),
     ("GET", "/v1/me/sessions"),
     ("DELETE", "/v1/me/sessions/{session_id}"),
     ("POST", "/v1/me/sessions/revoke-others"),
@@ -455,6 +458,40 @@ async def _part_bulk(c: Any, t: Two, who: str) -> None:
             json={"investor_ids": [str(t.a_inv.id)]},
         )
     )
+
+
+@case("POST", "/v1/rounds/{round}/participants/bulk-update")
+async def _part_bulk_update(c: Any, t: Two, who: str) -> None:
+    url = "/v1/rounds/seed/participants/bulk-update"
+    # B's investor (alone, or mixed with A's) is 404 for the whole request.
+    for ids in ([str(t.b_inv.id)], [str(t.a_inv.id), str(t.b_inv.id)]):
+        is_404(await c.post(url, json={"op": "stage", "investor_ids": ids, "stage": "passed"}))
+        is_404(await c.post(url, json={"op": "add_tag", "investor_ids": ids, "tag": "x"}))
+        is_404(await c.post(url, json={"op": "remove", "investor_ids": ids}))
+    is_404(
+        await c.post(
+            url, json={"op": "restore", "items": [{"investor_id": str(t.b_inv.id), "fit": 1}]}
+        )
+    )
+    # B's round with A's investor, by slug and by id.
+    for rnd in (t.b_round.slug, t.b_round.id):
+        is_404(
+            await c.post(
+                f"/v1/rounds/{rnd}/participants/bulk-update",
+                json={"op": "fit", "investor_ids": [str(t.a_inv.id)], "fit": 1},
+            )
+        )
+    # B's member as the owner is refused without leaking, and A's row is unchanged.
+    r = await c.post(
+        url,
+        json={
+            "op": "owner",
+            "investor_ids": [str(t.a_inv.id)],
+            "owner_user_id": str(t.b_member.id),
+        },
+    )
+    assert r.status_code == 422
+    no_b(r.text, t)
 
 
 @case("GET", "/v1/rounds/{round}/participants/{investor_id}")
