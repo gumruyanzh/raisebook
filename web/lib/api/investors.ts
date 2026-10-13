@@ -102,3 +102,66 @@ export async function listAllInvestors(
   }
   return { data: out, total };
 }
+
+/* ---------- directory rows (UX-PASS-1 P2-5) ---------- */
+
+/** A contact as the directory needs it: every field it shows or searches, nothing more. */
+export interface InvestorRow {
+  id: UUID;
+  name: string;
+  firm: string | null;
+  title: string | null;
+  type: InvestorType;
+  email: string | null;
+  location: string | null;
+  linkedin_url: string | null;
+  check_min: number | null;
+  check_max: number | null;
+  check_note: string | null;
+  stage_focus: string[];
+  industries: string[];
+  tags: string[];
+  source: string | null;
+  warm_intro_by: string | null;
+  /** The first 400 characters of the notes, for search. */
+  notes: string | null;
+  rounds: { slug: string; name: string; label: string; color: Investor["rounds"][number]["stage"]["color"]; kind: string }[];
+  updated_at: string;
+}
+
+const NOTE_SEARCH_CHARS = 400;
+
+/** Server-side trim: the directory ships ~40% of the full contact shape. */
+export function toInvestorRow(i: Investor): InvestorRow {
+  return {
+    id: i.id,
+    name: i.name,
+    firm: i.firm ?? null,
+    title: i.title ?? null,
+    type: i.type,
+    email: i.email ?? null,
+    location: i.location ?? null,
+    linkedin_url: i.linkedin_url ?? null,
+    check_min: i.check_min ?? null,
+    check_max: i.check_max ?? null,
+    check_note: i.check_note ?? null,
+    stage_focus: i.stage_focus,
+    industries: i.industries,
+    tags: i.tags,
+    source: i.source ?? null,
+    warm_intro_by: i.warm_intro_by ?? null,
+    notes: i.notes ? i.notes.slice(0, NOTE_SEARCH_CHARS) : null,
+    rounds: i.rounds.map((r) => ({ slug: r.round_slug, name: r.round_name, label: r.stage.label, color: r.stage.color, kind: r.stage.kind })),
+    updated_at: i.updated_at,
+  };
+}
+
+/** Lowercased, diacritic-free text a directory search runs against (the API's `q` fields). */
+export function investorSearchText(r: InvestorRow): string {
+  return [r.name, r.firm, r.title, r.email, r.location, r.tags.join(" "), r.industries.join(" "), r.source, r.warm_intro_by, r.notes]
+    .filter(Boolean)
+    .join(" ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
