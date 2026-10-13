@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     magic_links_per_ip_hour: int | None = Field(None, ge=1)
     email_global_per_hour: int | None = Field(None, ge=1)
 
+    @field_validator("magic_links_per_ip_hour", "email_global_per_hour", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, v: object) -> object:
+        # Compose passes ``${VAR:-}`` as "", which means "not set", not a parse error.
+        return None if isinstance(v, str) and not v.strip() else v
+
     # Investor research (docs/RESEARCH-PLAN.md) is unfinished and off by default: with
     # ``RAISEBOOK_RESEARCH_ENABLED`` unset, its REST routes, MCP tools and the research line of
     # the MCP instructions are not served at all (the public surface is the 17 core tools).
