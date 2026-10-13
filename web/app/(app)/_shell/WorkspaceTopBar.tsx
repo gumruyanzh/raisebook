@@ -132,6 +132,7 @@ export function WorkspaceTopBar() {
           loadDue();
         }}
         newWorkspaceHref="/onboarding"
+        allWorkspacesHref="/app"
         onOpenSample={onOpenSample}
         accountHref="/account"
         onSignOut={onSignOut}

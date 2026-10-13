@@ -52,6 +52,8 @@ export interface TopBarProps {
   /** Called when the workspace menu opens (load due counts lazily). */
   onWorkspaceMenu?: () => void;
   newWorkspaceHref?: string;
+  /** "All companies" (the cross-workspace Today page), shown with two or more workspaces. */
+  allWorkspacesHref?: string;
   onOpenSample?: () => void;
   accountHref?: string;
   onSignOut?: () => void;
@@ -104,6 +106,9 @@ export function TopBar(p: TopBarProps) {
       }),
     ),
     ...(p.workspaces.length ? [{ type: "separator" } as MenuEntry] : []),
+    ...(p.allWorkspacesHref && p.workspaces.length > 1
+      ? [{ label: "All companies · Today", textValue: "All companies", href: p.allWorkspacesHref } as MenuEntry]
+      : []),
     ...(p.newWorkspaceHref ? [{ label: "New workspace", href: p.newWorkspaceHref } as MenuEntry] : []),
     ...(p.onOpenSample ? [{ label: "Open sample workspace", onSelect: p.onOpenSample } as MenuEntry] : []),
   ];
