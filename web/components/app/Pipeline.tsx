@@ -169,6 +169,8 @@ interface RoundCache {
   written: Map<string, number>;
   /** investor id → when it was removed here. */
   removed: Map<string, number>;
+  /** Investors with a write in flight (an optimistic move): local wins until it lands. */
+  pending: Set<string>;
 }
 
 const CACHE = new Map<string, RoundCache>();
@@ -181,6 +183,7 @@ function mergeRows(
   serverAt: number,
   written: Map<string, number>,
   removed: Map<string, number>,
+  pending: Set<string>,
 ): Participant[] {
   const mine = new Map(local.map((p) => [p.investor.id, p]));
   const seen = new Set<string>();
@@ -190,7 +193,7 @@ function mergeRows(
     seen.add(id);
     if ((removed.get(id) ?? 0) > serverAt) continue;
     const l = mine.get(id);
-    out.push(l && ts(l.updated_at) > ts(s.updated_at) ? l : s);
+    out.push(l && (pending.has(id) || ts(l.updated_at) > ts(s.updated_at)) ? l : s);
   }
   for (const l of local) {
     if (!seen.has(l.investor.id) && (written.get(l.investor.id) ?? 0) > serverAt) out.push(l);
@@ -198,10 +201,6 @@ function mergeRows(
   return out;
 }
 
-/** Workspace-calendar date helpers for the quick picks. */
-function stampNow(): string {
-  return new Date().toISOString();
-}
 
 export interface PipelineProps {
   round: Round;
@@ -241,7 +240,14 @@ export function Pipeline(props: PipelineProps) {
     cache.current = prev
       ? {
           ...prev,
-          participants: mergeRows(prev.participants, fromServer.participants, serverAt, prev.written, prev.removed),
+          participants: mergeRows(
+            prev.participants,
+            fromServer.participants,
+            serverAt,
+            prev.written,
+            prev.removed,
+            prev.pending,
+          ),
           extras: { ...prev.extras, ...fromServer.extras },
           summary: serverAt >= prev.summaryAt ? props.summary : prev.summary,
           summaryAt: Math.max(prev.summaryAt, serverAt),
@@ -255,6 +261,7 @@ export function Pipeline(props: PipelineProps) {
           serverAt,
           written: new Map(),
           removed: new Map(),
+          pending: new Set(),
         };
     CACHE.set(round.id, cache.current);
   }
@@ -288,7 +295,7 @@ export function Pipeline(props: PipelineProps) {
     const c = cache.current!;
     if (serverAt < c.serverAt) return;
     c.serverAt = serverAt;
-    setParticipants((list) => mergeRows(list, fromServer.participants, serverAt, c.written, c.removed));
+    setParticipants((list) => mergeRows(list, fromServer.participants, serverAt, c.written, c.removed, c.pending));
     setExtras((e) => {
       const next = { ...e, ...fromServer.extras };
       c.extras = next;
@@ -448,7 +455,8 @@ export function Pipeline(props: PipelineProps) {
         const i = list.findIndex((x) => x.investor.id === p.investor.id);
         if (i < 0) return [...list, p];
         const cur = list[i]!;
-        if (ts(cur.updated_at) > ts(p.updated_at) && cur.stage.key === p.stage.key) return list;
+        // Two server versions: the newer one wins (a late response never undoes a later write).
+        if (ts(cur.updated_at) > ts(p.updated_at)) return list;
         const next = list.slice();
         next[i] = p;
         return next;
@@ -467,10 +475,13 @@ export function Pipeline(props: PipelineProps) {
       if (!prev || !to || prev.stage.key === key) return false;
       const from = prev.stage;
       setParticipants((list) =>
-        list.map((p) => (p.investor.id === investorId ? { ...p, stage: to, updated_at: stampNow() } : p)),
+        list.map((p) => (p.investor.id === investorId ? { ...p, stage: to } : p)),
       );
+      const pending = cache.current!.pending;
+      pending.add(investorId);
       try {
         const res = await moveStage(client, round.id, investorId, key);
+        pending.delete(investorId);
         patchParticipant(res.participant);
         const msg = `${prev.investor.name} moved to ${to.label}.`;
         setAnnounce(msg);
@@ -483,6 +494,7 @@ export function Pipeline(props: PipelineProps) {
         afterWrite();
         return true;
       } catch (err) {
+        pending.delete(investorId);
         setParticipants((list) => list.map((p) => (p.investor.id === investorId ? prev : p)));
         toast.show(`${prev.investor.name} was not moved. ${errorMessage(err)}`);
         return false;
@@ -848,13 +860,18 @@ export function Pipeline(props: PipelineProps) {
     ): Promise<boolean> => {
       const ids = "investor_ids" in body ? new Set(body.investor_ids) : null;
       const before = participantsRef.current;
+      const pending = cache.current!.pending;
       if (opts.optimistic && ids) {
-        const now = stampNow();
-        setParticipants((list) => list.map((p) => (ids.has(p.investor.id) ? { ...opts.optimistic!(p), updated_at: now } : p)));
+        for (const id of ids) pending.add(id);
+        setParticipants((list) => list.map((p) => (ids.has(p.investor.id) ? opts.optimistic!(p) : p)));
       }
+      const settle = () => {
+        if (ids) for (const id of ids) pending.delete(id);
+      };
       const undoBodies = opts.undo?.() ?? null;
       try {
         const r = await bulkUpdateParticipants(client, round.id, body);
+        settle();
         const c = cache.current!;
         const now = Date.now();
         for (const p of r.participants) c.written.set(p.investor.id, now);
@@ -883,6 +900,7 @@ export function Pipeline(props: PipelineProps) {
         afterWrite();
         return true;
       } catch (err) {
+        settle();
         if (opts.optimistic) setParticipants((list) => list.map((p) => before.find((b) => b.investor.id === p.investor.id) ?? p));
         toast.show(`Nothing was changed. ${errorMessage(err)}`);
         return false;
