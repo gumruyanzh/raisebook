@@ -200,3 +200,25 @@ Owns:
   their report, and the integrator merges them.
 - If two Phase 3 builders need the same new UI primitive, each builds its own private version
   under its own `components/<area>/`, and the integrator lifts one into `components/ui/` later.
+
+---
+
+## UX pass 1 (2026-10-12)
+Ownership for the UX pass is in `docs/UX-PASS-1.md` §3 (WS-A Pickers & Setup, WS-B
+Pipeline, WS-C Shell, WS-D Import), plus WS-G (Continue with Google). After the pass, the
+same areas stay with the same roles. Files that pass added:
+- WS-A: `web/components/ui/{Combobox,TimezonePicker,CurrencyPicker,DateField}.tsx`,
+  `web/lib/{tz/**,currency.ts,dates.ts,rank.ts}`, `web/lib/**/*.test.ts`,
+  `web/lib/testing/**`, `web/components/app/settings/NewWorkspaceDialog.tsx`.
+- WS-B: `web/components/ui/{Avatar,FilterBar}.tsx`, `web/components/ui/useVirtualRows.ts`,
+  the `participants/bulk-update` route, schemas and tests.
+- WS-C: `web/components/ui/{CommandPalette,ShortcutsSheet}.tsx`,
+  `web/lib/{hotkeys,commands,keys,match}.ts`, `web/components/app/TodayQueue.tsx`,
+  `web/app/(app)/_shell/AppKeyboard.tsx`.
+- WS-D: `web/public/templates/**`, the import preview additions in `schemas/data.py`.
+- WS-G: `backend/raisebook/services/google_auth.py`, the `/v1/auth/google/*` and
+  `/v1/auth/providers` routes in `api/auth.py`, `alembic/versions/0002_*.py`,
+  `backend/tests/test_google_signin.py`, `web/components/app/auth/GoogleButton.tsx`,
+  `web/lib/api/auth-providers.ts`.
+- Integrator: `web/components/ui/index.ts` exports for components outside WS-A,
+  `web/lib/api/types.ts`, `docs/SPEC.md`, `design/SYSTEM.md`, this file.

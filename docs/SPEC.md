@@ -186,7 +186,10 @@ CREATE TABLE users (
   name           text CHECK (name IS NULL OR length(btrim(name)) BETWEEN 1 AND 120),
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
-  last_signin_at timestamptz
+  last_signin_at timestamptz,
+  -- Continue with Google (migration 0002): the Google account id (OIDC `sub`), bound on the
+  -- first Google sign-in. Null for magic-link-only accounts; one Google account, one user.
+  google_sub     text UNIQUE CHECK (google_sub IS NULL OR length(google_sub) BETWEEN 1 AND 255)
 );
 
 -- Magic links. The user row is created on first successful verify, not on request.
@@ -587,6 +590,30 @@ Input parsing accepts labels and common aliases case-insensitively: `VC`, `ventu
 4. Rate limits: 5 requests per email per 15 minutes, 30 per IP per hour. Over the limit, the
    response is still 202 but no email is sent, and a warning is logged with the email hashed.
 
+### 4.1a Continue with Google (UX pass 1, WS-G)
+Off unless `RAISEBOOK_GOOGLE_CLIENT_ID` and `RAISEBOOK_GOOGLE_CLIENT_SECRET` are set.
+`GET /v1/auth/providers` returns `{magic_link: true, google: bool}`; the web hides the button
+when `google` is false (or the API cannot be asked within 3s).
+1. `GET /v1/auth/google/start?next=` (a full-page navigation, not XHR) stores a signed state
+   and PKCE verifier in a short-lived cookie and redirects to Google (OIDC). `next` must be a same-app relative path.
+2. `GET /v1/auth/google/callback` checks the state, exchanges the code and verifies the ID
+   token. A **verified** Google email signs into the existing account for that address (the
+   same account as the emailed link) or creates one; `users.google_sub` is bound on first use.
+   An unverified email is refused, and so is a different Google account claiming an address
+   already bound to another `google_sub`. Finishing replaces any other session in that
+   browser. Rate limits: per IP, and `RAISEBOOK_GOOGLE_MAX_PER_WINDOW` (10) sign-ins per
+   account per `MAGIC_LINK_TTL_MINUTES`, counting emailed-link sign-ins too.
+3. It lands on `/onboarding` when the user has no workspace, else on `next` or `/app`. If
+   `next` is an invite (`/invite/<token>`), a new user lands there to accept it. A refusal
+   lands on `/signin?error=<code>` (`google_not_configured`, `google_denied`,
+   `google_failed`, `google_state_invalid`, `google_token_invalid`, `google_exchange_failed`,
+   `google_unavailable`, `google_email_missing`, `google_email_unverified`,
+   `google_account_mismatch`, `google_signin_refused`), and the page explains it. The flow is
+   the OIDC authorization code flow with PKCE, `state` and `nonce` in a short-lived signed
+   HttpOnly cookie.
+The redirect URI to register with Google is exactly
+`https://api.raisebook.org/v1/auth/google/callback` (`${PUBLIC_BASE_URL}/v1/auth/google/callback`).
+
 ### 4.2 Session cookie and CSRF (copy smmist `auth/session.py`, renamed)
 - `rb_session` = `<session_id hex>.<secret>.<HMAC-SHA256(session_key, id.secret)>`. Flags:
   HttpOnly, Secure (`RAISEBOOK_SESSION_COOKIE_SECURE`, false only in dev), SameSite=Lax,
@@ -786,6 +813,9 @@ target is 0).
 |---|---|---|---|
 | `POST /v1/auth/magic-link` | none | `{email, redirect_path?, invite_token?}` | 202 `{sent: true, dev_link?}` |
 | `POST /v1/auth/verify` | none | `{token}` | 200 `{user, csrf_token, redirect_path?, workspaces: Workspace[]}` + cookies; 400 `invalid_token` |
+| `GET /v1/auth/providers` | none | – | `{magic_link: true, google: boolean}` |
+| `GET /v1/auth/google/start?next=` | none | – | 302 to Google (§4.1a) |
+| `GET /v1/auth/google/callback` | none | Google's `code`, `state` | 302 to the app with session cookies, or to `/signin?error=<code>` |
 | `GET /v1/auth/session` | session | – | `{user: {id,email,name?}, csrf_token, workspaces: Workspace[]}` |
 | `POST /v1/auth/signout` | session | – | 204, session revoked, cookies cleared |
 | `GET /v1/me` | session | – | `{id, email, name?, created_at}` |
@@ -794,7 +824,7 @@ target is 0).
 | `GET /v1/workspaces` | session | – | `{data: Workspace[]}` (with role) |
 | `POST /v1/workspaces` | session | `{name, timezone?, default_currency?, sample?: boolean}` | 201 Workspace. `sample: true` creates a sandbox workspace filled with fictional data (§8.5). |
 | `GET /v1/workspace` | read | – | Workspace + `{you: {type, role?, scopes, agent_name?, key_prefix?}, limits}` |
-| `PATCH /v1/workspace` | admin | `{name?, timezone?, default_currency?}` | Workspace |
+| `PATCH /v1/workspace` | admin | `{name?, timezone?, default_currency?}` | Workspace. Legacy zone ids are stored canonical (`Asia/Calcutta` → `Asia/Kolkata`, `Europe/Kiev` → `Europe/Kyiv`, `US/*` → `America/*`). |
 | `DELETE /v1/workspace` | owner session | `{confirm: "<slug>"}` | 204. 422 `confirmation_required` on mismatch. |
 | `GET /v1/members` | read | – | `{data: Member[]}` |
 | `PATCH /v1/members/{user_id}` | owner session | `{role}` | Member; 409 `last_owner` |
@@ -831,6 +861,7 @@ target is 0).
 | `GET /v1/rounds/{round}/participants` | read | query: `q, stage (repeatable key), fit_min, type, tag (repeatable), industry, follow_up=due\|week\|none, owner (user id or "none"), sort=fit\|name\|firm\|stage\|follow_up\|updated\|amount, order=asc\|desc, limit (≤1000), cursor` | `{data: Participant[], next_cursor, total}` |
 | `POST /v1/rounds/{round}/participants` | write | `{investor_id, stage?, fit?, probability?, amount_soft?, next_step?, follow_up_on?, follow_up_note?, owner_user_id?}` | 201 Participant (`created: true`); 200 if already in the round (provided fields are applied, as in MCP `add_to_round`) |
 | `POST /v1/rounds/{round}/participants/bulk` | write | `{investor_ids: string[≤500], stage?}` | `{added: n, already: n}` |
+| `POST /v1/rounds/{round}/participants/bulk-update` | write | `{op: "stage"\|"follow_up"\|"owner"\|"fit"\|"add_tag"\|"remove_tag"\|"remove"\|"restore", investor_ids: string[≤1000], stage?, follow_up_on?, owner_user_id?, fit?, tag?, items?: BulkItem[≤1000]}` (`restore` takes per-investor `items` and is what Undo sends) | `{bulk_id, op, changed, unchanged, participants: Participant[], removed: string[]}`. One transaction; every activity carries `data.bulk_id`. An id from another workspace is 404 for the whole request and nothing is written; an id not in the round is 409 `not_in_round`. Viewers 403. |
 | `GET /v1/rounds/{round}/participants/{investor_id}` | read | – | Participant |
 | `PATCH /v1/rounds/{round}/participants/{investor_id}` | write | `{stage?, note?, fit?, probability?, amount_soft?, amount_committed?, committed_on?, follow_up_on?, follow_up_note?, next_step?, owner_user_id?}` | Participant. Writes one activity per change type (§8.1). `note` is attached to the `stage_change` activity. |
 | `POST /v1/rounds/{round}/participants/{investor_id}/stage` | write | `{stage, note?}` | `{participant, changed, from, to}` (mirrors `move_stage`) |
@@ -846,13 +877,13 @@ returns 422 `stage_not_found` with `details.valid: [keys]`.
 
 | Method & path | Scope | Request | Response |
 |---|---|---|---|
-| `GET /v1/investors` | read | query: `q, type, tag, industry, round (in round), not_in_round, sort=name\|firm\|updated\|created, order, limit, cursor` | `{data: Investor[], next_cursor, total}` |
+| `GET /v1/investors` | read | query: `q, type, tag, industry, round (in round), not_in_round, sort=name\|firm\|updated\|created\|relevance, order, limit, cursor` (`relevance` with `q`: names starting with the query first, then the rest; the ⌘K palette uses it) | `{data: Investor[], next_cursor, total}` |
 | `POST /v1/investors` | write | Investor input fields + `on_duplicate?: "return_existing"\|"fill_empty"\|"create_anyway"` | 201 `{investor, created: true}`, or 200 `{investor, created: false, matched_on}` |
 | `GET /v1/investors/resolve?ref=` | read | – | `{investor}`; 404 or 409 `ambiguous_reference` (the MCP reference rules, §6.2) |
 | `GET /v1/investors/{id}` | read | – | Investor (with `rounds`) |
 | `PATCH /v1/investors/{id}` | write | Investor input fields, plus `add_tags?, remove_tags?, append_notes?` | Investor; 409 `duplicate` on an email or LinkedIn collision |
 | `DELETE /v1/investors/{id}` | write | – | 204 (hard delete, cascades participants and activities) |
-| `GET /v1/activities` | read | query: `investor_id, round, kind (repeatable), actor_type, since, until, limit, cursor` | `{data: Activity[], next_cursor}`, newest `occurred_at` first |
+| `GET /v1/activities` | read | query: `investor_id, round, kind (repeatable), actor_type, since, until, limit, cursor, collapse_runs?, run?` | `{data: Activity[], next_cursor}`, newest `occurred_at` first. Each Activity exposes `import_run_id`. `collapse_runs=true` keeps only the newest activity of each import run or bulk change (`data.bulk_id`) and adds `run: {key, kind: "import"\|"bulk", size, investors}`, so a 420-row import is one feed entry; `run=<key>` lists that run's activities. Read-only options. |
 | `POST /v1/activities` | write | `{investor_id, kind: note\|email\|call\|meeting, body, occurred_at?, round?, direction?: inbound\|outbound, idempotency_key?}`. The `Idempotency-Key` header is an alias for `idempotency_key`. | 201 Activity; 200 + `duplicate: true` on a repeated key |
 | `DELETE /v1/activities/{id}` | write | – | 204. Only manual kinds (note, email, call, meeting), per §4.6; otherwise 409 `not_deletable`. |
 
@@ -881,19 +912,25 @@ type ImportRequest = {
   default_stage?: string;               // for rows without a stage column/value; default = first stage
   on_duplicate?: "skip" | "fill_empty" | "update";   // default "skip"
   source?: string;                      // fills `source` on rows that have none, e.g. "SF Tech Week 2026"
+  value_map?: { [field: string]: { [cell: string]: string } };   // CSV: {"stage": {"Intro requested": "contacted"}, "fit": {"hot": "5"}}
   round_map?: { source_key: string; round: string; fit_field?: string }[];   // prototype_json only
 };
 type ImportField = "name" | "first_name" | "last_name" | "firm" | "title" | "type" | "email" | "linkedin_url"
   | "website_url" | "x_url" | "location" | "check_note" | "check_min" | "check_max" | "stage_focus" | "industries"
   | "tags" | "notes" | "source" | "warm_intro_by"                                   // contact fields
   | "stage" | "fit" | "follow_up_on" | "follow_up_note" | "amount_soft" | "amount_committed" | "probability"
-  | "next_step" | "owner_email";                                                    // round fields (need `round`)
+  | "next_step" | "owner_email" | "last_contacted";                                 // round fields (need `round`); last_contacted → a dated note
 type ImportPreview = {
   format; columns: string[]; mapping: { [column: string]: ImportField | null };
   row_count: number;
-  rows: ImportRow[];                    // first 200 rows; counts cover all rows
-  counts: { create: number; update: number; skip: number; error: number; add_to_round: number };
+  rows: ImportRow[];                    // REST: every row (≤ 5,000); MCP: the first 200. Counts cover all rows
+  counts: { create: number; update: number; skip: number; error: number; add_to_round: number;
+            cells_left_empty: number };  // unreadable optional cells dropped (their rows still import)
   warnings: string[];
+  warning_kinds: { [kind: string]: number };            // e.g. {"follow_up_unreadable": 74}
+  column_stats: { [column: string]: { empty: number; unreadable: number } };   // CSV
+  values: { [column: string]: { value: string; count: number; stage?: string; suggestion?: string; fit?: number }[] };   // CSV stage/fit columns, top 60
+  samples: { [column: string]: string[] };              // CSV, up to 3 per column
 };
 type ImportRow = { row: number;         // CSV line number (header = 1) or JSON index + 1
   action: "create" | "update" | "skip" | "error";
@@ -902,7 +939,10 @@ type ImportRow = { row: number;         // CSV line number (header = 1) or JSON 
   match?: { investor_id?: string; row?: number; name: string; matched_on: "email"|"linkedin"|"name_firm" };
   errors: { field: string; message: string }[]; warnings: string[] };
 type ImportResult = { import_run_id: string; counts: { rows, created, updated, skipped, errors, added_to_round };
-                      errors: { row: number; field: string; message: string }[] };
+                      errors: { row: number; field: string; message: string }[];
+                      warning_kinds: { [kind: string]: number };
+                      created: { row: number; id: string; name: string }[];
+                      round?: { id: string; slug: string; name: string } };
 ```
 
 ---
@@ -1283,8 +1323,17 @@ auto-map to them:
 | round: `next_step` | next step, next action, todo |
 | round: `owner_email` | owner, owner email, assigned to (must be a member's email; otherwise a warning and the field is ignored) |
 
-Row actions:
-- `error`: no name, invalid email, or a value out of range. The row is skipped.
+Row actions (UX pass 1, P0-6):
+- `error`: only a row with no name, or one that cannot be parsed at all. The row is skipped.
+- A bad **optional** cell (an unreadable date, an invalid email or URL, an out-of-range fit or
+  probability, a bad amount, `check_min > check_max`) is dropped from the row with a row
+  warning that names it (`follow-up left empty: "next week" is not a date`), counted in
+  `warning_kinds` and `counts.cells_left_empty`, and the row still imports. Dedupe for that
+  row still works by LinkedIn or name + firm. CSV, prototype JSON and the MCP
+  `import_investors_csv` tool share this one service.
+- With no `type` column, the type is guessed from the title or firm ("Angel" → angel,
+  "… Ventures/Capital/Partners/Fund" → vc) as a row notice (`type_guessed`); otherwise it
+  stays `other`, which the UI renders as "—".
 - A row matching an existing investor (§3.4 order) or an earlier row in the same file: `skip`
   (default; the investor is unchanged but still added to the round if `round` is set and they
   are not in it), `fill_empty` (fills empty fields and unions tags and industries), or
@@ -1292,7 +1341,9 @@ Row actions:
   `update` when anything would change.
 - Otherwise `create`.
 - Commit runs in one transaction with one `import_runs` row. Activities are written per §8.1
-  with `via=import` and `import_run_id`.
+  with `via=import` and `import_run_id`. Feeds show the whole run as one entry ("imported 420
+  investors from investors-420.csv") through `GET /v1/activities?collapse_runs=true`; there is
+  no separate summary activity.
 
 Prototype JSON (`format: "prototype_json"`): an array of investor docs, or `{investors:
 [...]}`, in the shape the prototype stores (`name, firm, title, type, industry, tags, summary,
@@ -1422,7 +1473,8 @@ Backend (`RAISEBOOK_*`): `ENVIRONMENT` (`development|test|staging|production`, a
 `SESSION_COOKIE_SECURE`, `SESSION_TTL_HOURS` (720), `MAGIC_LINK_TTL_MINUTES` (15),
 `EMAIL_BACKEND` (`log|smtp|memory`), `EMAIL_FROM` (`Raisebook <login@raisebook.org>`), `SMTP_HOST`,
 `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_STARTTLS`, `RATE_LIMIT_BACKEND`,
-`LOG_LEVEL`, `LOG_JSON`, `TEST_DATABASE_URL`, `TEST_KEEP_SCHEMA`.
+`LOG_LEVEL`, `LOG_JSON`, `TEST_DATABASE_URL`, `TEST_KEEP_SCHEMA`, `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET` (both unset = Google sign-in off), `GOOGLE_MAX_PER_WINDOW` (10).
 
 Web: `NEXT_PUBLIC_API_URL` (`http://localhost:8000`), `API_URL_INTERNAL`,
 `NEXT_PUBLIC_SITE_URL` (`http://localhost:3000`), `NEXT_PUBLIC_PUBLIC_API_URL`

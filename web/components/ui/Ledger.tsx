@@ -175,13 +175,15 @@ export function Ledger(p: LedgerProps) {
         </div>
         {variant === "full" && !p.closed && p.weightedPipeline !== undefined ? (
           <p className="t-body-s mt-4 text-muted">
-            Weighted pipeline{" "}
             {p.hasProbabilities === false ? (
-              <span>: set a probability on investors to see it</span>
+              <span>Weighted pipeline: set a probability on investors to see it</span>
             ) : (
-              <b className="tnum font-semibold text-fg" title={money(p.weightedPipeline, p.currency)}>
-                {moneyCompact(p.weightedPipeline, p.currency)}
-              </b>
+              <>
+                Weighted pipeline{" "}
+                <b className="tnum font-semibold text-fg" title={money(p.weightedPipeline, p.currency)}>
+                  {moneyCompact(p.weightedPipeline, p.currency)}
+                </b>
+              </>
             )}
           </p>
         ) : null}

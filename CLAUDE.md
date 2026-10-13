@@ -125,3 +125,23 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
 - Web: text on soft tints uses the `*-ink` tokens (`text-warm-ink`, …), never the fill hue.
   Round views share `RoundHeader` (no second tab row). Phones get a compact ledger, a
   stacked pipeline list and single-column sheet fields.
+
+## Invariants added in UX pass 1 (keep them)
+- Web unit tests: `npm run test:unit` (node's test runner over `web/lib/**/*.test.ts`); run it
+  with lint, typecheck and build.
+- Pickers: a list longer than about 12 options, or one where search helps, is a `Combobox`
+  (`TimezonePicker`, `CurrencyPicker` for zones and currencies; never a native select).
+  Zones are saved canonical (`Asia/Kolkata`, not `Asia/Calcutta`) on both sides. Dates in
+  the app use `DateField` and the **workspace** timezone.
+- Pipeline: server props are initial data only. Rows live in a client store per round and
+  the newer `updated_at` wins. Filter, sort, search and view changes send no requests (URL via
+  `replaceState`); the sheet opens and closes with `replaceState` too.
+- Keyboard: every global shortcut goes through `lib/hotkeys.ts` (`useHotkey`), never a
+  document `keydown` listener of its own. Sheets register with `priority: 1`. App-wide keys set
+  `blockedByModals`. Nothing fires while typing in a field.
+- Long lists render windowed (`useVirtualRows`); no "Load more" or "Show 60 more" in the app.
+- Import: only a missing name is a row error; bad optional cells are dropped with a warning.
+- Bulk writes go through `POST /v1/rounds/{round}/participants/bulk-update` with a shared
+  `data.bulk_id`; feeds collapse runs with `GET /v1/activities?collapse_runs=true`.
+- Google sign-in is off unless `RAISEBOOK_GOOGLE_CLIENT_ID` and `_SECRET` are set; the web
+  asks `GET /v1/auth/providers` and hides the button otherwise.

@@ -513,6 +513,19 @@ export function Combobox<V = string>({
   /* ---- keyboard ---- */
   const onTriggerKey = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (disabled) return;
+    // Keys typed in the moment between opening and the search box taking focus still land
+    // on the trigger: add them to the query instead of reopening with only the last key.
+    if (open) {
+      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setQuery((q) => q + e.key);
+        input.current?.focus({ preventScroll: true });
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        setQuery((q) => q.slice(0, -1));
+      }
+      return;
+    }
     if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(e.key)) {
       e.preventDefault();
       doOpen();

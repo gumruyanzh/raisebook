@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { GoogleSignIn } from "@/components/app/auth/GoogleButton";
 import { ButtonLink, Skeleton } from "@/components/ui";
 import { ApiError, api } from "@/lib/api/client";
 import { lookupInvite, ROLE_LABEL, type InviteLookup } from "@/lib/api/core";
@@ -21,9 +22,12 @@ type Load =
 export function InviteLanding({
   token,
   signedIn,
+  google = false,
 }: {
   token: string;
   signedIn: { email: string; name: string | null } | null;
+  /** Offer "Continue with Google" (the server has it configured). */
+  google?: boolean;
 }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
 
@@ -110,7 +114,10 @@ export function InviteLanding({
           emailHint={invite.email_hint}
         />
       ) : (
-        <SignInForm inviteToken={token} emailHint={invite.email_hint} submitLabel="Email me a link to join" />
+        <>
+          <GoogleSignIn enabled={google} next={`/invite/${encodeURIComponent(token)}`} />
+          <SignInForm inviteToken={token} emailHint={invite.email_hint} submitLabel="Email me a link to join" />
+        </>
       )}
     </>
   );

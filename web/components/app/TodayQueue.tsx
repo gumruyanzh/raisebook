@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
-import { Button, Kbd, SectionLabel, StageDot, Textarea, useToast } from "@/components/ui";
+import { Button, Kbd, SectionLabel, StageDot, Textarea, useToast, useToastLift } from "@/components/ui";
 import { DateField } from "@/components/ui/DateField";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
 import { logActivity } from "@/lib/api/activities";
@@ -86,6 +86,7 @@ export function TodayQueue({
   const [pickDate, setPickDate] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLDivElement>(null);
+  useToastLift(strip, Boolean(prompt));
   const listFocus = useRef(false);
 
   useEffect(() => setItems(sortItems(initial.data)), [initial]);

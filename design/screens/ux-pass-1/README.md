@@ -1,9 +1,52 @@
-# WS-B (Pipeline): reproducible checks
+# UX pass 1: screenshots and reproducible checks
 
-Integrator: fold this into `README.md` in this folder. Every check runs against a local API and
-a production web build with a throwaway database and fictional data only.
+Screenshots per item are named `<WS>-<item>--{light,dark,mobile}.jpg`. The final route sweep
+(every route, light, dark and 390px) is in `design/screens/final/`. Every check below runs
+against a local API and a production web build with a throwaway database and fictional data
+only. Browser checks use `playwright-core` with the system Chrome, from a scratch folder
+(never added to `package.json`).
 
-## Setup
+## Integration run (2026-10-12)
+
+Setup: database `raisebook_int`, API on :8140, web production build on :3140
+(`NEXT_PUBLIC_ENABLE_DESIGN=1` for `/design`), `RAISEBOOK_RATE_LIMIT_BACKEND=off`. A generated
+450-row fictional CSV (example.com emails, made-up names and firms) was imported through the
+UI into a new "Halcyon Robotics" workspace created through onboarding.
+
+Checked, all passing:
+- Onboarding: timezone search "San Francisco", "PST", "bay area" → Los Angeles; "Yerevan",
+  "yere" → Yerevan; "UTC+4", "+4" → Dubai, Yerevan, Tbilisi; "+5:30", "IST" → Kolkata first;
+  "CET" → Berlin; "Kiev" → Kyiv; "sao paulo" → São Paulo. Currency: "€", "£", "dram",
+  "armenia", "rupee", "yen", "franc". Browser zone Asia/Yerevan preselects Yerevan and AMD.
+  Back to step 1 keeps Yerevan; changing only the zone to Berlin and Continue stores
+  `Europe/Berlin`; a EUR first round makes `default_currency` EUR.
+- Import: 450 rows + header, 16 columns, per-column empty/unreadable badges, the stage value
+  panel ("Wired" suggested as Committed), review of all 450 rows, "Import 450 · 64 cells left
+  empty"; 64 unknown types left empty with a warning.
+- Pipeline at 450: board and table load in under 1s; search, the Filter menu (`F`) and
+  sorting send 0 requests. Sheet: a stage change persists after close and reload; focus moves
+  to the next row when the investor leaves the filter; history length does not change.
+  A deep-linked sheet (`?investor=`) answers `f` `m` (next Monday) and `n` (log a note).
+- ⌘K "silas" → Enter opens the sheet in about 110ms; `?` lists the live shortcuts; `g o`.
+- Today queue: `j` `e` marks done and asks for the next follow-up; `s` opens snooze; the
+  Undo toast sits above the prompt strip.
+- Settings → General: the zone saves and survives a reload; "Use it" saves the browser zone.
+- `/signin` and `/invite/<token>` show no Google button while it is not configured.
+
+Fixed during integration:
+- Combobox: keys typed on the trigger before the search box takes focus were dropped (fast
+  typeahead "PST" searched "ST"); they now add to the query.
+- Hotkeys: a deep-linked investor sheet lost `f` to the pipeline's Filter key (child effects
+  register first). Registrations take a `priority`; sheet keys use 1.
+- The Undo toast covered the Today queue's prompt strip and the directory's selection bar
+  (`useToastLift`).
+- `Segmented` labels wrapped and clipped at 390px (overview activity filter); they stay on one
+  line and the strip scrolls.
+- "Weighted pipeline : set a probability…" spacing.
+- The invite page offers Continue with Google when it is configured.
+
+
+## WS-B setup
 
 ```bash
 createdb raisebook_uxb && psql raisebook_uxb -c 'create extension citext; create extension pg_trgm;'

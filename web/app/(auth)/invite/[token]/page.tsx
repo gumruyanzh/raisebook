@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
-import { getSession } from "@/lib/api/server";
+import { googleEnabled } from "@/lib/api/auth-providers";
+import { getSession, serverApi } from "@/lib/api/server";
 
 import { AuthColumn } from "../../_auth";
 import { InviteLanding } from "./InviteLanding";
@@ -19,11 +20,14 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
   const { token } = await params;
   const session = await getSession();
   const user = session.status === "ok" ? session.session.user : null;
+  // A new user who continues with Google comes back to this page to accept (the API keeps `next`).
+  const google = user ? false : await googleEnabled(await serverApi());
   return (
     <AuthColumn>
       <InviteLanding
         token={token}
         signedIn={user ? { email: user.email, name: user.name ?? null } : null}
+        google={google}
       />
     </AuthColumn>
   );

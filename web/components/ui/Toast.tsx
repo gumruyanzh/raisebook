@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 export interface ToastAction {
@@ -64,7 +65,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         role="status"
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 bottom-[calc(18px+env(safe-area-inset-bottom))] z-[70] flex justify-center px-16"
+        className="pointer-events-none fixed inset-x-0 bottom-[calc(18px+env(safe-area-inset-bottom)+var(--toast-lift,0px))] z-[70] flex justify-center px-16"
       >
         {item ? (
           <div
@@ -96,4 +97,39 @@ export function useToast(): ToastApi {
   const t = useContext(ToastContext);
   if (!t) throw new Error("useToast() needs <ToastProvider> (it is in app/layout.tsx).");
   return t;
+}
+
+/**
+ * Keep the toast above a bar near the bottom of the viewport (a selection bar, the Today
+ * queue's "Next follow-up?" strip), so "Undo" never covers the buttons under it. While
+ * `active`, the toast rises by however much of the element sits in the bottom 80px.
+ */
+export function useToastLift(ref: RefObject<HTMLElement | null>, active: boolean): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!active) return;
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const el = ref.current;
+        const vh = window.innerHeight;
+        const r = el?.getBoundingClientRect();
+        const lift = r && r.bottom > vh - 80 && r.top < vh ? Math.round(vh - r.top) : 0;
+        root.style.setProperty("--toast-lift", `${lift}px`);
+      });
+    };
+    measure();
+    window.addEventListener("scroll", measure, { passive: true, capture: true });
+    window.addEventListener("resize", measure);
+    const ro = typeof ResizeObserver !== "undefined" && ref.current ? new ResizeObserver(measure) : null;
+    if (ro && ref.current) ro.observe(ref.current);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", measure, { capture: true });
+      window.removeEventListener("resize", measure);
+      ro?.disconnect();
+      root.style.removeProperty("--toast-lift");
+    };
+  }, [ref, active]);
 }

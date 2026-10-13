@@ -1,6 +1,6 @@
 # UX pass 1: plan
 
-Status: plan, not yet built. Owner: product design lead. Date: 2026-10-12.
+Status: built and integrated (commit "UX pass 1: integrate"); checks and results in `design/screens/ux-pass-1/README.md`. Owner: product design lead. Date: 2026-10-12.
 
 This plan merges three local audits of Raisebook: first run, daily use with two companies of
 about 420 investors each, and a visual audit in light, dark, 1024/1280/1440 and 390px. The

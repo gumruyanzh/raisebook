@@ -125,6 +125,7 @@ Fill in `deploy/.env`:
 | `RAISEBOOK_SESSION_SECRET` | `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `RAISEBOOK_SESSION_COOKIE_DOMAIN` | `raisebook.org` (shared by the web and API hosts) |
 | `RAISEBOOK_SMTP_*` | from the email provider |
+| `RAISEBOOK_GOOGLE_CLIENT_ID` / `RAISEBOOK_GOOGLE_CLIENT_SECRET` | optional: "Continue with Google". Leave both empty to keep it off (the button is hidden). Setup steps, including the exact redirect URI `https://api.raisebook.org/v1/auth/google/callback`, are in `deploy/README.md` under "Continue with Google". After setting them, `docker compose -f deploy/docker-compose.yml up -d api` is enough; no rebuild. |
 
 Keep a copy of `deploy/.env` in a password manager: without the session secret everyone is
 signed out, and without the Postgres password you cannot restore.

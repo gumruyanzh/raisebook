@@ -247,12 +247,12 @@ export function InvestorSheet({
       el.click();
     }
   };
-  useHotkey("j", () => go(nextId), { enabled: open && Boolean(nextId), description: "Next investor", group: "Investor file" });
-  useHotkey("k", () => go(prevId), { enabled: open && Boolean(prevId), description: "Previous investor", group: "Investor file" });
-  useHotkey("alt+arrowdown", () => go(nextId), { enabled: open && Boolean(nextId), allowInInputs: true });
-  useHotkey("alt+arrowup", () => go(prevId), { enabled: open && Boolean(prevId), allowInInputs: true });
-  useHotkey("n", focusLog, { enabled: open && canWrite && Boolean(investorId), description: "Log a note", group: "Investor file" });
-  useHotkey("f", openFollowUp, { enabled: open && canWrite && Boolean(p), description: "Set follow-up", group: "Investor file" });
+  useHotkey("j", () => go(nextId), { priority: 1, enabled: open && Boolean(nextId), description: "Next investor", group: "Investor file" });
+  useHotkey("k", () => go(prevId), { priority: 1, enabled: open && Boolean(prevId), description: "Previous investor", group: "Investor file" });
+  useHotkey("alt+arrowdown", () => go(nextId), { priority: 1, enabled: open && Boolean(nextId), allowInInputs: true });
+  useHotkey("alt+arrowup", () => go(prevId), { priority: 1, enabled: open && Boolean(prevId), allowInInputs: true });
+  useHotkey("n", focusLog, { priority: 1, enabled: open && canWrite && Boolean(investorId), description: "Log a note", group: "Investor file" });
+  useHotkey("f", openFollowUp, { priority: 1, enabled: open && canWrite && Boolean(p), description: "Set follow-up", group: "Investor file" });
 
   const name = investor?.name ?? p?.investor.name ?? "Investor";
   const stages = useMemo(() => sortedStages(round.stages), [round.stages]);

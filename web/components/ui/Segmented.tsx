@@ -34,7 +34,8 @@ export function Segmented<T extends string>({
       role="group"
       aria-label={label}
       className={cn(
-        "inline-flex overflow-hidden rounded-md border border-line bg-surface",
+        // Never wraps a label: on a narrow screen the strip scrolls sideways instead.
+        "inline-flex max-w-full overflow-x-auto rounded-md border border-line bg-surface [scrollbar-width:none]",
         className,
       )}
     >
@@ -48,7 +49,7 @@ export function Segmented<T extends string>({
             disabled={o.disabled}
             onClick={() => !active && onChange(o.value)}
             className={cn(
-              "border-0 transition-colors duration-[120ms] disabled:opacity-50",
+              "shrink-0 whitespace-nowrap border-0 transition-colors duration-[120ms] disabled:opacity-50",
               size === "sm" ? "h-26 px-10 text-sm" : "h-30 px-12 text-base",
               active ? "bg-fg text-canvas" : "bg-transparent text-muted hover:text-fg",
             )}

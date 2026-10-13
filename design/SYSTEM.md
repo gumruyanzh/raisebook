@@ -127,8 +127,9 @@ buttons. Sentence case everywhere except mono labels. Body text weight is never 
 - Base unit 2px. The scale used: 2, 4, 6, 8, 10, 12, 14, 16, 18, 24, 32, 48, 64, 96.
 - Page gutter: 16px on phones, 24px from 1024px. The app content max-width is 1600px. Marketing
   content is 1120px, with a 680px text measure for docs.
-- App vertical rhythm: 14px between stacked blocks (ledger → toolbar → board), as in the
-  prototype.
+- App vertical rhythm: 14px between stacked blocks (page title row → ledger → toolbar →
+  board), as in the prototype. Every in-app page starts with the same fixed 40px title row
+  (§4.1), so titles sit at the same y on every page.
 - Controls: 32px height (sm 28, lg 40). Board card padding 9/10px. Table cell padding 8/10px.
 
 ### 1.6 Radii, borders, elevation
@@ -224,21 +225,21 @@ tokens, and works with the keyboard. The live inventory is `/design` (dev only, 
 | # | Component | Spec |
 |---|---|---|
 | 3.1 | `Button`, `ButtonLink` | Variants: `primary` (accent fill, accent-ink text; **one per view**: the main action, e.g. "Add investor"), `secondary` (surface, 1px line, fg text; the default), `ghost` (no border, muted text, hover sunk), `danger` (bad fill, white text; only in confirm dialogs), `danger-quiet` (bad text, line border; "Delete workspace…" entry points). Sizes `sm` 28, `md` 32, `lg` 40. Radius 6. Optional `kbd` hint on the right (`Kbd`). Loading state: the label changes ("Saving…"), the width stays fixed, no spinner. |
-| 3.2 | `Input`, `Textarea`, `Select`, `Field` | 1px line, radius 6, `canvas` bg inside sheets and forms (as in the prototype), `surface` bg in toolbars. Focus: the accent outline. `Field` = a label (12px muted, above) + control + hint (muted) or error (bad, with the API `error.code` in mono). Select is native `<select>` with a custom chevron (CSS). Textarea min-height 96, vertical resize. Search input: type=search, flex 1 1 220px. |
+| 3.2 | `Input`, `Textarea`, `Select`, `Field` | 1px line, radius 6, `canvas` bg inside sheets and forms (as in the prototype), `surface` bg in toolbars. Focus (`:focus-visible`): `border-color: accent` plus `outline: 1px solid accent; outline-offset: -1px`, one crisp 2px edge with no halo and never a double ring (buttons and links keep the 2px/2px outline). Placeholders are sans, `faint`, 14px. `Field` = a label (12px muted, above) + control + hint (muted) or error (bad, with the API `error.code` in mono). Select is native `<select>` with a custom chevron (CSS), **only for short fixed lists**: use `Combobox` for lists longer than about 12 options, or whenever search helps (timezone, currency, owner, tag, import field). Textarea min-height 96, vertical resize. Search input: type=search, flex 1 1 220px. |
 | 3.3 | `Segmented` | The prototype `.seg`: 1px line box, the active item filled `fg` with `canvas` text. Used for Board/Table and the activity kind picker. `role="group"` + `aria-pressed`. |
-| 3.4 | `RoundPicker` | The prototype `.round-pick`: a `sunk` pill track with surface-pill active items, plus a "+ Round" ghost item at the end (opens the new-round dialog, for editors). It overflows into a menu after 4 rounds. Closed rounds show at 60% opacity and are listed last. |
+| 3.4 | `RoundPicker` | The prototype `.round-pick`: a `sunk` pill track with surface-pill active items, plus a "+ Round" ghost item at the end (opens the new-round dialog, for editors). It overflows into a menu after 4 rounds. Closed rounds are listed last at full strength (`muted`) with a mono `closed` suffix, never faded (≥ 4.5:1). When the track would overlap the nav (measured with a `ResizeObserver`, not a breakpoint) it collapses to "Seed ▾", a Menu with every round (closed ones under a CLOSED label) and "+ New round". |
 | 3.5 | `Chip` | §2.4. Props `tone`, `size` (sm 11.5px is the default). Never interactive unless rendered as a `<button>` (the due strip), and then it gets the hover underline. |
 | 3.6 | `StageDot` | A 9px circle, `bg-stage-<color>`, `aria-hidden`. Always next to a text label. |
 | 3.7 | `FitMeter` | Five 6×10px pips (radius 2), filled `good`, empty `line`, with an optional "4/5" mono label. Read-only by default. `editable` turns it into a radio group of six (0–5), where the arrow keys change the value. |
 | 3.8 | `Meter` | Ledger meter: an 8px `sunk` pill track with a `good` fill (width animated). Props `value`, `max`, `label`. Over 100%: the fill is full and a mono "112% of target" appears in `good`. |
 | 3.9 | `FunnelBar` | The prototype funnel: a 26px bar of stage-colored flex segments (radius 6 on the container), with a legend row under it (dot, label, bold count). Every segment and legend item is a button that filters the pipeline by stage. Zero-count stages appear only in the legend. |
 | 3.10 | `Ledger` | The round summary strip. Grid `1.2fr / 2fr` (stacked under 860px). Left: mono label "COMMITTED TOWARD SEED", `amount` "$750,000 of $2,000,000", Meter, a sub-row of stats (`b` tabular): "18 in conversation · 4 committed · $400k soft · 41 days to close". Right: label "PIPELINE", FunnelBar, a due strip ("Follow up now:" + up to 8 due chips + "+3 more"). Compact variant on the pipeline page. Full variant on the overview. |
-| 3.11 | `Table` (`Table`, `THead`, `TBody`, `Tr`, `Th`, `Td`, `TableScroll`) | The prototype table: a surface with 1px line and radius 8, `min-width` per use, sticky `Th` with `label` type, `aria-sort` + "↑/↓" on the sorted column, 1px row rules, row hover `accent-soft`, clickable rows (Enter opens). `Td variant="num"` = mono tabular 12.5. Selection checkbox column optional. `TableScroll` handles horizontal overflow on phones. |
-| 3.12 | `BoardColumn` | A `sunk` column with radius 8 and a 3px top rule in the stage color, sticky header (StageDot, label 600 13px, mono count right, and for the won stage the column total, "$750k", in good). The body scrolls (max-height 78vh). Empty: muted "Drag investors here" (or "Nothing here yet" for viewers). "Show 60 more" link button after 60 cards. Drop target: 2px dashed accent outline at -2px. |
-| 3.13 | `BoardCard` | A `<button>` surface with 1px line and radius 7, padding 9/10, gap 5. Row 1: name (600, ellipsis) + agent marker if recent. Row 2: "Title · Firm" (body-s, muted, ellipsis). Row 3: chips (priority, type, first industry) + FitMeter. Optional: due chip, money chip (won stage or soft amount), next-step line (body-s muted, one line). Hover: accent border. Dragging: 50% opacity on the source, shadow on the ghost. Keyboard: §4.3. |
+| 3.11 | `Table` (`Table`, `THead`, `TBody`, `Tr`, `Th`, `Td`, `TableScroll`) | The prototype table: a surface with 1px line and radius 8, `min-width` per use, sticky `Th` with `label` type, `aria-sort` + "↑/↓" on the sorted column, 1px row rules, clickable rows (Enter opens). Row hover is a neutral tint (`color-mix(in oklab, var(--sunk) 55%, var(--surface))`); a selected or open row is `accent-soft` plus a 2px inset accent rule on the left, so hover and selected never look alike. Density toggle: Compact 32px / Comfortable 44px rows (Compact is the default past 100 rows, saved per viewer). Cells are one line with an ellipsis and the full value in `title`. Long tables window their rows (`useVirtualRows`, fixed row heights) and use roving focus: one tab stop, ↑/↓ or j/k move, Enter opens, x selects, Shift extends, ⌘A selects all shown. Focus rings on rows are inset. `Td variant="num"` = mono tabular 12.5. Selection checkbox column optional. `TableScroll` handles horizontal overflow on phones. |
+| 3.12 | `BoardColumn` | A `sunk` column with radius 8 and a 3px top rule in the stage color, sticky header (StageDot, label 600 13px, mono count right, and for the won stage the column total, "$750k", in good). The board fills the viewport: the page stops scrolling and each column body scrolls on its own, windowed (no "Show more"). The header has a sort Menu (Fit, Due first, Last activity, Name) and a due count. Empty columns fold into thin rails. Empty: muted "Drag investors here" (or "Nothing here yet" for viewers). Drop target: 2px dashed accent outline at -2px. |
+| 3.13 | `BoardCard` | A `<button>` surface with 1px line and radius 7, padding 9/10, gap 5. Row 1: name (600, ellipsis) + agent marker if recent. Row 2: "Firm · Title" (firm first; body-s, muted, ellipsis). Row 3: one wrapping row of chips: priority, type, the follow-up chip with short labels ("Overdue 4d", "Due today", "Oct 16") and the money chip (won stage or soft amount), plus FitMeter. Committed cards hide fit and priority. Optional next-step line (body-s muted, one line). A card without a next step stays ≤ 84px. **Compact** variant (a toggle, ≤ 52px): name and firm, then only the stage-relevant chip (due or amount). Hover: accent border. Focus ring inset (`outline-offset: -2px`), never clipped. Dragging: 50% opacity on the source, shadow on the ghost. Keyboard: §4.3. |
 | 3.14 | `Sheet` | A right-side panel, `min(520px, 100%)` wide, full height, surface, 1px left line, scrim. Header: `display-s` title, muted subline, chips, close button (32px square, 1px line, radius 6, "✕"). The body scrolls with 16px section gaps. Esc and the scrim close it. Focus is trapped while open, moves to the close button on open, and returns to the invoking card on close. Respects safe-area insets. |
 | 3.15 | `Dialog`, `ConfirmDialog` | Native `<dialog>`: surface, radius 8, dialog shadow, max-width 480. Title `display-s`, body, actions right-aligned (secondary then primary). `ConfirmDialog` with `typed` asks the user to type the slug or name to enable the `danger` button ("Delete workspace permanently"). |
-| 3.16 | `Toast` (`ToastProvider`, `useToast`) | The prototype toast: an `fg` box with `canvas` text, radius 8, centered bottom with safe-area offset. One line, plus an optional action ("Undo" for stage moves within 6s). Auto-dismisses after 4s, or 8s with an action. `role="status"`. |
+| 3.16 | `Toast` (`ToastProvider`, `useToast`, `useToastLift`) | The prototype toast: an `fg` box with `canvas` text, radius 8, centered bottom with safe-area offset. One line, plus an optional action ("Undo" for stage moves, bulk changes, Done and Snooze). Auto-dismisses after 4s, or 8s with an action. `role="status"`. A bar at the bottom of the viewport (a selection bar, the Today queue's "Next follow-up?" strip) calls `useToastLift` so the toast rises above it and never covers its buttons. |
 | 3.17 | `EmptyState` | A surface with a 1px **dashed** line and radius 8, padding 28, centered. Title `display-xs`, one sentence in muted, then the action button(s). Copy rules in §6. |
 | 3.18 | `Timeline` | A vertical list: each item has a mono time (11.5, muted, fixed 64px column), the actor (§2.5), the action sentence, and an optional body (pre-wrap, 65ch). Day separators use a `label` style ("TODAY", "OCT 9"). Agent items get the orchid rule and tint. Filters: Segmented All / Conversations / Stage & money / Agent actions. |
 | 3.19 | `ActorName` | §2.5. |
@@ -249,12 +250,20 @@ tokens, and works with the keyboard. The live inventory is `/design` (dev only, 
 | 3.24 | `Kbd` | Mono 10.5px, a 1px line box, radius 4, muted. |
 | 3.25 | `Skeleton` | Static `sunk` bars with no shimmer. Use it only when a layout would jump. Otherwise show "Loading…" text. |
 | 3.26 | `Pagination` | Cursor based: "Load more" button at the end of a table, plus mono "200 of 1,240". |
-| 3.27 | `ThemeToggle` | A text control "Light · Dark · System" in micro mono. It stores `localStorage["rb-theme"]` (try/catch), sets `data-theme` on `<html>`, and a pre-paint inline script prevents a flash. |
+| 3.27 | `ThemeToggle` | A text control "Light · Dark · System" in micro mono. It stores `localStorage["rb-theme"]` (try/catch), sets `data-theme` on `<html>`, and a pre-paint inline script prevents a flash. It lives in the marketing and auth footers; inside the app the same choice is a Theme submenu in the account menu (Light / Dark / System, `aria-checked`). |
 | 3.28 | `Wordmark` | "Raisebook" in Bricolage 700 with -0.02em tracking. Sizes 20 (app top bar), 28 (sign-in), 22 (marketing nav). No logo glyph in MVP. The favicon is a cobalt "R" set in Bricolage on a 6px-radius square (`app/icon.svg`). |
 | 3.29 | `TopBar`, `AppShell`, `PageHeader` | §4.1. |
 | 3.30 | `FileDrop` | A dashed `line` box on canvas: "Drop a CSV here, or paste below" + a "Choose file" button. The accent dashed border on dragover. It reads the file client-side as text (≤5 MB) and does no upload until the user confirms. |
 | 3.31 | `DefList` | The prototype `.facts`: a 112px muted term column and a value column, 6/10 gap, 13px. |
 | 3.32 | `LinkButtons` | The prototype `.links`: small bordered link buttons with accent text ("LinkedIn ↗", "Website ↗", "X ↗", and "name@example.com · copy"). |
+| 3.33 | `Combobox` | A searchable single-select with no library. The trigger looks like a `Select` (sm 28 / md 32, chevron) and shows `renderValue` or the label; click, Enter, Space, ↓ or any printable key opens it, and a printable key goes straight into the search box. The popover holds an autofocused search input (`role="combobox"`, `aria-activedescendant`, `aria-autocomplete="list"`) over a `role="listbox"` of 32px rows with `label`-type group headers; matched characters are weight 600 with no color change, and a polite live region announces the result count. Keys: ↑/↓ wrap, Home/End and ⌘↑/⌘↓, PageUp/PageDown move 10, Enter selects, Tab selects and moves on, Esc clears the query and then closes, keeping the value. Ranking (`rankOptions`): case- and diacritic-insensitive; exact > prefix > word prefix > keyword exact > keyword prefix > substring > subsequence; ties keep their order. Async `loadOptions` is debounced 150ms, aborts stale requests, never shows an older query's results, and offers Retry on error. Past 60 rows it windows the list. Under 640px it opens full screen as a sheet above the on-screen keyboard (`visualViewport`). |
+| 3.34 | `TimezonePicker` | A `Combobox` over every canonical IANA zone (legacy ids such as `Asia/Calcutta` are keywords and are saved as `Asia/Kolkata`). Search by city, country, alias ("SF", "bay area"), abbreviation ("PST", "CET", "IST", "AMT") or offset ("UTC+4", "+5:30", DST-aware, by population weight). Row: city (fg 500), muted "Country · Zone/Id", mono "UTC+04:00 · 4:31 PM" on the right, updated once a minute. Trigger: "Yerevan UTC+04:00" (offset mono, muted); `md` adds "· 4:31 PM now". Pinned with an empty query: "Your browser" (when it differs), the current value, UTC, then a "Suggested" group of 12 founder hubs. The zone table (about 16 KB) loads with `import()` on first open. |
+| 3.35 | `CurrencyPicker` | A `Combobox` over every ISO 4217 code from `Intl`. Row: code (mono 500), name (fg), symbol (mono muted). Search by code, name, symbol ("€", "£") or country ("armenia"). Pinned: the current value, the guessed currency (from timezone and locale) as "Suggested", then USD, EUR, GBP, CAD, AUD, SGD, INR, CHF, ILS, JPY. Amounts render with the currency's own symbol (₦250k, CHF 250k). |
+| 3.36 | `DateField` | A date picker in the **workspace** timezone. Trigger: 32px mono "Oct 16 · in 4d", or muted "Set follow-up". Popover: quick picks with key hints (Today 0, Tomorrow 1, In 3 days 3, Next Monday m, In 1 week 7, In 2 weeks 2, Clear ⌫; deadline picks for close dates), a typed input ("fri", "+7", "oct 20", "10/20", "2026-10-20") and a month grid with arrow-key navigation. Full screen under 640px. |
+| 3.37 | `Avatar` | A 20px `sunk` circle with initials, then the first name or "You"; the email is in `title`. Used for owners in tables and menus. |
+| 3.38 | `FilterMenu`, `FilterChips` | The one-line toolbar filter: a 28px secondary "Filter" button (Kbd F) opening a Menu of fields (Stage, Fit, Type, Industry, Follow-up, Owner, Tag), each opening a searchable value list. Applied filters show as removable chips ("Owner is Dana ✕", Backspace removes a focused chip) in a row that appears only when something is applied, with "Clear". The URL query stays the source of truth. Under 900px the Filters sheet stays. |
+| 3.39 | `CommandPalette` | ⌘K / Ctrl+K: a modal dialog holding an editable combobox over a grouped listbox. It searches investors in the current workspace as you type (server `sort=relevance`, name prefix first), plus go-to pages, actions, rounds, workspaces, theme, recently opened investors and the commands of an open investor sheet. Kbd hints on the right. Esc clears the query, then closes; focus returns. Full screen under 640px. |
+| 3.40 | `ShortcutsSheet` | `?` opens a list of the shortcuts live on the current page, grouped (General, Navigation, Pipeline, Investor file, Today), from `useHotkeyList()`. Shortcuts never fire while typing in a field; a sheet's keys (priority 1) beat the page's. `Kbd` renders in `muted`. |
 
 Glyphs allowed: ✕ ↗ ↑ ↓ → ← · ⌘ ⇧ ↵ and the CSS agent diamond. **No icon library and no
 emoji.**
@@ -274,19 +283,27 @@ A top bar rather than a sidebar, so the board gets the full width. 56px high, `c
 background, 1px line under it, sticky.
 
 ```
-[Raisebook]  [Kestrel Robotics ▾] [SANDBOX]   [ Seed | Pre-seed 2025 | + ]          Pipeline  Overview  Investors  Settings   [Light·Dark·System] [ZG ▾]
+[Raisebook]  [Kestrel Robotics ▾] [SANDBOX]   [ Seed | Pre-seed 2025 | + Round ]     Pipeline  Overview  Investors  Settings  [Search ⌘K] [ZG ▾]
 ```
 - Left: Wordmark (links to the first open round), the workspace switcher (a Menu: workspaces
-  with role, "New workspace", "Open sample workspace"), and a `mode` chip SANDBOX for sandbox
-  workspaces.
-- Center: RoundPicker.
+  with due counts and the role when not Owner, "New workspace…" opening a short dialog with
+  name, timezone and currency, "Open sample workspace"; max-width 160px, truncated with a
+  `title`), and a `mode` chip SANDBOX for sandbox workspaces.
+- Center: RoundPicker (§3.4). "+ Round" opens the New round dialog in place.
 - Right: nav links (body 500; the active link is `fg` with a 2px accent underline, inactive
-  links are muted), the ThemeToggle, and the account Menu (initials in a 28px `sunk` circle:
-  Account, Sign out).
+  links are muted), a "Search ⌘K" button for the CommandPalette, and the account Menu
+  (initials in a 28px `sunk` circle: Account, the name prompt "Add your name…" while it is
+  missing, the Theme submenu, Sign out). There is no ThemeToggle in the app top bar.
+- Global keys: ⌘K palette, `/` search, `?` shortcuts, `c` add investor, `g p`/`g o`/`g i`/
+  `g s` navigate, ⌘1–9 switch workspace. A missing name is asked for once, as a dismissible
+  toast plus a dot on the avatar; there is no permanent banner.
 - Under 900px: the nav collapses into a "Menu" button, and the RoundPicker moves to a second
   row that scrolls horizontally.
-- `PageHeader` (inside the content, for non-round pages): a `display-m` title, a muted
-  subline, actions on the right, 16px below.
+- `PageHeader`: every in-app page (round pages, Investors, Settings, Import, Account, the
+  investor page) uses one title size (22px/700, line-height 1.15) in a fixed 40px row with an
+  inline breadcrumb and actions on the right, 14px above the next block.
+- `/app` with two or more workspaces is a cross-company Today page (due follow-ups per
+  company). Switching companies returns to the last page used there.
 
 ### 4.2 Round: Pipeline (`/w/[ws]/r/[round]`, default view)
 This is the prototype page, made real.
@@ -297,22 +314,40 @@ This is the prototype page, made real.
 │ ███████░░░░░░░░░░░░░░          │ ● New 12  ● Researching 8  ● Contacted 9 …         │
 │ 18 in conversation · 4 commit… │ Follow up now: (Dana Whitfield) (Marcus Ode) +3    │
 └────────────────────────────────────────────────────────────────────────────────────┘
-[Search name, firm, focus, notes…        ] [Priority▾] [Type▾] [Industry▾] [Follow-up▾] [Owner▾]  [Board|Table]  48 of 212   [Add investor]
+Seed SAFE  [All | Due now | My investors | Hot | …saved views] ⋯                     Edit round
+[Search name, firm, focus, notes…  /] [Filter F]  [Board|Table] [Display]  48 of 212   [Add investor C]
+(Owner is Dana ✕) (Fit is Hot ✕)  Clear
 ┌ New 12 ─┐┌ Researching 8 ┐┌ Contacted 9 ┐┌ Replied 4 ┐┌ Meeting 6 ┐┌ Diligence 2 ┐┌ Committed 4 · $750k ┐┌ Passed 7 ┐
 │ card    ││ card          ││             ││           ││           ││             ││                     ││          │
 ```
-- The board scrolls horizontally with columns `minmax(250px, 1fr)` and `min-height: 60vh`.
-  Card order within a column: fit desc, then follow-up date asc, then name (the prototype's
-  `byFit`). There is no manual ordering.
-- The Table view uses the columns Investor (name 600 + title muted), Firm, Stage, Fit (chip +
-  pips), Type, Follow-up, Soft, Committed, Owner, Last activity, Next step. Every column is
-  sortable. Default sort: fit desc. Up to 1,000 rows client-side. Rows open the sheet.
-- Toolbar filters are the prototype's plus Owner. The state lives in the URL query
-  (`?view=table&prio=warm&stage=meeting&q=…`), so views can be shared and survive a reload.
-  `localStorage` remembers only the last view per round.
+- The board scrolls horizontally with columns `minmax(250px, 1fr)` and fills the viewport;
+  only the columns scroll. Card order within a column: fit desc, then follow-up date asc,
+  then name (the prototype's `byFit`), changeable per column from its sort menu. There is no
+  manual ordering.
+- The Table view uses the columns Investor (name 600 + title muted; sticky), Firm, Stage, Fit
+  (the meter only), Type (`other` renders "—"), Follow-up, Soft, Committed, Owner (Avatar),
+  Last activity, Next step. Every column is sortable; column visibility is saved per round
+  (`rb-table-cols:<ws>:<round>`). Default sort: fit desc. Rows are windowed; Compact shows
+  ≥ 22 rows at 1440×900.
+- The page loads trimmed participant shapes once. Filter, sort, search and view changes are
+  client-only (0 requests; the URL updates with `replaceState`). Rows live in a client store
+  per round where the newer `updated_at` wins, so a stale page payload never overwrites a
+  save. The filter state lives in the URL query (`?view=table&prio=warm&stage=meeting&q=…`),
+  so views can be shared and survive a reload.
+- Saved views (P2-1): All, Due now, My investors, Hot, plus your own, as a strip in the title
+  row (⋯ Save / Rename / Delete; ⌘⇧1–9 switch). Stored in `localStorage` per round.
+- Bulk actions (Table): a checkbox column; x, Shift+↓, shift-click and ⌘A select. The bulk
+  bar in the toolbar: Move to…, Set follow-up, Owner, Fit, Tags, Remove from round, Export
+  CSV, each one request (`POST …/participants/bulk-update`) with an Undo toast.
+- An empty or new round shows a "Get set up" checklist (Import, Invite a co-founder, Connect
+  an agent, Set first follow-ups) that ticks off from real data and can be dismissed.
 - Clicking a funnel segment or legend item filters to that stage (unlike the prototype, which
   jumped to the table).
-- The investor sheet opens with `?investor=<id>` (deep-linkable, and Back closes it).
+- The investor sheet opens with `?investor=<id>` (deep-linkable). Opening and closing use
+  `replaceState`, so Back leaves the page instead of stepping through sheets. On close, focus
+  returns to the row or card that opened it, or to the next one if it left the filtered
+  list. At ≥ 1280px the sheet is a non-modal split panel beside the list: clicking or
+  arrowing to another row swaps the investor in place.
 - "Add investor" opens a Dialog: Name (required), Firm, Title, Email, LinkedIn, Type, Stage
   (default first), Fit. If the API answers with an existing match, the dialog shows "Dana
   Whitfield at Harbor Light is already in your contacts (matched on email)" with the buttons
@@ -323,7 +358,8 @@ This is the prototype page, made real.
   [Connect an agent →].
 
 ### 4.3 Board keyboard alternative (required)
-- Cards are buttons in the tab order, column by column. Enter opens the sheet.
+- The board is one tab stop with roving focus: ↑/↓ (or j/k) move within a column, ←/→ move
+  between columns, Enter opens the sheet.
 - `Alt+→` / `Alt+←` moves the focused card to the next or previous stage, skipping the `lost`
   stage (which you reach only through the menu). Focus follows the card.
 - `M` opens the card's "Move to…" Menu (all stages). This only opens a menu, so no write
@@ -336,31 +372,42 @@ This is the prototype page, made real.
 Top to bottom (each section has a `label` header):
 1. **Header**: name (`display-s`), "Title · Firm" muted, chips (priority + "fit 4/5", type,
    industries), close ✕, and an "Open full page ↗" link.
-2. **STAGE FOR SEED**: the stage pill buttons (§2.1).
-3. **Round fields** grid (2 columns, 1 on phones): Follow up on (date) + Follow-up note, Soft
-   amount, Committed amount (setting it opens a small confirm: "Record $250k commitment and
-   move to Committed?"), Probability %, Fit (editable FitMeter), Owner (member select), Next
-   step (full width). Saves on change or blur, with the mono "Saved" in good beside the
-   section label.
-4. **LOG**: Segmented Note / Email / Call / Meeting, a textarea ("What happened?"), the date
-   (default today), and a "Log note ⌘↵" secondary button.
-5. **TIMELINE**: the Timeline component, latest 20, with "Show all" linking to the full page.
-6. **CONTACT**: LinkButtons.
-7. **FACTS**: DefList (Invests at, Check size, Industries, Tags, Location, Source, Warm intro
+   A mono "3 of 94" with ↑/↓ shows the position in the list it was opened from.
+2. **STAGE FOR SEED**: the stage pill buttons (§2.1) and the editable Fit.
+3. **FOLLOW-UP AND NEXT STEP**: Follow up on (DateField; `f` opens it, then one key picks:
+   `f` `m` = next Monday) + what it's for, and Next step. Work first: this is the most frequent
+   edit.
+4. **LOG** (`n` focuses it): Segmented Note / Email / Call / Meeting, a textarea ("What
+   happened?"), the date (default today), and a "Log note ⌘↵" secondary button.
+5. **MONEY AND OWNER**: Soft amount, Committed amount (setting it opens a small confirm:
+   "Record $250k commitment and move to Committed?"), Probability %, Owner (member select).
+   Fields save on change or blur, with the mono "Saved" in good beside the section label.
+- j/k (or Alt+↓/↑) walk the list the sheet was opened from without closing it, even after an
+  edit takes the investor out of the filter. Its commands also appear in the ⌘K palette.
+6. **TIMELINE**: the Timeline component, latest 20, with "Show all" linking to the full page.
+7. **CONTACT**: LinkButtons.
+8. **FACTS**: DefList (Invests at, Check size, Industries, Tags, Location, Source, Warm intro
    by, Other rounds: "Pre-seed 2025 · Passed").
-8. **NOTES**: the investor-level notes textarea, autosaving 1.2s after typing stops ("Saving…"
+9. **NOTES**: the investor-level notes textarea, autosaving 1.2s after typing stops ("Saving…"
    → "Saved").
 
 ### 4.5 Round: Overview (`/w/[ws]/r/[round]/overview`)
 12-column grid (stacked under 1024px).
-- Left 8 columns: the full Ledger. Then a **Funnel table** (Stage, Investors, Soft, Committed,
-  "Reached": the share that got at least this far) and **Recent activity** (Timeline over the
-  round, 30 items, filter "Agent actions" first-class).
-- Right 4 columns: **Follow-ups** (groups Overdue / Today / Next 7 days, each row: name, firm,
-  stage dot, note, quick actions "Done → +7d" and "Open"); **Round terms** (DefList:
+- Top: the full Ledger, then data warnings as links to a filtered table ("57 investors are in
+  Committed without an amount →"). There is no funnel table.
+- Left 8 columns: the **Today queue** (Follow-ups): every overdue, today and next-7-days
+  follow-up as one windowed list (no "N more"), each row with name, firm, stage, "6 days
+  late" (bad-ink mono) and the next step. Keys: j/k move, Enter opens the investor, `e` Done
+  (then "Next follow-up?" with the DateField quick picks, Esc skips), `s` Snooze (Tomorrow,
+  In 3 days, Next Monday, In 2 weeks, Pick date…), `n` logs a note. Done and Snooze show an
+  Undo toast; their buttons appear on hover or focus-within, always on touch. Then **Recent
+  activity** (Timeline over the round, 30 items, filter "Agent actions" first-class); an
+  import or bulk change is one expandable line ("imported 420 investors from x.csv").
+- Right 4 columns: **Round terms** (DefList:
   Instrument, Target, Cap / Pre-money, Target close + "41 days left", Status, and an "Edit
   round" link); **Going quiet** (stale active investors, ≥14 days); **Agents** (API keys used
   in the last 7 days: agent name, "12 actions this week", last used).
+- Phones show the Today queue first.
 
 ### 4.6 Round settings (`/w/[ws]/r/[round]/settings`)
 Round terms form, then the **Stages editor**: a Table of stages (drag handle plus up/down
@@ -373,15 +420,18 @@ confirm).
 PageHeader "Investors", subline "212 contacts across 2 rounds", actions [Import CSV] [Add
 investor]. Toolbar: search, Type, Tag, Industry, Round (in / not in). Table: checkbox, Name +
 title, Firm, Type, Check size, Stage focus, Location, Rounds (one StageDot + round name per
-round), Updated. Bulk bar (when rows are selected, it sticks to the bottom): "12 selected ·
-[Add to round ▾] [Export CSV] [Clear]". Empty: EmptyState "Your contacts live here", "Every
+round), Updated; the same windowed dense table and keyboard selection as the pipeline, with
+client-side filters (no "Load more"). Columns that are empty for every row are hidden. Bulk
+bar (when rows are selected, it sticks to the bottom): "12 selected · [Add to round ▾] [Tag]
+[Set type] [Export CSV] [Clear]", with Undo. Phones get a list plus a Filters sheet. Empty: EmptyState "Your contacts live here", "Every
 investor you add to any round shows up once, with their history across rounds.", [Import
 CSV] [Add investor].
 
 ### 4.8 Investor page (`/w/[ws]/investors/[id]`)
 Two columns (5 / 7), stacked on phones.
-- Left: header (`display-m` name, "Title · Firm", chips, LinkButtons), the **Profile** form
-  (all contact fields, editable inline, saved on blur), and **Notes** (autosave).
+- Left: header (name, "Title · Firm", chips, LinkButtons), the **Profile** as a `DefList`
+  with click-to-edit cells (one input style, saved on blur or Enter; LinkedIn shows as
+  `in/handle ↗`, long emails middle-truncate), and **Notes** (autosave).
 - Right: **Rounds**: one ruled row per participation (round name, StageDot + stage select, fit,
   follow-up, amounts, owner), plus "Add to round ▾". Then the **Timeline** (full, paginated,
   with filters and the log composer on top).
@@ -391,15 +441,20 @@ Two columns (5 / 7), stacked on phones.
 ### 4.9 Settings (`/w/[ws]/settings/*`)
 A left sub-nav (180px; it becomes a select on phones): General · Members · API keys · Connect
 an agent · Data.
-- **General**: workspace name, timezone (select, IANA, with the browser's zone suggested),
-  default currency; the Rounds list (name, status, target, link to round settings).
+- **General**: workspace name, timezone (`TimezonePicker`; when the browser's zone differs, a
+  line "Your browser is on Los Angeles (America/Los_Angeles). Use it" saves it straight
+  away), default currency
+  (`CurrencyPicker`); the Rounds list (name, status, target, link to round settings).
 - **Members**: Table (name, email, role select for owners, joined, "Remove"/"Leave"), pending
-  invites (email, role, expires, Revoke), and an invite form (email + role + "Send invite").
+  invites (email, role, expires, Revoke), and an invite form (paste one or several emails,
+  comma or newline separated, one role, "Send 3 invites"). A sole owner sees "You're the only
+  owner. Make someone else an owner before you can leave."
 - **API keys**: Table (name, agent name, prefix in mono, scopes as chips, mode chip, created
   by, last used, Revoke). "Create key" opens a Dialog: Name, Agent name (placeholder
   "claude-code"), scopes (Read is always on and disabled, Write is checked by default, Admin is
   unchecked), Expires (never / 30 / 90 days) → then SecretReveal.
-- **Connect an agent**: three numbered steps (mono `01 02 03`, not icons). 01 Create a key
+- **Connect an agent**: a live status line ("Waiting for the first call…" → "✓ claude-code
+  connected, 4s ago", from the key's `last_used`), then three numbered steps (mono `01 02 03`, not icons). 01 Create a key
   (inline, prefilled name "Claude Code"). 02 Add it to your agent (Tabs Claude Code / Codex /
   Cursor / Other, a CodeBlock with the secret filled in if it was just created, else
   `rb_live_…` with a note). 03 Try it: suggested prompts in a CodeBlock ("What follow-ups are
@@ -413,24 +468,39 @@ an agent · Data.
 
 ### 4.10 Import (`/w/[ws]/import`)
 Steps shown as a mono "1 Source · 2 Columns · 3 Review" line with the current step in `fg`.
-1. **Source**: FileDrop or paste; format auto-detected (CSV or prototype JSON); round select
-   ("Contacts only" or a round), default stage, source label, on_duplicate radio (Skip
-   existing / Fill empty fields / Update existing), each with one plain sentence of
-   explanation.
+1. **Source**: FileDrop or paste; format auto-detected (CSV or prototype JSON); a chosen file
+   shows as a removable chip ("investors-410.csv · 410 rows + header · 15 columns · Remove")
+   and the paste box collapses. Round select ("Contacts only" or a round; defaults to the
+   round you came from, or the only open one, each with its own hint), default stage, source
+   label, on_duplicate radio (Skip existing / Fill empty fields / Update existing), each with
+   one plain sentence of explanation. "Download template CSV" and a link to `/docs/csv`.
 2. **Columns**: a Table with one row per CSV column: header, three sample values (mono,
-   muted), and the field select (auto-mapped; unmapped shows "Ignore"). Round fields are
-   disabled with "Pick a round first" when no round is chosen.
-3. **Review**: a counts strip (`Create 140 · Update 12 · Skip 30 · Errors 3 · Add to Seed 182`),
-   then a Table of rows (row number, action chip, name, firm, matched existing, errors in bad).
-   The primary button "Import 152 investors". The result view shows the counts plus "View in
-   Seed →".
+   muted), "120 empty · 74 unreadable" badges, and the field picker (a grouped Combobox,
+   "Contact" / "In Seed"; auto-mapped; unmapped shows "Ignore"). When Pipeline stage or Fit
+   is mapped, a **Values** panel lists each distinct value with its row count and the stage it
+   becomes (exact and similar labels match, unknown ones get a suggestion). Both mappings are
+   remembered per header signature. The action bar is sticky.
+3. **Review**: the counts are filter chips (All / Create / Update / Skip / Errors / Warnings)
+   over a windowed list of **every** row (row number, action, name, firm, round stage, matched
+   existing, notes and warnings). "Download rows with problems (CSV)". Only a missing name
+   is an error; a bad optional cell is left empty with a warning that names it, and the row
+   still imports. The primary button says what will happen: "Import 372 · 33 duplicates
+   skipped · 491 cells left empty". The result view reports in-file duplicates and existing
+   matches separately, and offers next steps ("View in Seed →", "Set follow-ups for the 64
+   new in Contacted →").
 
 ### 4.11 Onboarding (`/onboarding`)
-A centered 560px column on canvas, with the Wordmark top-left and a mono "1 / 3" step
-counter.
-1. "What are you raising for?": company name (= workspace), timezone (prefilled).
-2. "Your round": name (default "Seed"), target amount, instrument (Segmented SAFE / Priced /
-   Note), cap or pre-money, target close date. A muted line: "You can change stages later.
+A centered 560px column on canvas, with the Wordmark top-left and a labeled stepper
+"Company · Round · Investors". Forms use `noValidate` with inline per-field errors, and focus
+the first invalid field.
+1. "Set up your company": your name, company name (= workspace), timezone (`TimezonePicker`,
+   prefilled from the browser for a new workspace, from the workspace on Back) and default
+   currency (`CurrencyPicker`, guessed from timezone and locale). Continue saves any change
+   to name, timezone or currency.
+2. "Your round" ("Acme Robotics' first round"): name (default "Seed"), target amount
+   (optional; empty sends `null`), currency (defaults to the workspace's; if the founder never
+   touched the workspace default, the first round's currency becomes it), instrument
+   (Segmented SAFE / Priced / Note), cap or pre-money, target close date (DateField). A muted line: "You can change stages later.
    We start you with New → Researching → Contacted → Replied → Meeting → Diligence →
    Committed → Passed."
 3. "Bring your investors": three ruled options (not cards): **Import a spreadsheet** (→
@@ -439,13 +509,19 @@ counter.
    fictional investors." (`POST /v1/workspaces {sample: true}`).
 
 ### 4.12 Sign in (`/signin`, `/signin/check`, `/auth/verify`, `/invite/[token]`)
-A 400px centered column. Wordmark 28, `display-s` "Sign in or create an account", an email
-Field, and the primary button "Email me a sign-in link". Muted line: "No password. The link
+A 400px centered column. Wordmark 28, `display-s` "Sign in or create an account", then,
+only when the server has Google configured, a secondary "Continue with Google" button (the
+four-colour G is the one allowed brand mark) and an "or" rule; then an email Field and the
+primary button "Email me a sign-in link". A refused Google sign-in comes back as
+`?error=<code>` and shows its message with the code in mono. Muted line: "No password. The link
 works once and expires in 15 minutes." The check page: "Check your inbox", with the email
 shown in mono, and in dev a CodeBlock with the `dev_link` plus "Open dev link". The verify
-page shows "Signing you in…" and a fallback "Continue" button. Errors are specific ("That
+page autofocuses "Continue" (Enter works), shows the full email on the device that asked for
+the link, and says in one line why the click is needed (mail scanners never spend the
+link). Errors are specific ("That
 link was already used or expired. Request a new one.") with the code in mono. The invite page
-shows "Dana invited you to Kestrel Robotics as an editor", then sign-in with the email hint.
+shows "Dana invited you to Kestrel Robotics as an editor", then sign-in with the email hint
+(Continue with Google too, when configured; a new user comes back to the invite to accept).
 
 ### 4.13 Account (`/account`)
 PageHeader "Account". Sections: Name, Email (read-only, mono), Workspaces (Table: name, role,

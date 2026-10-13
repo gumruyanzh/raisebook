@@ -25,6 +25,7 @@ import {
   THead,
   Tr,
   useToast,
+  useToastLift,
   type MenuEntry,
 } from "@/components/ui";
 import { Combobox } from "@/components/ui/Combobox";
@@ -188,6 +189,8 @@ export function InvestorsDirectory({
 
   /* ---------- selection ---------- */
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const selectionBar = useRef<HTMLDivElement>(null);
+  useToastLift(selectionBar, selected.size > 0);
   const anchor = useRef<number | null>(null);
   useEffect(() => {
     // Drop selections that are no longer in the workspace.
@@ -752,7 +755,7 @@ export function InvestorsDirectory({
       )}
 
       {selected.size > 0 ? (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]" role="region" aria-label="Selection">
+        <div ref={selectionBar} className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]" role="region" aria-label="Selection">
           <div className="gutter mx-auto flex max-w-app flex-wrap items-center gap-8 py-10">
             <span className="t-micro text-fg">{num(selected.size)} selected</span>
             {canWrite && rounds.length ? (

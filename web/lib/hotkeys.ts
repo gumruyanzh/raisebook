@@ -15,7 +15,8 @@
  * Rules:
  * - Hotkeys never fire while focus is in an input, textarea, select or contenteditable, unless
  *   `allowInInputs` is set. They also stay out of open menus and listboxes (typeahead).
- * - The most recent registration of a combo wins (a sheet's `j` beats the page's `j`).
+ * - The most recent registration of a combo wins (a sheet's `j` beats the page's `j`), unless
+ *   another one has a higher `priority` (sheets set 1, so a deep-linked sheet still wins).
  * - `blockedByModals` keeps app-wide keys quiet while a dialog or sheet is open.
  * - Every registration with a `description` is listed in the `?` sheet (`useHotkeyList`).
  */
@@ -36,6 +37,11 @@ export interface HotkeyOptions {
   blockedByModals?: boolean;
   /** Keep the browser default (the handler still runs). Default: prevented. */
   allowDefault?: boolean;
+  /**
+   * Higher wins over the registration order. A sheet or panel sets 1 so its keys beat the
+   * page's even when both mount together (a deep-linked sheet registers before its parent).
+   */
+  priority?: number;
 }
 
 export interface HotkeyInfo {
@@ -100,6 +106,13 @@ function eligible(r: Registration, typing: boolean, inPopup: boolean, modal: boo
   return true;
 }
 
+/** The highest priority registration; among equals the most recent one. */
+function top(list: Registration[]): Registration | undefined {
+  let best: Registration | undefined;
+  for (const r of list) if (!best || (r.opts.priority ?? 0) >= (best.opts.priority ?? 0)) best = r;
+  return best;
+}
+
 function onKeyDown(e: KeyboardEvent) {
   if (e.defaultPrevented || e.isComposing || e.key === "Process") return;
   if (["Shift", "Control", "Alt", "Meta", "CapsLock"].includes(e.key)) return;
@@ -115,7 +128,7 @@ function onKeyDown(e: KeyboardEvent) {
     const next = pending.regs.filter((r) => r.steps[depth] && matchStep(r.steps[depth]!, e));
     pending = null;
     const done = next.filter((r) => r.steps.length === depth + 1);
-    const hit = done[done.length - 1];
+    const hit = top(done);
     if (hit) {
       if (!hit.opts.allowDefault) e.preventDefault();
       hit.handler.current(e);
@@ -133,7 +146,7 @@ function onKeyDown(e: KeyboardEvent) {
   if (!candidates.length) return;
   const single = candidates.filter((r) => r.steps.length === 1);
   const seqs = candidates.filter((r) => r.steps.length > 1);
-  const hit = single[single.length - 1];
+  const hit = top(single);
   if (hit) {
     if (!hit.opts.allowDefault) e.preventDefault();
     hit.handler.current(e);
@@ -152,7 +165,7 @@ function install() {
 export function useHotkey(combo: string, handler: (e: KeyboardEvent) => void, opts: HotkeyOptions = {}): void {
   const ref = useRef(handler);
   ref.current = handler;
-  const { enabled = true, allowInInputs, description, group, blockedByModals, allowDefault } = opts;
+  const { enabled = true, allowInInputs, description, group, blockedByModals, allowDefault, priority } = opts;
   useEffect(() => {
     if (!enabled) return;
     install();
@@ -161,7 +174,7 @@ export function useHotkey(combo: string, handler: (e: KeyboardEvent) => void, op
       combo,
       steps: parseCombo(combo),
       handler: ref,
-      opts: { enabled, allowInInputs, description, group, blockedByModals, allowDefault },
+      opts: { enabled, allowInInputs, description, group, blockedByModals, allowDefault, priority },
     };
     regs.push(reg);
     emit();
@@ -170,7 +183,7 @@ export function useHotkey(combo: string, handler: (e: KeyboardEvent) => void, op
       if (i >= 0) regs.splice(i, 1);
       emit();
     };
-  }, [combo, enabled, allowInInputs, description, group, blockedByModals, allowDefault]);
+  }, [combo, enabled, allowInInputs, description, group, blockedByModals, allowDefault, priority]);
 }
 
 const subscribe = (l: () => void) => {
