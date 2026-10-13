@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { A, C, DocHeader, DocTable, H2, Note, P, Ul, slug } from "@/components/marketing/docs/Prose";
+import { A, C, DocHeader, DocTable, H2, P, Ul, slug } from "@/components/marketing/docs/Prose";
 import { AsideFacts, AsideToc, PageShell } from "@/components/marketing/PageShell";
 import { PRIVACY_PROMISE } from "@/components/marketing/promise";
 import { RuledList } from "@/components/marketing/Section";
@@ -56,13 +56,6 @@ export default function Privacy() {
         }
       />
 
-      <Note tone="warn" label="Before launch">
-        <p>
-          Text in [brackets] is a placeholder for details that are not decided yet: the operating
-          entity, the hosting provider and the email provider. They are filled in before
-          raisebook.org opens to the public.
-        </p>
-      </Note>
 
       <H2>The promise</H2>
       <RuledList items={PRIVACY_PROMISE} className="mb-18" />
@@ -115,19 +108,19 @@ export default function Privacy() {
         Each request is logged with its request id, method, route template, status, duration,
         workspace id, actor type and API key prefix. Logs never contain request bodies, query
         strings, investor fields, email addresses or tokens. When a log line has to refer to an
-        email, it uses a hash. Logs are kept for [N days].
+        email, it uses a hash. Logs are kept for 14 days.
       </P>
 
       <H2>Email</H2>
       <P>
         Raisebook sends two kinds of email: sign-in links and workspace invites. They go through
-        [email provider]. Only the recipient&apos;s address and the message leave Raisebook.
+        Resend. Only the recipient&apos;s address and the message leave Raisebook.
         Raisebook never emails your investors.
       </P>
 
       <H2>Hosting and backups</H2>
       <P>
-        Raisebook runs on [hosting provider] in [region]. The database is backed up nightly, and
+        Raisebook runs on DigitalOcean in San Francisco (SFO3). The database is backed up nightly, and
         backups are kept for at most 14 days. When you delete something, it is removed from the
         live database at once and leaves the backups as they expire, within 14 days.
       </P>
@@ -155,8 +148,8 @@ export default function Privacy() {
           permanent and immediate.
         </li>
         <li>
-          <b>Ask.</b> For anything you cannot do in the app, write to [privacy contact email]. We
-          answer within [30] days.
+          <b>Ask.</b> For anything you cannot do in the app, write to 0@raisebook.org. We
+          answer within 30 days.
         </li>
       </Ul>
 
@@ -164,7 +157,7 @@ export default function Privacy() {
       <P>
         The people in your pipeline are real, and their details are personal data. You decide what
         to record about them and why, and Raisebook stores it for you and does nothing else with
-        it. In data-protection terms, you are the controller of that data and [legal entity] acts
+        it. In data-protection terms, you are the controller of that data and Zhirayr Gumruyan acts
         as your processor. If an investor asks you to delete what you hold about them, delete the
         investor in Raisebook and it is gone.
       </P>
@@ -179,7 +172,7 @@ export default function Privacy() {
 
       <H2>Contact</H2>
       <P>
-        [Legal entity name], [postal address]. Privacy questions: [privacy contact email].
+        Zhirayr Gumruyan, San Francisco, California. Privacy questions: 0@raisebook.org.
         Security reports: see <C>SECURITY.md</C> in the repository.
       </P>
       <P>

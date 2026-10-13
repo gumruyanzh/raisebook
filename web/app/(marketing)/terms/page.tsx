@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { A, DocHeader, H2, Note, P, Ul, slug } from "@/components/marketing/docs/Prose";
+import { A, DocHeader, H2, P, Ul, slug } from "@/components/marketing/docs/Prose";
 import { AsideFacts, AsideToc, PageShell } from "@/components/marketing/PageShell";
 
 export const metadata: Metadata = {
@@ -51,17 +51,11 @@ export default function Terms() {
         }
       />
 
-      <Note tone="warn" label="Before launch">
-        <p>
-          Text in [brackets] is a placeholder, and this draft has not been reviewed by a lawyer.
-          Both happen before raisebook.org opens to the public.
-        </p>
-      </Note>
 
       <H2>Who runs Raisebook</H2>
       <P>
-        raisebook.org is operated by [Legal entity name], [postal address] (&ldquo;we&rdquo;).
-        Contact: [contact email]. By creating an account you agree to these terms.
+        raisebook.org is operated by Zhirayr Gumruyan, an individual based in San Francisco, California (&ldquo;we&rdquo;).
+        Contact: 0@raisebook.org. By creating an account you agree to these terms.
       </P>
 
       <H2>The service</H2>
@@ -126,7 +120,7 @@ export default function Terms() {
       <P>
         We work to keep Raisebook running and your data safe, but it is a free service run on a
         small budget, with no uptime guarantee. If we ever decide to shut raisebook.org down, we
-        will give at least [60] days&apos; notice by email and keep export working until the end.
+        will give at least 60 days&apos; notice by email and keep export working until the end.
       </P>
 
       <H2>No warranty</H2>
@@ -140,7 +134,7 @@ export default function Terms() {
       <P>
         To the extent the law allows, we are not liable for indirect or consequential losses, lost
         deals or lost profits, and our total liability for anything related to the service is
-        limited to [amount]. Nothing here limits liability that cannot be limited by law.
+        limited to US$100. Nothing here limits liability that cannot be limited by law.
       </P>
 
       <H2>Ending</H2>
@@ -152,12 +146,12 @@ export default function Terms() {
 
       <H2>Changes to these terms</H2>
       <P>
-        We may update these terms. For changes that matter, we email account holders at least [30]
+        We may update these terms. For changes that matter, we email account holders at least 30
         days before they take effect. If you keep using Raisebook after that, the new terms apply.
       </P>
 
       <H2>Law</H2>
-      <P>These terms are governed by the laws of [jurisdiction], and disputes go to the courts of [venue].</P>
+      <P>These terms are governed by the laws of the State of California, and disputes go to the courts of San Francisco County, California.</P>
     </PageShell>
   );
 }
