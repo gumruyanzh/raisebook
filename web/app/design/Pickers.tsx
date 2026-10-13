@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import {
+  Button,
   Combobox,
   CurrencyPicker,
   DateField,
@@ -11,6 +12,8 @@ import {
   TimezonePicker,
   type ComboboxOption,
 } from "@/components/ui";
+
+import { NewWorkspaceDialog } from "@/components/app/settings/NewWorkspaceDialog";
 
 import { STAGES, TZ } from "./sample";
 
@@ -58,6 +61,7 @@ export function PickersDemo() {
   const [cur, setCur] = useState("AMD");
   const [follow, setFollow] = useState<string | null>("2026-10-16");
   const [close, setClose] = useState<string | null>(null);
+  const [newWs, setNewWs] = useState(false);
   const stageOptions = useMemo<ComboboxOption<string>[]>(
     () => STAGES.map((s) => ({ value: s.key, label: s.label, hint: <span className="tnum">{s.count}</span> })),
     [],
@@ -122,6 +126,10 @@ export function PickersDemo() {
       <Field label="Disabled">
         <TimezonePicker value="Europe/Berlin" onChange={() => undefined} disabled size="sm" />
       </Field>
+      <div className="flex items-end sm:col-span-2">
+        <Button onClick={() => setNewWs(true)}>New workspace dialog</Button>
+      </div>
+      <NewWorkspaceDialog open={newWs} onClose={() => setNewWs(false)} />
     </div>
   );
 }
