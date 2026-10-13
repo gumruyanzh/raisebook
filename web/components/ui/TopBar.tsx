@@ -1,18 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import type { Role } from "@/lib/api/types";
 import { ROLE_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { initials } from "@/lib/format";
-import { applyThemePref } from "@/lib/theme";
+import { comboLabel } from "@/lib/hotkeys";
+import { applyThemePref, readThemePref, type ThemePref } from "@/lib/theme";
 
 import { Chip } from "./Chip";
 import { Menu, type MenuEntry } from "./Menu";
 import { RoundPicker, type RoundPickerItem } from "./RoundPicker";
-import { ThemeToggle } from "./ThemeToggle";
 import { Wordmark } from "./Wordmark";
 
 export interface TopBarWorkspace {
@@ -26,6 +26,8 @@ export interface TopBarNavItem {
   key: string;
   label: string;
   href: string;
+  /** Hotkey shown in the collapsed nav menu ("g p"). */
+  kbd?: string;
 }
 
 export interface TopBarProps {
@@ -37,36 +39,67 @@ export interface TopBarProps {
   roundHref?: (slug: string) => string;
   /** "+ Round" link (editors and owners). */
   newRoundHref?: string;
+  /** "+ Round" opens the new-round dialog in place (wins over `newRoundHref`). */
+  onNewRound?: () => void;
   nav?: TopBarNavItem[];
   activeNav?: string | null;
   user: { name?: string | null; email: string };
   /** Wordmark target: the first open round. */
   homeHref: string;
   workspaceHref: (slug: string) => string;
+  /** Right-aligned hint per workspace in the switcher ("3 due"). */
+  workspaceHint?: (slug: string) => ReactNode;
+  /** Called when the workspace menu opens (load due counts lazily). */
+  onWorkspaceMenu?: () => void;
   newWorkspaceHref?: string;
   onOpenSample?: () => void;
   accountHref?: string;
   onSignOut?: () => void;
+  /** Opens the command palette (shows the "Search ⌘K" button). */
+  onOpenPalette?: () => void;
+  /** Opens the keyboard shortcuts sheet (an account menu item). */
+  onOpenShortcuts?: () => void;
+  /** The account has no display name: a dot on the avatar and "Add your name…" in the menu. */
+  onEditName?: () => void;
   className?: string;
 }
 
 const NAV_LINK =
   "relative inline-flex h-56 items-center font-medium transition-colors duration-[120ms] whitespace-nowrap";
 
+const THEMES: { value: ThemePref; label: string }[] = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
+];
+
 /**
  * The app bar (SYSTEM §4.1): 56px, canvas, 1px line under it, sticky. Left: wordmark,
- * workspace switcher, SANDBOX chip. Center: RoundPicker. Right: nav, theme, account menu.
+ * workspace switcher (max 160px, truncated with a title), SANDBOX chip. Center: RoundPicker,
+ * which collapses to a "Seed ▾" menu when it would crowd the nav (measured, not a fixed
+ * breakpoint). Right: nav, search (⌘K), account menu (theme, shortcuts, sign out).
  * Under 900px the nav collapses into a "Menu" button and the RoundPicker moves to a second,
  * horizontally scrolling row.
  */
 export function TopBar(p: TopBarProps) {
   const ws = p.workspace;
+  // The stored theme is unknown until mounted, so server and client render the same markup.
+  const [theme, setTheme] = useState<ThemePref | null>(null);
+  useEffect(() => setTheme(readThemePref()), []);
+
   const wsItems: MenuEntry[] = [
     ...p.workspaces.map(
-      (w): MenuEntry => ({
+      (w, i): MenuEntry => ({
         label: w.name,
+        textValue: w.name,
         href: p.workspaceHref(w.slug),
-        hint: w.role ? ROLE_LABEL[w.role] : undefined,
+        hint: (
+          <span className="flex items-center gap-8">
+            {p.workspaceHint?.(w.slug)}
+            {w.role && w.role !== "owner" ? <span>{ROLE_LABEL[w.role]}</span> : null}
+            {i < 9 ? <span className="[@media(pointer:coarse)]:hidden">{comboLabel(`mod+${i + 1}`)}</span> : null}
+          </span>
+        ),
         selected: ws ? w.slug === ws.slug : false,
       }),
     ),
@@ -76,26 +109,38 @@ export function TopBar(p: TopBarProps) {
   ];
   const userName = p.user.name || p.user.email;
   const accountItems: MenuEntry[] = [
-    { type: "label", label: p.user.email },
+    { type: "label", label: <span className="normal-case tracking-normal">{p.user.email}</span> },
+    ...(p.onEditName ? [{ label: "Add your name…", textValue: "Add your name", onSelect: p.onEditName } as MenuEntry] : []),
     ...(p.accountHref ? [{ label: "Account", href: p.accountHref } as MenuEntry] : []),
+    ...(p.onOpenShortcuts ? [{ label: "Keyboard shortcuts", onSelect: p.onOpenShortcuts, hint: "?" } as MenuEntry] : []),
     { type: "separator" },
     { type: "label", label: "Theme" },
-    { label: "Light", onSelect: () => applyThemePref("light") },
-    { label: "Dark", onSelect: () => applyThemePref("dark") },
-    { label: "System", onSelect: () => applyThemePref("system") },
+    ...THEMES.map(
+      (t): MenuEntry => ({
+        label: t.label,
+        textValue: t.label,
+        // menuitemradio + aria-checked once the stored choice is known.
+        selected: theme === null ? false : theme === t.value,
+        onSelect: () => {
+          applyThemePref(t.value);
+          setTheme(t.value);
+        },
+      }),
+    ),
     ...(p.onSignOut ? [{ type: "separator" } as MenuEntry, { label: "Sign out", onSelect: p.onSignOut } as MenuEntry] : []),
   ];
   const nav = p.nav ?? [];
   const rounds = p.rounds ?? [];
-  const picker =
-    ws && p.roundHref && (rounds.length || p.newRoundHref) ? (
-      <RoundPicker
-        rounds={rounds}
-        active={p.activeRound}
-        hrefFor={p.roundHref}
-        newRoundHref={p.newRoundHref}
-      />
-    ) : null;
+  const hasPicker = Boolean(ws && p.roundHref && (rounds.length || p.newRoundHref || p.onNewRound));
+  const pickerProps = hasPicker
+    ? {
+        rounds,
+        active: p.activeRound,
+        hrefFor: p.roundHref!,
+        newRoundHref: p.newRoundHref,
+        onNewRound: p.onNewRound,
+      }
+    : null;
 
   // SANDBOX (fictional data, rb_test_ keys) and VIEW ONLY (viewer role) stay visible at every
   // width: beside the workspace name from 640px, on the second row on phones.
@@ -119,30 +164,42 @@ export function TopBar(p: TopBarProps) {
     <header className={cn("sticky top-0 z-30 border-b border-line bg-canvas", p.className)}>
       <div className="gutter mx-auto flex h-56 max-w-app items-center gap-10 sm:gap-14">
         <Wordmark href={p.homeHref} className="shrink-0" />
-        <Menu
-          label="Workspaces"
-          items={wsItems}
-          minWidth={240}
+        <span
           className="min-w-0 shrink"
-          trigger={
-            <>
-              <span className="max-w-[22ch] truncate">{ws ? ws.name : "Workspaces"}</span>
-              <span aria-hidden className="text-muted">
-                ▾
-              </span>
-            </>
-          }
-          triggerClassName="inline-flex h-32 min-w-0 max-w-full items-center gap-6 rounded-sm border border-transparent bg-transparent px-8 font-medium hover:border-line"
-        />
+          onPointerDownCapture={() => p.onWorkspaceMenu?.()}
+          onKeyDownCapture={(e) => {
+            if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") p.onWorkspaceMenu?.();
+          }}
+        >
+          <Menu
+            label="Workspaces"
+            items={wsItems}
+            minWidth={260}
+            className="min-w-0 max-w-full"
+            trigger={
+              <>
+                <span className="max-w-[160px] truncate" title={ws ? ws.name : undefined}>
+                  {ws ? ws.name : "Workspaces"}
+                </span>
+                <span aria-hidden className="text-muted">
+                  ▾
+                </span>
+              </>
+            }
+            triggerClassName="inline-flex h-32 min-w-0 max-w-full items-center gap-6 rounded-sm border border-transparent bg-transparent px-8 font-medium hover:border-line"
+          />
+        </span>
         {modeChips ? <span className="hidden shrink-0 gap-6 sm:inline-flex">{modeChips}</span> : null}
 
-        {picker ? (
-          <div className="hidden min-w-0 flex-1 overflow-x-auto scrollbar-none lg:flex">{picker}</div>
-        ) : null}
+        {pickerProps ? (
+          <RoundPicker {...pickerProps} collapse="auto" className="hidden lg:flex" />
+        ) : (
+          <span className="hidden flex-1 lg:block" />
+        )}
 
-        <div className="ml-auto flex shrink-0 items-center gap-18">
+        <div className="ml-auto flex shrink-0 items-center gap-14 2xl:gap-18">
           {nav.length ? (
-            <nav aria-label="Workspace" className="hidden items-center gap-18 lg:flex">
+            <nav aria-label="Workspace" className="hidden items-center gap-14 lg:flex 2xl:gap-18">
               {nav.map((n) => {
                 const on = n.key === p.activeNav;
                 return (
@@ -150,12 +207,11 @@ export function TopBar(p: TopBarProps) {
                     key={n.key}
                     href={n.href}
                     aria-current={on ? "page" : undefined}
+                    title={n.kbd ? `${n.label} (${comboLabel(n.kbd)})` : undefined}
                     className={cn(NAV_LINK, on ? "text-fg" : "text-muted hover:text-fg")}
                   >
                     {n.label}
-                    {on ? (
-                      <span aria-hidden className="absolute inset-x-0 bottom-0 h-2 bg-accent" />
-                    ) : null}
+                    {on ? <span aria-hidden className="absolute inset-x-0 bottom-0 h-2 bg-accent" /> : null}
                   </Link>
                 );
               })}
@@ -168,32 +224,57 @@ export function TopBar(p: TopBarProps) {
               className="lg:hidden"
               trigger="Menu"
               triggerClassName="inline-flex h-32 items-center rounded-sm border border-line bg-surface px-10 font-medium"
-              items={nav.map((n) => ({ label: n.label, href: n.href, selected: n.key === p.activeNav }))}
+              items={nav.map((n) => ({
+                label: n.label,
+                href: n.href,
+                selected: n.key === p.activeNav,
+                hint: n.kbd ? <span className="[@media(pointer:coarse)]:hidden">{comboLabel(n.kbd)}</span> : undefined,
+              }))}
             />
           ) : null}
-          <span className="hidden xl:flex">
-            <ThemeToggle />
-          </span>
+          {p.onOpenPalette ? (
+            <button
+              type="button"
+              onClick={p.onOpenPalette}
+              aria-label="Search and commands"
+              aria-keyshortcuts="Meta+K Control+K"
+              className="inline-flex h-32 items-center gap-8 rounded-sm border border-line bg-surface px-8 text-muted transition-colors duration-[120ms] hover:border-muted hover:text-fg"
+            >
+              <span className="hidden 2xl:inline">Search</span>
+              <kbd className="inline-flex h-18 items-center rounded-kbd border border-line px-4 font-mono text-xs leading-none text-muted [@media(pointer:coarse)]:hidden">
+                {comboLabel("mod+k")}
+              </kbd>
+              <span className="[@media(pointer:fine)]:hidden">Search</span>
+            </button>
+          ) : null}
           <Menu
             label="Account"
             align="end"
             items={accountItems}
+            minWidth={220}
             trigger={
               <span
-                aria-label={`Account: ${userName}`}
-                className="inline-flex size-28 items-center justify-center rounded-pill bg-sunk font-mono text-xs font-medium text-fg"
+                aria-label={`Account: ${userName}${p.onEditName ? " (add your name)" : ""}`}
+                className="relative inline-flex size-28 items-center justify-center rounded-pill bg-sunk font-mono text-xs font-medium text-fg"
               >
                 {initials(userName)}
+                {p.onEditName ? (
+                  <span aria-hidden className="absolute -top-1 -right-1 size-9 rounded-pill border-2 border-canvas bg-accent" />
+                ) : null}
               </span>
             }
             triggerClassName="rounded-pill border-0 bg-transparent p-0"
           />
         </div>
       </div>
-      {picker || modeChips ? (
+      {pickerProps || modeChips ? (
         <div className="gutter flex items-center gap-8 pb-8 lg:hidden">
           {modeChips ? <span className="flex shrink-0 gap-6 sm:hidden">{modeChips}</span> : null}
-          {picker ? <div className="min-w-0 overflow-x-auto scrollbar-none">{picker}</div> : null}
+          {pickerProps ? (
+            <div className="min-w-0 overflow-x-auto scrollbar-none">
+              <RoundPicker {...pickerProps} collapse="never" />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </header>
