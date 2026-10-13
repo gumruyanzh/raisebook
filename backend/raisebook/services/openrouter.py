@@ -1,8 +1,11 @@
 """OpenRouter HTTP client (RESEARCH-PLAN §4.2). No SDK: plain ``httpx``.
 
-Part 1 needs two calls: ``GET /key`` (validate a workspace's key when it is saved, R12)
-and ``GET /models`` (public, no key: model ids, prices and capabilities for presets,
-the Advanced picker and estimates). Chat completions arrive with the pipeline (Part 2).
+- ``GET /key`` validates a workspace's key when it is saved (R12).
+- ``GET /models`` (public, no key): model ids, prices and capabilities for presets, the
+  Advanced picker and estimates.
+- ``POST /chat/completions`` (:meth:`OpenRouterClient.chat`): the identity, search, writer and
+  prefill calls of the research pipeline. Search runs inside OpenRouter (Perplexity Sonar's
+  own search, or the ``web`` plugin for any other model): Raisebook never fetches pages.
 
 Rules:
 
@@ -270,6 +273,36 @@ class OpenRouterClient:
             is_free_tier=bool((data or {}).get("is_free_tier", False)),
         )
 
+    async def chat(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int,
+        plugins: list[dict[str, Any]] | None = None,
+        web_search_options: dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
+        temperature: float | None = None,
+    ) -> ChatResult:
+        """``POST /chat/completions`` (non-streaming) with the workspace's key."""
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "stream": False,
+            "usage": {"include": True},
+        }
+        if plugins:
+            payload["plugins"] = plugins
+        if web_search_options:
+            payload["web_search_options"] = web_search_options
+        if response_format:
+            payload["response_format"] = response_format
+        if temperature is not None:
+            payload["temperature"] = temperature
+        body = await self._request("POST", "/chat/completions", auth=True, json=payload)
+        return parse_chat(body, model)
+
     async def list_models(self) -> dict[str, ModelInfo]:
         """``GET /models`` (public): every model by id."""
         body = await self._request("GET", "/models", auth=False)
@@ -281,6 +314,136 @@ class OpenRouterClient:
                 if info is not None:
                     out[info.id] = info
         return out
+
+
+@dataclass(frozen=True)
+class WebSource:
+    """One page a search call cited (from ``url_citation`` annotations)."""
+
+    url: str
+    title: str | None = None
+    snippet: str | None = None
+    published_at: str | None = None
+
+
+@dataclass(frozen=True)
+class CallUsage:
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_micros: int | None = None  # None: OpenRouter reported no cost (the caller prices it)
+
+
+@dataclass(frozen=True)
+class ChatResult:
+    content: str
+    sources: list[WebSource]
+    usage: CallUsage
+    generation_id: str | None
+    model: str
+
+
+def _str(value: Any, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text[:limit] if text else None
+
+
+def _int(value: Any) -> int:
+    return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0
+
+
+def parse_sources(body: dict[str, Any], message: dict[str, Any]) -> list[WebSource]:
+    """Cited pages: ``message.annotations[type=url_citation]`` (OpenRouter normalizes these for
+    every provider), else a top-level ``search_results`` / ``citations`` list. Deduped by URL."""
+    out: list[WebSource] = []
+    seen: set[str] = set()
+
+    def add(url: Any, title: Any = None, snippet: Any = None, date: Any = None) -> None:
+        u = _str(url, 2000)
+        if not u or not u.lower().startswith(("http://", "https://")) or u in seen:
+            return
+        seen.add(u)
+        out.append(WebSource(u, _str(title, 300), _str(snippet, 4000), _str(date, 40)))
+
+    for ann in message.get("annotations") or []:
+        if not isinstance(ann, dict) or ann.get("type") != "url_citation":
+            continue
+        nested = ann.get("url_citation")
+        cit: dict[str, Any] = nested if isinstance(nested, dict) else ann
+        add(cit.get("url"), cit.get("title"), cit.get("content"), cit.get("date"))
+    if out:
+        return out
+    for item in body.get("search_results") or []:
+        if isinstance(item, dict):
+            add(item.get("url"), item.get("title"), item.get("snippet"), item.get("date"))
+    for item in body.get("citations") or []:
+        add(item)
+    return out
+
+
+def _body_error(body: dict[str, Any]) -> OpenRouterError | None:
+    """OpenRouter can answer 200 with an ``error`` object (a provider failed mid-request)."""
+    err = body.get("error")
+    if not isinstance(err, dict):
+        return None
+    code = err.get("code")
+    status = code if isinstance(code, int) else 502
+    return error_for_status(httpx.Response(status))
+
+
+def parse_chat(body: dict[str, Any], model: str) -> ChatResult:
+    failure = _body_error(body)
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise failure or OpenRouterError(
+            "openrouter_unavailable",
+            "OpenRouter sent an answer without a message. Raisebook will retry.",
+            transient=True,
+        )
+    message = choices[0].get("message") if isinstance(choices[0].get("message"), dict) else {}
+    content = (message or {}).get("content")
+    if isinstance(content, list):  # content parts
+        content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
+    usage_raw = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    cost = (usage_raw or {}).get("cost")
+    cost_micros = (
+        round(float(cost) * 1_000_000)
+        if isinstance(cost, int | float) and not isinstance(cost, bool) and cost >= 0
+        else None
+    )
+    return ChatResult(
+        content=content if isinstance(content, str) else "",
+        sources=parse_sources(body, message or {}),
+        usage=CallUsage(
+            prompt_tokens=_int((usage_raw or {}).get("prompt_tokens")),
+            completion_tokens=_int((usage_raw or {}).get("completion_tokens")),
+            cost_micros=cost_micros,
+        ),
+        generation_id=_str(body.get("id"), 200),
+        model=_str(body.get("model"), 200) or model,
+    )
+
+
+def is_native_search(model_id: str, info: ModelInfo | None = None) -> bool:
+    """Perplexity Sonar models search by themselves; others need the ``web`` plugin."""
+    if info is not None and info.has_native_search:
+        return True
+    return model_id.startswith("perplexity/")
+
+
+def search_options(
+    model_id: str,
+    *,
+    context_size: str = "medium",
+    max_results: int = 8,
+    info: ModelInfo | None = None,
+) -> dict[str, Any]:
+    """Request fields that make ``model_id`` search the web (RESEARCH-PLAN §4.2)."""
+    opts: dict[str, Any] = {"web_search_options": {"search_context_size": context_size}}
+    if not is_native_search(model_id, info):
+        opts["plugins"] = [{"id": "web", "max_results": max_results}]
+    return opts
 
 
 # --- the models cache --------------------------------------------------------------------
