@@ -293,6 +293,7 @@ class Built:
 class Ctx:
     stages: dict[UUID, list[RoundStage]]
     members: dict[str, UUID]  # lowercased email → user id
+    via: Via | None = None  # who is importing: notes name parameters only for REST/MCP
 
     def stage(self, rnd: Round, ref: str | None) -> RoundStage | None:
         if ref is None:
@@ -331,7 +332,7 @@ async def _load_ctx(db: AsyncSession, ws: WorkspaceContext, rounds: Sequence[Rou
             )
         ).tuples()
     }
-    return Ctx(stages=dict(stages), members=members)
+    return Ctx(stages=dict(stages), members=members, via=ws.actor.via)
 
 
 # --- building records ---------------------------------------------------------------------
@@ -1085,8 +1086,11 @@ def _plan_participation(
     if mode == "skip":
         if values or stage is not None:
             pr.rec.warnings.append(
-                "Existing investor; the stage/fit/follow-up/amount columns in this row were not "
-                "applied (on_duplicate=skip). Use on_duplicate='update' to apply them."
+                "Already in Raisebook, so the stage, fit, follow-up and amount in this row were "
+                "not applied. Choose 'Update existing' to apply them."
+                if ctx.via == Via.WEB
+                else "Existing investor; the stage/fit/follow-up/amount columns in this row were "
+                "not applied (on_duplicate=skip). Use on_duplicate='update' to apply them."
             )
         return PlannedParticipation(rnd, False, None, {}, [], _unchanged(rnd))
     changes: dict[str, Any] = {}

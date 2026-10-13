@@ -235,6 +235,17 @@ class ImportInvalid(Unprocessable):
     code = "import_invalid"
 
 
+class EmailUnavailable(APIError):
+    """The email provider refused or the global send cap is reached (nothing was sent)."""
+
+    status_code = 503
+    code = "email_unavailable"
+    default_message = (
+        "We could not send the email right now. Try again in a few minutes, or continue with "
+        "Google if it is offered."
+    )
+
+
 # --- Investor research (docs/RESEARCH-PLAN.md §6.6) -----------------------------------------
 class NoAiKey(Unprocessable):
     code = "no_ai_key"

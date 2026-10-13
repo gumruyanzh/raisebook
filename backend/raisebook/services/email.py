@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import smtplib
 from dataclasses import dataclass, field
+from datetime import datetime
 from email.message import EmailMessage
 from typing import Protocol
 
@@ -99,6 +100,31 @@ def get_email_sender() -> EmailSender:
     return build_email_sender()
 
 
+async def send_guarded(sender: EmailSender, message: OutboundEmail, *, now: datetime) -> None:
+    """Send one email under the server-wide cap (``email_global``).
+
+    Over the cap, or when the provider refuses (quota, 429, timeout), nothing is sent, a
+    warning is logged with the address hashed, and 503 ``email_unavailable`` is raised, so
+    the caller gets a clear "try again" instead of a 500.
+    """
+    from raisebook.core import ratelimit
+    from raisebook.core.errors import EmailUnavailable
+
+    if not (await ratelimit.check("email_global", "all", now=now)).allowed:
+        log.warning("email_global_cap", subject=message.subject, to_hash=hash_email(message.to))
+        raise EmailUnavailable()
+    try:
+        await sender.send(message)
+    except Exception as exc:  # smtplib, socket and provider errors alike
+        log.warning(
+            "email_send_failed",
+            subject=message.subject,
+            to_hash=hash_email(message.to),
+            error=type(exc).__name__,
+        )
+        raise EmailUnavailable() from None
+
+
 def magic_link_email(to: str, link: str, *, ttl_minutes: int) -> OutboundEmail:
     return OutboundEmail(
         to=to,
@@ -120,12 +146,19 @@ def invite_email(
 ) -> OutboundEmail:
     # The subject is fixed: names are user-supplied, so they only appear in the body,
     # quoted, and never decide what the email claims to be.
-    who = f'"{inviter}"' if inviter else "A teammate"
+    # A name that reads like a domain ("Lumen.ai", "Visit evil.com") would be auto-linked by
+    # mail clients, so it is left out; the invite page shows it after the click.
+    from raisebook.services.workspaces import looks_like_domain
+
+    who = f'"{inviter}"' if inviter and not looks_like_domain(inviter) else "A teammate"
+    where = (
+        "a workspace" if looks_like_domain(workspace_name) else f'the workspace "{workspace_name}"'
+    )
     return OutboundEmail(
         to=to,
         subject="You're invited to a workspace on Raisebook",
         text=(
-            f'{who} invited you to join the workspace "{workspace_name}" on Raisebook as '
+            f"{who} invited you to join {where} on Raisebook as "
             f"{role}.\n\n"
             f"Accept within {ttl_days} days:\n\n{link}\n\n"
             "Raisebook is a free, open-source fundraising CRM. If you were not expecting this "

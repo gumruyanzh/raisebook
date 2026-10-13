@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from raisebook import __version__
+from raisebook.config import get_settings
 from raisebook.core.database import get_engine
 
 router = APIRouter(include_in_schema=False)
@@ -16,7 +17,7 @@ router = APIRouter(include_in_schema=False)
 
 @router.get("/healthz")
 async def healthz() -> dict[str, Any]:
-    return {"status": "ok", "version": __version__}
+    return {"status": "ok", "version": __version__, "commit": get_settings().git_sha or None}
 
 
 @router.get("/healthz/ready")

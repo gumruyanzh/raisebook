@@ -47,6 +47,21 @@ def normalize_email(raw: str) -> str | None:
     return email
 
 
+_DOTLESS_DOMAINS = {"gmail.com": "gmail.com", "googlemail.com": "gmail.com"}
+
+
+def mailbox_key(email: str) -> str:
+    """The inbox an address delivers to, for rate limits only (the address is stored as
+    typed): ``+tags`` are dropped, and for Gmail the dots too (``j.doe+x@gmail.com`` and
+    ``jdoe@googlemail.com`` are one inbox)."""
+    local, _, domain = email.strip().lower().rpartition("@")
+    local = local.split("+", 1)[0]
+    if domain in _DOTLESS_DOMAINS:
+        local = local.replace(".", "")
+        domain = _DOTLESS_DOMAINS[domain]
+    return f"{local}@{domain}"
+
+
 def safe_redirect_path(raw: str | None) -> str | None:
     """Only same-app relative paths survive (no open redirects)."""
     if not raw:

@@ -1,8 +1,10 @@
 """Sign-in flows: request a magic link, verify it, sign out (SPEC §4.1).
 
 ``request_magic_link`` never reveals whether an account exists and answers the
-same way when rate-limited (5 per email per 15 minutes, 30 per IP per hour): no
-email is sent and a warning is logged with the email hashed. The user row is
+same way when rate-limited (5 per email per 15 minutes; 5 per inbox per 15 minutes and 20
+per day, aliases folded by ``magic_link.mailbox_key``; 100 per IP per hour by default): no
+email is sent and a warning is logged with the email hashed. A provider failure or the
+server-wide email cap is 503 ``email_unavailable`` (``email.send_guarded``). The user row is
 created on the first successful verify. An invite attached to the request is
 accepted in the verify transaction when the emails match.
 """
@@ -26,7 +28,7 @@ from raisebook.models.enums import Role
 from raisebook.models.user import User, UserSession
 from raisebook.models.workspace import Invite, Workspace
 from raisebook.services import invites as invites_svc
-from raisebook.services.email import EmailSender, magic_link_email
+from raisebook.services.email import EmailSender, magic_link_email, send_guarded
 from raisebook.services.users import get_or_create_user
 
 log = structlog.get_logger(__name__)
@@ -54,6 +56,12 @@ async def request_magic_link(
     if addr is None:
         raise ValidationFailed("email", "Enter a valid email address.")
     limited = await magic_link.recent_token_count(db, addr, now=now) >= MAGIC_LINKS_PER_EMAIL
+    if not limited:
+        inbox = magic_link.mailbox_key(addr)
+        for kind in ("magic_mailbox", "magic_mailbox_day"):
+            if not (await ratelimit.check(kind, inbox, now=now)).allowed:
+                limited = True
+                break
     if not limited and ip:
         limited = not (await ratelimit.check("magic_ip", ip, now=now)).allowed
     if limited:
@@ -79,7 +87,9 @@ async def request_magic_link(
     )
     await db.commit()
     s = get_settings()
-    await sender.send(magic_link_email(addr, issued.link, ttl_minutes=s.magic_link_ttl_minutes))
+    await send_guarded(
+        sender, magic_link_email(addr, issued.link, ttl_minutes=s.magic_link_ttl_minutes), now=now
+    )
     return MagicLinkResult(sent=True, link=issued.link if s.echo_magic_links else None)
 
 

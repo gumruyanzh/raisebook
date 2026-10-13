@@ -1,6 +1,6 @@
 """Workspaces: creation (with an owner membership), settings, limits (SPEC §3.1).
 
-Slugs are ``slugify(name)[:43] + "-" + 4 random base32 chars`` (``qenzo-k7p2``),
+Slugs are ``slugify(name)[:43] + "-" + 4 random base32 chars`` (``tallow-k7p2``),
 generated once and never changed, so a slug never reveals that another workspace
 with the same name exists.
 """
@@ -37,6 +37,12 @@ LIMITS: dict[str, int] = {
 
 # Names go into invite emails, so they must not carry links (phishing relay guard).
 _LINKY_RE = re.compile(r"(://|\bwww\.|https?\b:|[<>])", re.IGNORECASE)
+# A bare domain ("evil.com", "pay.example.co"): mail clients turn these into links.
+_DOMAIN_RE = re.compile(r"\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b", re.IGNORECASE)
+
+
+def looks_like_domain(value: str) -> bool:
+    return bool(_DOMAIN_RE.search(value))
 
 
 def reject_links(field: str, value: str, what: str) -> None:

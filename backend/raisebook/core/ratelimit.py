@@ -40,6 +40,9 @@ BucketKind = Literal[
     "export",
     "magic_email",
     "magic_ip",
+    "magic_mailbox",
+    "magic_mailbox_day",
+    "email_global",
     "invite",
     "anon_ip",
     "mcp_protocol",
@@ -66,7 +69,16 @@ LIMITS: dict[str, Limit] = {
     "import": Limit(30, 3600),
     "export": Limit(60, 3600),
     "magic_email": Limit(5, 900),
-    "magic_ip": Limit(30, 3600),
+    # Per client IP. Shared conference or office Wi-Fi puts many people behind one IP, so
+    # this is generous; RAISEBOOK_MAGIC_LINKS_PER_IP_HOUR overrides it.
+    "magic_ip": Limit(100, 3600),
+    # Per canonical mailbox (+tags stripped, Gmail dots removed): one inbox cannot be
+    # flooded by rotating aliases of the same address.
+    "magic_mailbox": Limit(5, 900),
+    "magic_mailbox_day": Limit(20, 86400),
+    # Every outbound email (sign-in links and invites) across the whole server, so a burst
+    # cannot use up the provider's quota. RAISEBOOK_EMAIL_GLOBAL_PER_HOUR overrides it.
+    "email_global": Limit(500, 3600),
     "invite": Limit(50, 86400),
     "anon_ip": Limit(120, 60),
     "mcp_protocol": Limit(300, 60),
@@ -169,9 +181,20 @@ def window_start(now: datetime, window_s: int) -> datetime:
     return datetime.fromtimestamp(epoch, UTC)
 
 
+def limit_for(kind: BucketKind) -> Limit:
+    """``LIMITS[kind]``, with the operator overrides from settings applied."""
+    lim = LIMITS[kind]
+    s = get_settings()
+    if kind == "magic_ip" and s.magic_links_per_ip_hour is not None:
+        return Limit(s.magic_links_per_ip_hour, lim.window_s)
+    if kind == "email_global" and s.email_global_per_hour is not None:
+        return Limit(s.email_global_per_hour, lim.window_s)
+    return lim
+
+
 async def check(kind: BucketKind, subject: str, *, now: datetime | None = None) -> RateResult:
     """Count one hit on ``kind:subject`` and say whether it is within the limit."""
-    lim = LIMITS[kind]
+    lim = limit_for(kind)
     ts = now or get_now()
     start = window_start(ts, lim.window_s)
     backend = get_backend()

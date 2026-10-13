@@ -21,6 +21,7 @@ from raisebook.api.deps import (
 )
 from raisebook.auth.scopes import SCOPE_ADMIN, SCOPE_WRITE
 from raisebook.config import get_settings
+from raisebook.core.errors import EmailUnavailable
 from raisebook.models.user import User
 from raisebook.schemas.common import ERROR_RESPONSES, DataList
 from raisebook.schemas.members import (
@@ -32,7 +33,7 @@ from raisebook.schemas.members import (
 )
 from raisebook.schemas.workspaces import WorkspaceOut
 from raisebook.services import invites as invites_svc
-from raisebook.services.email import EmailSender, invite_email
+from raisebook.services.email import EmailSender, invite_email, send_guarded
 from raisebook.services.users import display_name, display_names
 from raisebook.services.workspaces import role_of
 
@@ -69,16 +70,24 @@ async def create_invite(
     await db.commit()
     inviter = await db.get(User, ws.principal.user_id) if ws.principal.user_id else None
     s = get_settings()
-    await sender.send(
-        invite_email(
-            str(created.invite.email),
-            created.link,
-            workspace_name=ws.name,
-            inviter=display_name(inviter) if inviter else None,
-            role=created.invite.role,
-            ttl_days=s.invite_ttl_days,
+    try:
+        await send_guarded(
+            sender,
+            invite_email(
+                str(created.invite.email),
+                created.link,
+                workspace_name=ws.name,
+                inviter=display_name(inviter) if inviter else None,
+                role=created.invite.role,
+                ttl_days=s.invite_ttl_days,
+            ),
+            now=now,
         )
-    )
+    except EmailUnavailable:
+        raise EmailUnavailable(
+            "The invite is saved, but its email could not be sent right now. Invite the same "
+            "address again in a few minutes; it replaces this invite."
+        ) from None
     names = {inviter.id: display_name(inviter)} if inviter else {}
     out = invite_out(created.invite, now, names)
     return InviteCreatedOut(
