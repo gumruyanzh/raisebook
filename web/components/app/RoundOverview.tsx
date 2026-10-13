@@ -151,6 +151,7 @@ export function RoundOverview({
               client={client}
               canWrite={canWrite}
               pipelineHref={pipeline}
+          timeZone={tz}
           onChanged={() => void reload()}
           className="order-1 min-w-0 xl:order-none xl:col-span-8"
           style={{ gridRow: workRow }}

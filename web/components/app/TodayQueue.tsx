@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { Button, Kbd, SectionLabel, StageDot, Textarea, useToast } from "@/components/ui";
+import { DateField } from "@/components/ui/DateField";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
 import { logActivity } from "@/lib/api/activities";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
@@ -57,6 +58,7 @@ export function TodayQueue({
   client,
   canWrite,
   pipelineHref,
+  timeZone,
   onChanged,
   className,
   style,
@@ -67,6 +69,8 @@ export function TodayQueue({
   client: ApiClient;
   canWrite: boolean;
   pipelineHref: string;
+  /** Workspace timezone (the date picker's calendar). */
+  timeZone: string;
   /** A write landed: refresh the ledger and feed in the background. */
   onChanged?: () => void;
   className?: string;
@@ -80,7 +84,6 @@ export function TodayQueue({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [pickDate, setPickDate] = useState(false);
-  const [dateValue, setDateValue] = useState("");
   const scroll = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLDivElement>(null);
   const listFocus = useRef(false);
@@ -120,19 +123,27 @@ export function TodayQueue({
   const cur = count ? Math.min(active, count - 1) : -1;
   const curItem = cur >= 0 ? itemRows[cur]!.item : null;
 
+  // Focus lands after the window re-renders around the row (it may not exist yet).
+  const pendingFocus = useRef<number | null>(null);
   const focusRow = useCallback(
     (i: number) => {
       if (!count) return;
       const n = Math.max(0, Math.min(count - 1, i));
+      pendingFocus.current = n;
       setActive(n);
       v.scrollToIndex(rowIndexOf[n] ?? 0);
-      requestAnimationFrame(() => {
-        const el = scroll.current?.querySelector<HTMLElement>(`[data-q-index="${n}"]`);
-        el?.focus({ preventScroll: true });
-      });
     },
     [count, v, rowIndexOf],
   );
+  useLayoutEffect(() => {
+    const n = pendingFocus.current;
+    if (n === null) return;
+    const el = scroll.current?.querySelector<HTMLElement>(`[data-q-index="${n}"]`);
+    if (el) {
+      pendingFocus.current = null;
+      el.focus({ preventScroll: true });
+    }
+  });
 
   const open = useCallback(
     (it: FollowUpItem) => router.push(`${pipelineHref}?investor=${encodeURIComponent(it.investor.id)}`),
@@ -333,7 +344,6 @@ export function TodayQueue({
     } else if (prompt.kind === "snooze" && e.key.toLowerCase() === "d") {
       e.preventDefault();
       setPickDate(true);
-      setDateValue(addDays(today, 7));
     }
   };
 
@@ -512,24 +522,17 @@ export function TodayQueue({
             </>
           ) : pickDate ? (
             <div className="flex flex-wrap items-center gap-8">
-              <input
-                type="date"
-                aria-label="Follow-up date"
-                autoFocus
+              <DateField
+                value={null}
+                timeZone={timeZone}
+                quickPicks="followup"
+                placeholder="Pick a date"
                 min={addDays(today, 1)}
-                value={dateValue}
-                onChange={(e) => setDateValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && dateValue) {
-                    e.preventDefault();
-                    choose({ label: "Date", iso: dateValue, kbd: "" });
-                  }
+                aria-label={`Snooze ${prompt.item.investor.name} until`}
+                onChange={(iso) => {
+                  if (iso) choose({ label: "Date", iso, kbd: "" });
                 }}
-                className="h-28 rounded-sm border border-line bg-surface px-8 font-mono text-sm"
               />
-              <Button size="sm" disabled={!dateValue} onClick={() => choose({ label: "Date", iso: dateValue, kbd: "" })}>
-                Snooze
-              </Button>
               <Button size="sm" variant="ghost" onClick={() => setPickDate(false)}>
                 Back
               </Button>
@@ -543,10 +546,7 @@ export function TodayQueue({
                 </Button>
               ))}
               {prompt.kind === "snooze" ? (
-                <Button size="sm" onClick={() => {
-                  setPickDate(true);
-                  setDateValue(addDays(today, 7));
-                }}>
+                <Button size="sm" onClick={() => setPickDate(true)}>
                   Pick date… <Kbd className="ml-6">D</Kbd>
                 </Button>
               ) : null}

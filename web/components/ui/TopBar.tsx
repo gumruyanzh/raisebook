@@ -224,12 +224,22 @@ export function TopBar(p: TopBarProps) {
               className="lg:hidden"
               trigger="Menu"
               triggerClassName="inline-flex h-32 items-center rounded-sm border border-line bg-surface px-10 font-medium"
-              items={nav.map((n) => ({
-                label: n.label,
-                href: n.href,
-                selected: n.key === p.activeNav,
-                hint: n.kbd ? <span className="[@media(pointer:coarse)]:hidden">{comboLabel(n.kbd)}</span> : undefined,
-              }))}
+              items={[
+                ...nav.map(
+                  (n): MenuEntry => ({
+                    label: n.label,
+                    href: n.href,
+                    selected: n.key === p.activeNav,
+                    hint: n.kbd ? <span className="[@media(pointer:coarse)]:hidden">{comboLabel(n.kbd)}</span> : undefined,
+                  }),
+                ),
+                ...(p.onOpenPalette
+                  ? [
+                      { type: "separator" } as MenuEntry,
+                      { label: "Search…", textValue: "Search", onSelect: p.onOpenPalette, hint: comboLabel("mod+k") } as MenuEntry,
+                    ]
+                  : []),
+              ]}
             />
           ) : null}
           {p.onOpenPalette ? (
@@ -238,7 +248,7 @@ export function TopBar(p: TopBarProps) {
               onClick={p.onOpenPalette}
               aria-label="Search and commands"
               aria-keyshortcuts="Meta+K Control+K"
-              className="inline-flex h-32 items-center gap-8 rounded-sm border border-line bg-surface px-8 text-muted transition-colors duration-[120ms] hover:border-muted hover:text-fg"
+              className="hidden h-32 items-center gap-8 rounded-sm border border-line bg-surface px-8 text-muted transition-colors duration-[120ms] hover:border-muted hover:text-fg sm:inline-flex"
             >
               <span className="hidden 2xl:inline">Search</span>
               <kbd className="inline-flex h-18 items-center rounded-kbd border border-line px-4 font-mono text-xs leading-none text-muted [@media(pointer:coarse)]:hidden">
