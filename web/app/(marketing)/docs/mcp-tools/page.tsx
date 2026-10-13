@@ -13,7 +13,7 @@ import {
   Ticks,
   Ul,
 } from "@/components/marketing/docs/Prose";
-import { MCP_TOOLS } from "@/components/marketing/docs/mcp-tools";
+import { SHIPPED_MCP_TOOLS as MCP_TOOLS } from "@/components/marketing/docs/mcp-tools";
 import { Chip, CodeBlock } from "@/components/ui";
 
 export const metadata: Metadata = {

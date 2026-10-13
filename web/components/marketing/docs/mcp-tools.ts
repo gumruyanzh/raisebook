@@ -1,5 +1,6 @@
 /**
- * The 17 MCP tools (SPEC §6.4). Descriptions are the binding tool description text, word for
+ * The 22 MCP tools (SPEC §6.4; the five research tools from RESEARCH-PLAN §7, served only with
+ * RAISEBOOK_RESEARCH_ENABLED). Descriptions are the binding tool description text, word for
  * word. Parameters follow the spec's input schemas. If the spec changes, change this file.
  */
 
@@ -327,4 +328,91 @@ export const MCP_TOOLS: McpTool[] = [
     ],
     output: "{round: {slug, name}, format, filename, row_count, content}. Over 1 MB: payload_too_large with the REST URL to use.",
   },
+  {
+    name: "get_dossier",
+    title: "Read an investor's dossier",
+    access: "read",
+    idempotent: true,
+    description:
+      "Read an investor's research dossier: the Brief (verdict, why, best way in, opener, risk) and the sections Fit, Recent activity, Thesis & public views, Ways in, Talking points and Red flags. Every claim ends with source refs like [s3] that point into `sources` (url, title, date). `new_since` marks a refresh; `stale` means older than 90 days. `unverified` claims are from model memory, not cited: never present them as facts.",
+    params: [
+      INVESTOR_REF,
+      { name: "version", type: "integer ≥1", description: "An older version (the last 5 are kept)." },
+      { name: "section", type: '"brief" | "fit" | "activity" | "thesis" | "ways_in" | "talking_points" | "red_flags" | "all"', description: "One section, or all (default)." },
+    ],
+    output:
+      "{investor: {id, name, firm}, version, date, verdict, author, stale?, sections, sources: [{ref, url, title, date}], unverified?, pending_suggestions?, new_since?: {date, facts}, refresh_offer?}",
+  },
+  {
+    name: "list_research_runs",
+    title: "List research runs",
+    access: "read",
+    idempotent: true,
+    description:
+      "List research runs, newest first: kind, status, cost in USD, progress and errors (with what to do next). A failed, partial or capped run keeps what it gathered and can be resumed by the founder in the app.",
+    params: [
+      { name: "investor", type: "string", description: "Investor id, email, LinkedIn URL or exact name." },
+      { name: "status", type: '"queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled" | "capped" | "blocked_identity"', description: "Only runs in this status." },
+      { name: "kind", type: '"identity" | "dossier" | "refresh" | "prefill" | "agent"', description: "Only runs of this kind." },
+      { name: "limit", type: "integer 1–50", description: "Default 20." },
+    ],
+    output: "{runs: [{id, investor, kind, status, cost_usd?, progress?, step?, error?, dossier_id?, can_resume?}]}",
+  },
+  {
+    name: "research_investor",
+    title: "Research an investor",
+    access: "write",
+    idempotent: true,
+    description:
+      "Start research on an investor with the workspace's OpenRouter key (it runs in the background; poll list_research_runs, then read get_dossier). Respects the monthly AI limit. Safe to repeat: a run already going is returned. Errors: no_ai_key (an owner adds a key in Settings → AI research; or research yourself and use save_dossier), spend_cap_reached, identity_required (call match_identity first).",
+    params: [
+      INVESTOR_REF,
+      { name: "kind", type: '"identity" | "dossier" | "refresh"', description: "identity = find who this is (cheap); dossier (default) = full research; refresh = research again and mark what is new." },
+      ROUND_OPTIONAL("The dossier's Fit compares to it."),
+      { name: "dry_run", type: "boolean", description: "Only estimate the cost; start nothing." },
+    ],
+    output: "{id, investor, kind, status, estimate_usd, created, next}; dry run: {dry_run, count, skipped, per_run_usd, total_usd, remaining_usd, fits}",
+  },
+  {
+    name: "match_identity",
+    title: "Match an investor's identity",
+    access: "write",
+    idempotent: true,
+    description:
+      'Find or confirm who an investor is before deeper research. Without a choice: returns the confirmed identity, the candidates to pick from ("Is this them?"), or starts the cheap identity search. With `pick` (candidate id or rank), `linkedin_url`, or `none`: confirms. Only pick a candidate the human or your own evidence supports.',
+    params: [
+      INVESTOR_REF,
+      { name: "pick", type: "string", description: "A candidate id, or its rank 1-3, from a previous call." },
+      { name: "linkedin_url", type: "string", description: "Their LinkedIn profile URL, if you know it." },
+      { name: "none", type: "boolean", description: "True: none of the candidates is this investor." },
+    ],
+    output: "{investor: {id, name}, identity: {status, linkedin_url?, firm?, title?, …}, candidates?: [{id, rank, name, title, firm, linkedin_url, confidence}], run?, next}",
+  },
+  {
+    name: "save_dossier",
+    title: "Save a dossier you researched",
+    access: "write",
+    idempotent: false,
+    description:
+      'Save a dossier you researched with your own tools (web search, fetch). It costs the workspace nothing and needs no OpenRouter key; it is shown "by <your agent name>". The identity must match the investor\'s confirmed identity when one exists, every fact must cite a page you actually fetched, ways in need public evidence, and only professional information is kept (personal phones, home addresses, family, health, politics and religion are stripped or dropped). Pass `idempotency_key` to make retries safe.',
+    params: [
+      INVESTOR_REF,
+      { name: "dossier", type: "DossierDoc v1", required: true, description: "{identity, sources, facts, analysis, suggestions?, unverified?}. See Investor research in the docs." },
+      ROUND_OPTIONAL("The round the Fit and fit suggestion apply to."),
+      { name: "idempotency_key", type: "string", description: "Retries with the same key return the first result." },
+    ],
+    output: "{dossier_id, version, by, kept: {facts, sources_accepted}, dropped: [{key, reason}], sources_rejected, privacy_removed, suggestions: {applied, suggested}, new_facts, repeated?}",
+  },
 ];
+
+/** Research tools are served only with RAISEBOOK_RESEARCH_ENABLED (unreleased, off by default). */
+export const RESEARCH_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "get_dossier",
+  "list_research_runs",
+  "research_investor",
+  "match_identity",
+  "save_dossier",
+]);
+
+/** The tools every server serves today: the public reference lists only these. */
+export const SHIPPED_MCP_TOOLS: McpTool[] = MCP_TOOLS.filter((t) => !RESEARCH_TOOL_NAMES.has(t.name));

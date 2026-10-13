@@ -27,6 +27,7 @@ const FOOTER: { title: string; links: { href: string; label: string; external?: 
     title: "Promises",
     links: [
       { href: "/privacy", label: "Privacy" },
+      { href: "/research-policy", label: "Research Policy" },
       { href: "/terms", label: "Terms" },
       { href: "/docs/export", label: "Export and delete" },
     ],

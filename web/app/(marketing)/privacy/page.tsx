@@ -75,6 +75,8 @@ export default function Privacy() {
           ["Your workspaces: rounds, stages, investors, notes, follow-ups, amounts and the timeline", "This is the product. It is shown only to the workspace's members and keys."],
           ["API keys, stored as a one-way hash, plus their name, scopes and last use", "To let your agents in without storing a usable secret."],
           ["Short-lived counters per key, per IP and per hashed email", "Rate limits. They are deleted after a day."],
+          ["If you use research: your OpenRouter key, encrypted, and only its last 4 characters readable", "To run research you ask for, on your key. Remove it in Settings and it is deleted at once."],
+          ["If you use research: dossiers, their cited public sources, research runs and their cost", "So you can read and refresh them. Private to the workspace; deleted with the investor or the workspace."],
         ]}
       />
 
@@ -138,11 +140,18 @@ export default function Privacy() {
 
       <H2>Agents and AI</H2>
       <P>
-        Raisebook does not run AI models and does not send your data to any AI provider. When you
-        connect an agent such as Claude Code, Codex or Cursor, it reads and writes through your
-        API key, and what it reads goes to the AI provider you chose, under that provider&apos;s
-        terms. Every change an agent makes is on the timeline under its name. Revoke the key and
-        the access ends.
+        Raisebook never runs or pays for AI on its own. When you connect an agent such as Claude
+        Code, Codex or Cursor, it reads and writes through your API key, and what it reads goes to
+        the AI provider you chose, under that provider&apos;s terms. Every change an agent makes is
+        on the timeline under its name. Revoke the key and the access ends.
+      </P>
+      <P>
+        Investor research is the one place Raisebook talks to an AI provider, and only on your own
+        OpenRouter key, only when someone in your workspace presses Research. It sends the
+        investor&apos;s name, firm, title and links, your company profile and the round&apos;s terms
+        (and your deck, when you ask for a profile draft). It never sends your notes, emails,
+        amounts or timelines. Dossiers hold professional information only and stay private to your
+        workspace. <A href="/research-policy">Research Policy</A>.
       </P>
 
       <H2>Your rights</H2>

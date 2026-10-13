@@ -29,8 +29,10 @@ Raisebook costs $0, and that will not change.
    your data and never shows one workspace's data to another.
 3. **No ads, no trackers.** No analytics scripts, pixels or third-party cookies. Fonts are
    served by Raisebook.
-4. **No AI on your data unless you bring it.** Raisebook does not send your data to any AI
-   model. Agents you connect use your key, and every action they take is on the timeline.
+4. **No AI on your data unless you bring it.** Raisebook never runs or pays for AI on its
+   own. Investor research runs only when you press a button, on your own OpenRouter key, and
+   sends only the investor's name, firm and links, your company profile and round terms.
+   Agents you connect use your key, and every action they take is on the timeline.
 5. **Leave any time.** Export everything as CSV and JSON. Delete your workspace or account
    permanently, effective immediately.
 6. **Check our work.** Raisebook is open source under AGPL-3.0, including the code that

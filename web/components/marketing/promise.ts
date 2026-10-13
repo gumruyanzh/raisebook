@@ -17,7 +17,7 @@ export const PRIVACY_PROMISE: { lead: string; body: string }[] = [
   },
   {
     lead: "No AI on your data unless you bring it.",
-    body: "Raisebook does not send your data to any AI model. Agents you connect use your key, and every action they take is on the timeline.",
+    body: "Raisebook never runs or pays for AI on its own. Investor research runs only when you press a button, on your own OpenRouter key, and sends only the investor's name, firm and links, your company profile and round terms. Agents you connect use your key, and every action they take is on the timeline.",
   },
   {
     lead: "Leave any time.",

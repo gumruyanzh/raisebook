@@ -10,6 +10,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/",
     ...DOCS_NAV.map((n) => n.href).filter((h) => h.startsWith("/docs")),
     "/privacy",
+    "/research-policy",
     "/terms",
     "/support",
     "/changelog",
