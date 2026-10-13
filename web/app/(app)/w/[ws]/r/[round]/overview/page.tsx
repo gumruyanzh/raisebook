@@ -26,7 +26,7 @@ export default async function OverviewPage({ params }: { params: Promise<Params>
     const [summary, activity, followUps, agentActivity] = await Promise.all([
       getRoundSummary(client, round.id),
       optional(listActivities(client, { round: round.id, limit: 30 }).then((r) => r.data), []),
-      optional(listFollowUps(client, { round: round.id, within_days: 7, include_overdue: true, limit: 100 }), {
+      optional(listFollowUps(client, { round: round.id, within_days: 7, include_overdue: true, limit: 200 }), {
         today,
         data: [],
         counts: { overdue: 0, today: 0, upcoming: 0 },
