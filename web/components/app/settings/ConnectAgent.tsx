@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   Button,
@@ -18,7 +18,8 @@ import {
   type CodeTab,
 } from "@/components/ui";
 import { SNIPPET_NOTES } from "@/components/marketing/snippets";
-import { MCP_URL } from "@/lib/api/settings";
+import { listApiKeys, MCP_URL } from "@/lib/api/settings";
+import type { ApiKey } from "@/lib/api/types";
 import { useWorkspace } from "@/lib/session";
 
 import { KeyFields, submitKey, type KeyDraft } from "./CreateKeyDialog";
@@ -98,11 +99,98 @@ function Step({ n, title, children }: { n: string; title: string; children: Reac
   );
 }
 
+/** True under 640px, so code wraps on phones instead of scrolling sideways. */
+function usePhone(): boolean {
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639.98px)");
+    const on = () => setPhone(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return phone;
+}
+
+function ago(ts: string, now: number): string {
+  const s = Math.max(0, Math.round((now - new Date(ts).getTime()) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+}
+
+/**
+ * Live status for the key made on this page (P2-7): polls the key list until its
+ * `last_used_at` appears, then shows who connected and when.
+ */
+function ConnectionStatus({ keyId, agent }: { keyId: string; agent: string }) {
+  const { client } = useWorkspace();
+  const [key, setKey] = useState<ApiKey | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const used = key?.last_used_at ?? null;
+
+  useEffect(() => {
+    if (used) return;
+    let live = true;
+    const started = Date.now();
+    const poll = async () => {
+      try {
+        const res = await listApiKeys(client);
+        const k = res.data.find((x) => x.id === keyId) ?? null;
+        if (live && k) setKey(k);
+      } catch {
+        /* keep waiting; the next poll retries */
+      }
+    };
+    void poll();
+    const iv = setInterval(() => {
+      // Stop after 30 minutes; the status is a convenience, not a monitor.
+      if (Date.now() - started > 30 * 60_000) clearInterval(iv);
+      else void poll();
+    }, 2500);
+    return () => {
+      live = false;
+      clearInterval(iv);
+    };
+  }, [client, keyId, used]);
+
+  useEffect(() => {
+    if (!used) return;
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [used]);
+
+  return (
+    <p role="status" aria-live="polite" className="t-body-s mb-10 flex flex-wrap items-center gap-8">
+      {used ? (
+        <>
+          <span className="agent-diamond" aria-hidden />
+          <span>
+            <span className="font-medium text-agent">{agent}</span> connected
+            <span className="t-micro ml-6 text-muted" suppressHydrationWarning>
+              {ago(used, now)}
+            </span>
+          </span>
+        </>
+      ) : (
+        <>
+          <span aria-hidden className="inline-block size-7 rounded-pill bg-faint" />
+          <span className="text-muted">
+            Waiting for the first call from <span className="font-mono">{agent}</span>… This updates by itself.
+          </span>
+        </>
+      )}
+    </p>
+  );
+}
+
 /** Settings → Connect an agent (SYSTEM §4.9): create a key, add it to the agent, try it. */
 export function ConnectAgent() {
   const { workspace, client, isOwner, rounds } = useWorkspace();
   const [d, setD] = useState<KeyDraft>({ name: "Claude Code", agentName: "claude-code", write: true, admin: false, expires: "never" });
   const [secret, setSecret] = useState<string | null>(null);
+  const [created, setCreated] = useState<ApiKey | null>(null);
+  const phone = usePhone();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const base = `/w/${encodeURIComponent(workspace.slug)}`;
@@ -135,7 +223,10 @@ export function ConnectAgent() {
                 const res = await submitKey(client, d);
                 setBusy(false);
                 if (res.error) setError(res.error);
-                else if (res.secret) setSecret(res.secret);
+                else if (res.secret) {
+                  setSecret(res.secret);
+                  setCreated(res.key ?? null);
+                }
               }}
             >
               <KeyFields d={d} set={setD} compact />
@@ -152,25 +243,35 @@ export function ConnectAgent() {
           )}
         </Step>
         <Step n="02" title="Add it to your agent">
-          <CodeBlock tabs={snippetTabs(secret, workspace.is_sandbox, d.agentName)} />
-          <p className="t-body-s mt-10 text-muted">
-            Codex and Cursor read the key from your environment. Put this in your shell profile:
-          </p>
-          <CodeBlock
-            className="mt-6"
-            lang="shell"
-            title="Shell"
-            code={`export RAISEBOOK_API_KEY=${secret ?? (workspace.is_sandbox ? "rb_test_XXXX" : PLACEHOLDER)}`}
-          />
-          <p className="t-body-s mt-8 text-muted">{SNIPPET_NOTES.model}</p>
+          <CodeBlock tabs={snippetTabs(secret, workspace.is_sandbox, d.agentName)} wrap={phone} />
           {!secret ? (
             <p className="t-body-s mt-8 text-muted">
               Replace <span className="font-mono">{workspace.is_sandbox ? "rb_test_XXXX" : PLACEHOLDER}</span> with your key. Keys
               are shown once, when you create them.
             </p>
           ) : null}
+          <details className="group mt-10">
+            <summary className="t-body-s cursor-pointer list-none text-muted hover:text-fg [&::-webkit-details-marker]:hidden">
+              <span aria-hidden className="mr-6 inline-block transition-transform group-open:rotate-90">→</span>
+              Advanced: the key in your environment, and the model label
+            </summary>
+            <div className="mt-8 pl-18">
+              <p className="t-body-s text-muted">
+                Codex and Cursor read the key from your environment. Put this in your shell profile:
+              </p>
+              <CodeBlock
+                className="mt-6"
+                lang="shell"
+                title="Shell"
+                wrap={phone}
+                code={`export RAISEBOOK_API_KEY=${secret ?? (workspace.is_sandbox ? "rb_test_XXXX" : PLACEHOLDER)}`}
+              />
+              <p className="t-body-s mt-8 text-muted">{SNIPPET_NOTES.model}</p>
+            </div>
+          </details>
         </Step>
         <Step n="03" title="Try it">
+          {created ? <ConnectionStatus keyId={created.id} agent={created.agent_name || d.agentName || created.name} /> : null}
           <p className="t-body-s mb-8 text-muted">Ask your agent in plain words. A few to start:</p>
           <CodeBlock code={PROMPTS(round)} title="Prompts" wrap />
         </Step>
