@@ -70,7 +70,7 @@ check the promise in the code.
   and keyboard), Table (sort, filter), Investor sheet. Round overview page. Investors directory
   and investor page.
 - Workspace API keys with scopes, a REST API under `/v1` with OpenAPI, and an MCP server at
-  `/mcp` with the 17 tools in §6. Rate limits per key.
+  `/mcp` with the 22 tools in §6 (17 + the 5 research tools of §6.7). Rate limits per key.
 - CSV import (mapping, preview, dedupe), CSV and JSON export, prototype JSON import (should
   have, built after CSV).
 - Sample (sandbox) workspace with fictional data.
@@ -94,13 +94,20 @@ check the promise in the code.
 - **No investor database built from user data.** No cross-workspace suggestions ("investors you
   might know"), enrichment from other workspaces, shared contact graph, or benchmarking across
   workspaces. No query in the codebase may read rows from more than one workspace, except
-  admin counts of rows per table for capacity planning.
+  admin counts of rows per table for capacity planning, and the operator's research
+  **removal** action (`services/research_removal.py`, R13), which only *deletes* research rows
+  about a person who asked, in every workspace, and returns counts, never content.
 - No paid tier, ads, sponsored placements or selling data.
 - No third-party trackers, analytics scripts, session replay or marketing pixels. Fonts are
   self-hosted (`next/font`), and the web app loads no third-party scripts at runtime.
-- Raisebook itself never sends workspace data to an LLM provider. Agents connect with the
-  user's key; Raisebook does not run models.
-- No scraping LinkedIn or other sites. No sending emails to investors on the user's behalf in
+- Raisebook never pays for or runs models on its own, and never sends workspace data to an
+  LLM provider on its own initiative. Investor research (docs/RESEARCH-SPEC.md) is
+  bring-your-own-key: it calls OpenRouter **only with the workspace's own key**, only when a
+  member presses a button or an agent asks, and sends only what docs/RESEARCH-PLAN.md §11.4
+  lists (the investor's identity fields, the company profile and round terms; never notes,
+  emails, amounts or timelines). Agents connect with the user's key.
+- No scraping LinkedIn or other sites: Raisebook's servers never fetch third-party pages
+  (research search runs inside OpenRouter). No sending emails to investors on the user's behalf in
   MVP.
 - Not a sales CRM, not a cap-table tool, not an investor-facing portal.
 
@@ -687,6 +694,10 @@ viewer = read.
 | Invite, remove or change role of members | ✓ | – | – | – | – | – |
 | Leave workspace | ✓ (unless last owner) | ✓ | ✓ | – | – | – |
 | Delete workspace (typed slug) | ✓ | – | – | – | – | – |
+| Read dossiers, identities, research runs, suggestions, AI settings, company profile | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Run research, pick an identity, accept or ignore suggestions, save an agent dossier, edit or prefill the company profile | ✓ | ✓ | – | – | ✓ | ✓ |
+| Change AI preset, model ids or monthly AI limit | ✓ | – | – | – | – | ✓ |
+| Set or remove the OpenRouter key | ✓ (signed in) | – | – | – | – | – |
 
 A missing scope or role returns 403 `insufficient_scope` (key) or `forbidden_role` (session),
 with `details.required`. Any id or slug from another workspace returns 404 `not_found`, never
@@ -1000,7 +1011,10 @@ type ImportResult = { import_run_id: string; counts: { rows, created, updated, s
 > record_commitment only when the investor has actually committed. Every write is recorded on
 > the investor's timeline under your agent name, and the founder sees it. Never invent
 > investor details; leave unknown fields empty. import_investors_csv defaults to dry_run=true:
-> show the human the preview counts, then rerun with dry_run=false.
+> show the human the preview counts, then rerun with dry_run=false. Research: get_dossier
+> reads an investor's cited dossier; research_investor runs research on the workspace's own
+> OpenRouter key within its monthly limit; or research with your own tools and submit it with
+> save_dossier (every fact cites a source you fetched; professional information only).
 
 ### 6.4 Tools
 
@@ -1210,7 +1224,8 @@ from `NEXT_PUBLIC_PUBLIC_API_URL`.
 ### 6.6 Polish pass additions (binding)
 - **Two more tools.** `create_round` (write, idempotent by name; returns the round with its
   stage keys) and `add_investors` (write; up to 50 `add_investor` items, optional shared
-  `round`, one compact result line per item, a failed item does not stop the rest). 17 tools.
+  `round`, one compact result line per item, a failed item does not stop the rest). 17 tools
+  (22 with the research tools of §6.7).
 - **Compact results.** Tools return compact JSON text (no pretty-printing, no
   `outputSchema`). Nulls and empty lists are pruned; stages are `{key, label}` (kind only in
   the funnel and `get_workspace`); UI-only fields (color, position, created_at, updated_at,
@@ -1229,6 +1244,23 @@ from `NEXT_PUBLIC_PUBLIC_API_URL`.
   `list_due_follow_ups.counts` always has `next_7_days` and `next_due_on`.
 - `serverInfo.version` is the Raisebook version.
 
+### 6.7 Investor research tools (docs/RESEARCH-PLAN.md §7; binding)
+Five tools, in `mcp/tools/research.py`, calling the same services as REST:
+
+| tool | annotation | args | returns |
+|---|---|---|---|
+| `get_dossier` | read | `investor`, `version?`, `section?` (brief, fit, activity, thesis, ways_in, talking_points, red_flags, all) | brief, sections with claims ending in `[s3]` refs, sources (url, title, date), date, stale, author, `new_since`, `unverified` (model memory, never facts) |
+| `list_research_runs` | read | `investor?`, `status?`, `kind?`, `limit ≤ 50` | id, investor, kind, status, cost_usd, progress, error, can_resume |
+| `research_investor` | write, idempotent | `investor`, `kind` (identity, dossier, refresh; default dossier), `round?`, `dry_run?` | the run and its estimate; `no_ai_key`, `spend_cap_reached`, `identity_required` say what to do |
+| `match_identity` | write, idempotent | `investor`, `pick?` (candidate id or rank 1-3), `linkedin_url?`, `none?` | the anchor, the candidates to pick from, or the identity run it started |
+| `save_dossier` | write, not idempotent unless `idempotency_key` | `investor`, `dossier` (DossierDoc v1), `round?`, `idempotency_key?` | version, kept and dropped counts with reasons, privacy removals, suggestions; "by <agent-name>" |
+
+`save_dossier` is validated exactly like a model dossier (schema, suppression, identity
+anchor, citations, the privacy filter), costs the workspace nothing and needs no OpenRouter
+key. The REST twin is `POST /v1/investors/{id}/dossier`.
+
+---
+
 ## 7. Rate limits
 
 Fixed one-minute windows in `rate_limit_counters` (Postgres, so it works across replicas),
@@ -1246,6 +1278,8 @@ behind `core/ratelimit.py` with `RAISEBOOK_RATE_LIMIT_BACKEND=postgres|memory|of
 | Invites sent, per workspace | 50 / day |
 | Unauthenticated requests, per IP | 120 / min |
 | MCP protocol messages that are not tool calls (initialize, list), per key | 300 / min |
+| Saving an OpenRouter key, per workspace | 10 / hour |
+| Research removal requests (anonymous) | 5 / hour per IP, 3 / day per email (silently) |
 
 A 429 carries `Retry-After`. MCP returns a tool error
 `rate_limited: retry after <n>s`. `rbctl housekeeping` deletes windows older than one day.
@@ -1388,8 +1422,10 @@ The promise, word for word (landing and `/privacy` use this text):
    your data and never shows one workspace's data to another.
 3. **No ads, no trackers.** No analytics scripts, pixels or third-party cookies. Fonts are
    served by Raisebook.
-4. **No AI on your data unless you bring it.** Raisebook does not send your data to any AI
-   model. Agents you connect use your key, and every action they take is on the timeline.
+4. **No AI on your data unless you bring it.** Raisebook never runs or pays for AI on its
+   own. Investor research runs only when you press a button, on your own OpenRouter key, and
+   sends only the investor's name, firm and links, your company profile and round terms.
+   Agents you connect use your key, and every action they take is on the timeline.
 5. **Leave any time.** Export everything as CSV and JSON. Delete your workspace or account
    permanently, effective immediately.
 6. **Check our work.** Raisebook is open source under AGPL-3.0, including the code that
@@ -1410,6 +1446,14 @@ Semantics:
 - **Email** (magic links, invites) goes through the configured SMTP provider. Only the
   recipient address and the message leave the system.
 - Sandbox workspaces work exactly like real ones, and can also be deleted.
+- **Research** (docs/RESEARCH-SPEC.md) is private to the workspace. Public facts
+  (`research_sources`, `investor_identities`, `dossier_facts`) are stored apart from private
+  analysis (`dossiers`, runs, suggestions). Only professional information is kept; phones and
+  addresses are stripped and private topics dropped, for model and agent dossiers alike.
+  Anyone can ask (Research Policy) for what research stored about them to be deleted in every
+  workspace; research about them is then refused. Founders' own contact rows stay.
+- The OpenRouter key is sealed with a server key (envelope encryption), never returned (last
+  4 characters only), redacted from logs, and deleted at once on "Remove key".
 
 ### 8.5 Sample data
 `POST /v1/workspaces {sample: true}` and `rbctl seed-demo --email` create a sandbox workspace

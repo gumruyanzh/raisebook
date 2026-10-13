@@ -1,6 +1,7 @@
 """Sample (sandbox) workspace with fictional data (SPEC §8.5). Owner: Import-Export+Ops (IE).
 
-"Kestrel Robotics (sample)" has a closed "Pre-seed" round (fully committed) and an open
+"Kestrel Robotics (sample)" has a company profile, three research dossiers by
+``claude-code``, a closed "Pre-seed" round (fully committed) and an open
 "Seed" round (target 2,000,000 USD, SAFE, cap 16,000,000, closing 8 weeks out) with 40
 investors across every stage, follow-ups (overdue, today, next week), three commitments,
 notes, stale conversations, and timelines mixing user, agent (``claude-code`` /
@@ -894,5 +895,143 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
                 actor=AGENT if i % 2 == 0 else me,
                 stages=seed_list,
             )
+    await _research(db, ws, people, seed_id=seed.id, now=now)
     await db.flush()
     return ws_row
+
+
+# --- research (RESEARCH-PLAN §10, Part 2): a profile and three agent-made dossiers ---------
+
+SAMPLE_PROFILE: dict[str, Any] = {
+    "pitch": "Kestrel builds autonomous forklifts for mid-size warehouses.",
+    "sectors": ["robotics", "logistics"],
+    "stage": "seed",
+    "location": "Oakland, CA",
+    "traction": ["3 paid pilots with regional 3PLs", "$40k MRR", "98.7% pick accuracy"],
+    "wants_lead": "lead",
+    "check_min": 500_000,
+    "check_max": 1_500_000,
+    "strategic_help": "Introductions to 3PL operators and warehouse-automation hiring.",
+}
+
+# (person index, verdict, days ago, deal, thesis)
+SAMPLE_DOSSIERS: tuple[tuple[int, str, int, str, str], ...] = (
+    (
+        0,
+        "strong",
+        6,
+        "Led the $3M seed of a fictional pallet-robotics startup",
+        "warehouse robotics",
+    ),
+    (1, "possible", 12, "Joined a $1.5M pre-seed in fleet software", "logistics software"),
+    (2, "strong", 40, "Led a $4M seed in industrial vision", "AI for manufacturing"),
+)
+
+
+def _sample_doc(p: Person, verdict: str, deal: str, thesis: str) -> dict[str, Any]:
+    assert p.firm is not None
+    site = f"https://{_slug(p.firm).replace('-', '')}.example.com"
+    slug = _slug(p.name)
+    return {
+        "identity": {
+            "name": p.name,
+            "firm": p.firm,
+            "title": p.title,
+            "linkedin_url": f"https://www.linkedin.com/in/example-{slug}",
+            "firm_website": site,
+        },
+        "sources": [
+            {"id": "s1", "url": f"{site}/team/{slug}", "title": f"{p.name}, {p.title}"},
+            {
+                "id": "s2",
+                "url": f"https://news.example/2026/{slug}-seed",
+                "title": f"{p.name} of {p.firm} backs a robotics seed",
+                "published_at": "2026-08-14",
+            },
+            {
+                "id": "s3",
+                "url": f"https://podcast.example/episodes/{slug}",
+                "title": f"{p.name} ({p.firm}) on {thesis}",
+            },
+        ],
+        "facts": [
+            {
+                "key": "f1",
+                "section": "profile",
+                "kind": "role",
+                "text": f"{p.title} at {p.firm}.",
+                "source_ids": ["s1"],
+            },
+            {
+                "key": "f2",
+                "section": "activity",
+                "kind": "deal",
+                "text": f"{deal}.",
+                "date": "2026-08-14",
+                "source_ids": ["s2"],
+            },
+            {
+                "key": "f3",
+                "section": "thesis",
+                "kind": "podcast",
+                "text": f"Talks about {thesis} and backing technical founders early.",
+                "source_ids": ["s3"],
+            },
+            {
+                "key": "f4",
+                "section": "fit",
+                "kind": "check_size",
+                "text": f"Writes checks of {p.check} at seed.",
+                "source_ids": ["s1"],
+            },
+        ],
+        "analysis": {
+            "brief": {
+                "verdict": verdict,
+                "why": f"Backs {thesis} at seed with checks that fit our round.",
+                "best_way_in": "Their recent portfolio founders, who know the space.",
+                "opener": "We automate the warehouses your last deal sells into.",
+                "risk": "May see an overlap with their recent deal.",
+                "fact_keys": ["f2", "f4"],
+            },
+            "fit": {
+                "stage": {"text": "Seed is a core stage.", "fact_keys": ["f4"]},
+                "sector": {"text": f"{thesis.capitalize()} overlaps ours.", "fact_keys": ["f3"]},
+            },
+            "ways_in": [
+                {
+                    "text": "Founders from their recent seed deal.",
+                    "basis": "public",
+                    "fact_keys": ["f2"],
+                }
+            ],
+            "talking_points": [{"text": "Lead with the 3PL pilots.", "fact_keys": ["f3"]}],
+        },
+    }
+
+
+async def _research(
+    db: AsyncSession, ws: WorkspaceContext, people: list[Investor], *, seed_id: Any, now: datetime
+) -> None:
+    """The sample's research, visible without an OpenRouter key: a company profile and three
+    dossiers "by claude-code" (fictional sources on ``*.example`` domains)."""
+    from dataclasses import replace
+
+    from raisebook.models.ai import CompanyProfile
+    from raisebook.services import research
+
+    db.add(
+        CompanyProfile(
+            workspace_id=ws.workspace_id, created_at=now, updated_at=now, **SAMPLE_PROFILE
+        )
+    )
+    agent_ws = replace(ws, actor=AGENT)
+    for i, verdict, days, deal, thesis in SAMPLE_DOSSIERS:
+        await research.save_agent_dossier(
+            db,
+            agent_ws,
+            people[i],
+            _sample_doc(PEOPLE[i], verdict, deal, thesis),
+            now=_work_hours(now - timedelta(days=days), i),
+            round_id=seed_id,
+        )

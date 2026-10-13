@@ -37,7 +37,9 @@ uv run rbctl --help    # workspace | apikey | seed-demo --email | housekeeping |
 ```
 Research needs `RAISEBOOK_SECRETS_KEK` (`uv run rbctl secrets gen-kek`); without it the app
 works and research reports `research_unavailable`. Never point dev at real OpenRouter money:
-`RAISEBOOK_OPENROUTER_BASE_URL` can target a local mock.
+run `uv run python scripts/mock_openrouter.py --port 8787` and set
+`RAISEBOOK_OPENROUTER_BASE_URL=http://localhost:8787/api/v1` for both uvicorn and the worker
+(its canned answers are about the sample's fictional Dana Whitfield).
 Sign in locally: run the API with `RAISEBOOK_ENV=dev`, request a link at `/signin`, and the
 "check your email" page shows the `dev_link`. `uv run rbctl seed-demo --email you@example.com`
 creates the fictional sandbox workspace "Kestrel Robotics (sample)".
@@ -216,3 +218,36 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   `worker.register(kind, handler, on_recover=…)` from a module listed in
   `worker.HANDLER_MODULES`, are idempotent per step and call `ctx.check_lease()` between steps.
   Jobs carry ids only, never secrets or investor fields.
+
+## Investor research, Part 2 pipeline (keep these)
+- Runs (`services/research.py`): `research.run` jobs carry the run id only; the handler acts as
+  the requester via `auth/principal.worker_context` (lost write access → `cancelled`), opens
+  the key only inside the run, and commits each step with its cost. Every OpenRouter call
+  reserves first (`spend.reserve_for_run`, ×1.5 of that call's budget) and settles
+  OpenRouter's `usage.cost` (priced from the snapshot and flagged `estimated` when missing).
+  A refused reservation ends the run `capped`; `failed`/`partial`/`capped` runs resume and
+  skip finished steps. One active run per investor and kind (double clicks return it).
+- Identity first (`services/research_identity.py`): confidence is recomputed in code;
+  ≥ 0.80 with a 0.15 margin → `matched`, else `needs_pick` (2-3 candidates) or `not_found`.
+  Dossier runs refuse (`identity_required`) or end `blocked_identity` until anchored. A
+  LinkedIn URL a person entered confirms without a model call.
+- One validator (`services/research_validate.py`) and one privacy filter
+  (`services/privacy_filter.py`) serve model and agent dossiers: sources must match the anchor
+  (LinkedIn profile, firm domain, name + firm, name + title), personal social sites never
+  count, facts cite accepted sources (uncited: model → `unverified`, agent → dropped and
+  listed), phones/addresses/consumer emails are stripped and private topics dropped.
+- Dossiers (`services/dossiers.py`): `dossiers` (private analysis) + `dossier_facts` (public
+  facts citing `research_sources` ids); last 5 versions; "new since" via strict + loose fact
+  keys; stale > 90 days and the Meeting refresh offer > 30 days are computed, never stored.
+- Write-back (`services/research_writeback.py`) fills only empty fields (an `auto_applied`
+  suggestion row is the "from research" mark) and suggests the rest; identity fills point at
+  their run (`field_suggestions.run_id`, migration 0004). Ignored values are never suggested
+  again; accept-all shares one `bulk_id`.
+- `save_dossier` (MCP) / `POST /v1/investors/{id}/dossier` need no key and cost nothing; the
+  dossier and its activity are "by <agent-name>". The writer never sees notes, emails,
+  amounts or timelines (prompts in `services/research_prompts.py`, hash-pinned by a test:
+  bump `PROMPT_VERSION` with any change).
+- Removal (`services/research_removal.py`) holds the only cross-workspace statements
+  (DELETE/UPDATE, counts only); suppressions refuse research for that person everywhere.
+- Tests: `tests/research/pipeline_mock.Script` scripts OpenRouter's answers;
+  `tests/research/helpers.run_jobs(db)` runs queued jobs in-process on the test session.

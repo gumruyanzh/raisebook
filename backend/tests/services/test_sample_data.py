@@ -147,3 +147,29 @@ async def test_sample_data_reads_like_a_real_raise(db: AsyncSession, frozen_now:
             first[a.investor_id] = a.occurred_at
     for inv in await db.scalars(select(Investor).where(Investor.workspace_id == ws.id)):
         assert inv.created_at <= first[inv.id], inv.name
+
+
+async def test_sample_research_is_visible_without_a_key(db: AsyncSession, frozen_now: Any) -> None:
+    """Three dossiers "by claude-code" on fictional *.example sources, and a company profile."""
+    from raisebook.models.ai import CompanyProfile
+    from raisebook.models.research import Dossier, DossierFacts, ResearchSource
+
+    user = await make_user(db)
+    ws = await create_sample_workspace(db, user=user, now=frozen_now)
+    dossiers = list(await db.scalars(select(Dossier).where(Dossier.workspace_id == ws.id)))
+    assert len(dossiers) == 3
+    assert {d.author_kind for d in dossiers} == {"agent"}
+    assert {d.author_label for d in dossiers} == {"claude-code"}
+    assert sorted(d.verdict for d in dossiers) == ["possible", "strong", "strong"]
+    facts = list(await db.scalars(select(DossierFacts).where(DossierFacts.workspace_id == ws.id)))
+    assert all(len(f.facts) == 4 for f in facts)
+    urls = list(
+        await db.scalars(
+            select(ResearchSource.url).where(
+                ResearchSource.workspace_id == ws.id, ResearchSource.accepted.is_(True)
+            )
+        )
+    )
+    assert len(urls) == 9 and all(".example" in u for u in urls)
+    profile = await db.scalar(select(CompanyProfile).where(CompanyProfile.workspace_id == ws.id))
+    assert profile is not None and profile.stage == "seed"
