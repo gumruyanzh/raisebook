@@ -6,7 +6,10 @@ import { useCallback, useMemo, useState } from "react";
 
 import {
   ActorName,
+  Button,
+  ButtonLink,
   DefList,
+  EmptyState,
   Ledger,
   ledgerFromSummary,
   SectionLabel,
@@ -23,6 +26,7 @@ import { cn } from "@/lib/cn";
 import { formatDate, money, num, plural, relativeTime } from "@/lib/format";
 import { useWorkspace } from "@/lib/session";
 
+import { AddInvestorDialog } from "./AddInvestorDialog";
 import { TodayQueue } from "./TodayQueue";
 
 function Panel({ title, aside, children, className }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
@@ -80,6 +84,7 @@ export function RoundOverview({
   const toast = useToast();
   const [summary, setSummary] = useState(initialSummary);
   const [feed, setFeed] = useState(activity);
+  const [adding, setAdding] = useState(false);
   const tz = workspace.timezone;
   const pipeline = `/w/${encodeURIComponent(workspace.slug)}/r/${encodeURIComponent(round.slug)}`;
   const cur = summary.money.currency;
@@ -143,7 +148,29 @@ export function RoundOverview({
         </ul>
       ) : null}
 
-      {closed ? null : (
+      {summary.counts.total === 0 && !closed ? (
+        <EmptyState
+          className="order-1 xl:order-none xl:col-span-12"
+          title={`No investors in ${round.name} yet`}
+          actions={
+            canWrite ? (
+              <>
+                <ButtonLink href={`/w/${encodeURIComponent(workspace.slug)}/import?round=${encodeURIComponent(round.slug)}`}>Import CSV</ButtonLink>
+                <Button variant="primary" onClick={() => setAdding(true)}>
+                  Add investor
+                </Button>
+                <ButtonLink variant="ghost" href={`/w/${encodeURIComponent(workspace.slug)}/settings/mcp`}>
+                  Connect an agent →
+                </ButtonLink>
+              </>
+            ) : null
+          }
+        >
+          Import a spreadsheet, add them one at a time, or ask your agent. Follow-ups line up here once they have dates.
+        </EmptyState>
+      ) : null}
+
+      {closed || summary.counts.total === 0 ? null : (
         <TodayQueue
               round={round}
               initial={followUps}
@@ -283,6 +310,17 @@ export function RoundOverview({
             )}
           </Panel>
       </aside>
+      {canWrite ? (
+        <AddInvestorDialog
+          open={adding}
+          onClose={() => setAdding(false)}
+          client={client}
+          wsSlug={workspace.slug}
+          round={round}
+          onAdded={(inv) => router.push(`${pipeline}?investor=${inv.id}`)}
+          onOpen={(id) => router.push(`${pipeline}?investor=${id}`)}
+        />
+      ) : null}
     </div>
   );
 }

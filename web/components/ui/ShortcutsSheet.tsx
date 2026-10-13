@@ -7,7 +7,7 @@ import { comboKeys, useHotkeyList } from "@/lib/hotkeys";
 import { Button } from "./Button";
 import { Dialog } from "./Dialog";
 
-const GROUP_ORDER = ["General", "Navigation", "Pipeline", "Investor", "Today", "Table", "Board"];
+const GROUP_ORDER = ["General", "Navigation", "Pipeline", "Investor file", "Investor", "Today", "Table", "Board", "Import"];
 
 function Caps({ combo }: { combo: string }) {
   return (
