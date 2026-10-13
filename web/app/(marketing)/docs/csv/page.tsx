@@ -51,6 +51,7 @@ const ROUND_FIELDS: [string, string, string][] = [
   ["probability", "probability, likelihood, %", "0 to 100."],
   ["next_step", "next step, next action, todo", ""],
   ["owner_email", "owner, owner email, assigned to", "Must be a member's email; otherwise ignored with a warning."],
+  ["last_contacted", "last contacted, last contact, last touch, contacted on", "A date. Becomes a dated note on the timeline."],
 ];
 
 const EXAMPLE = `Full name,Fund,E-mail,Type,Cheque size,Industry,Met at,Status,Priority,Follow up
@@ -157,9 +158,22 @@ export default function CsvFormat() {
           ["create", "No match. A new contact is created."],
           ["update", "A match, and the option you chose would change something."],
           ["skip", "A match and nothing to change."],
-          ["error", "No name, an invalid email, or a value out of range. The row is left out and listed with the reason."],
+          ["error", "No name, or a row that cannot be read at all. The row is left out and listed with the reason."],
         ]}
       />
+      <P>
+        A bad optional cell never costs you the row. An unreadable date, an invalid email or
+        link, a fit or probability out of range, an amount that is not a number, or a minimum
+        check above the maximum is left empty, and the row imports with a warning that names
+        the cell (&ldquo;follow-up left empty: &lsquo;next week&rsquo; is not a date&rdquo;). The review counts
+        them, and you can download the rows with problems as a CSV to fix them later.
+      </P>
+      <P>
+        Your own pipeline words work too. When a stage or fit column has values Raisebook does
+        not know (&ldquo;Intro requested&rdquo;, &ldquo;Meeting booked&rdquo;), the review lists each one with a suggested
+        stage you can change. Without a type column, the type is guessed from the title or firm
+        (&ldquo;Angel&rdquo;, &ldquo;… Ventures&rdquo;, &ldquo;… Capital&rdquo;), and the row says so.
+      </P>
       <P>
         The import itself runs in one transaction. Every created or changed investor gets a
         timeline entry marked as an import, under your name or your agent&apos;s.

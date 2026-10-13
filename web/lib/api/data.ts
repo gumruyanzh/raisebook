@@ -40,7 +40,8 @@ export type ImportField =
   | "amount_committed"
   | "probability"
   | "next_step"
-  | "owner_email";
+  | "owner_email"
+  | "last_contacted";
 
 /** Contact fields, in picker order (labels match backend `csv_io.FIELD_LABELS`). */
 export const CONTACT_FIELDS: ReadonlyArray<[ImportField, string]> = [
@@ -77,6 +78,7 @@ export const ROUND_FIELDS: ReadonlyArray<[ImportField, string]> = [
   ["probability", "Probability %"],
   ["next_step", "Next step"],
   ["owner_email", "Owner email"],
+  ["last_contacted", "Last contacted (dated note)"],
 ];
 
 export const ROUND_FIELD_SET: ReadonlySet<string> = new Set(ROUND_FIELDS.map(([f]) => f));
@@ -97,6 +99,26 @@ export interface ImportRequest {
   on_duplicate?: OnDuplicate;
   source?: string | null;
   round_map?: RoundMapEntry[] | null;
+  /** Cell text → Raisebook value, per field: {stage: {"Intro requested": "contacted"}}. */
+  value_map?: Record<string, Record<string, string>> | null;
+}
+
+/** Per CSV column: empty cells, and cells that could not be read (left empty). */
+export interface ColumnStats {
+  empty: number;
+  unreadable: number;
+}
+
+/** A distinct value of a stage or fit column, and what it becomes. */
+export interface ValueCount {
+  value: string;
+  count: number;
+  /** Stage key it matches, if any. */
+  stage?: string | null;
+  /** A likely stage key when it matches none. */
+  suggestion?: string | null;
+  /** Fit columns: the 0-5 it reads as. */
+  fit?: number | null;
 }
 
 export interface ImportRowParticipant {
@@ -140,6 +162,9 @@ export interface ImportPreview {
   warnings: string[];
   /** Dropped cells by kind: {"follow_up_unreadable": 74, "email_invalid": 3}. */
   warning_kinds?: Record<string, number>;
+  column_stats?: Record<string, ColumnStats>;
+  /** Distinct values of the columns mapped to stage or fit (CSV with a round). */
+  values?: Record<string, ValueCount[]>;
   samples: Record<string, string[]>;
 }
 
@@ -276,4 +301,45 @@ export const WARNING_KIND_LABEL: Record<string, [string, string]> = {
   probability_invalid: ["probability was out of range", "probabilities were out of range"],
   amount_unreadable: ["amount was unreadable", "amounts were unreadable"],
   value_invalid: ["value was not accepted", "values were not accepted"],
+  date_unreadable: ["last-contacted date was unreadable", "last-contacted dates were unreadable"],
+  type_guessed: ["type was guessed from the title or firm", "types were guessed from the title or firm"],
 };
+
+/** Kinds that leave a cell empty (type_guessed fills one instead). */
+export const LEFT_EMPTY_KINDS = new Set(Object.keys(WARNING_KIND_LABEL).filter((k) => k !== "type_guessed"));
+
+/** Logical CSV rows (quotes may hold newlines), without the header; trailing blank lines ignored. */
+export function csvShape(text: string): { rows: number; columns: number } {
+  const t = text.replace(/^\uFEFF/, "");
+  let rows = 0;
+  let inQuote = false;
+  let lineHasData = false;
+  let first = "";
+  let firstDone = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i]!;
+    if (!firstDone) first += ch;
+    if (ch === '"') inQuote = !inQuote;
+    else if ((ch === "\n" || ch === "\r") && !inQuote) {
+      if (ch === "\r" && t[i + 1] === "\n") i++;
+      if (lineHasData) rows++;
+      lineHasData = false;
+      firstDone = true;
+      continue;
+    }
+    if (ch.trim()) lineHasData = true;
+  }
+  if (lineHasData) rows++;
+  const header = first.replace(/[\r\n]+$/, "");
+  const delim = [",", ";", "\t"].reduce((best, d) => (header.split(d).length > header.split(best).length ? d : best), ",");
+  let columns = 0;
+  if (header.trim()) {
+    let q = false;
+    columns = 1;
+    for (const ch of header) {
+      if (ch === '"') q = !q;
+      else if (ch === delim && !q) columns++;
+    }
+  }
+  return { rows: Math.max(0, rows - 1), columns };
+}
