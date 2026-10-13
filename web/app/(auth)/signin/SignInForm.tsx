@@ -32,6 +32,48 @@ export function readPending(): PendingSignIn | null {
   }
 }
 
+/**
+ * The address this device asked a link for, so the verify page can show it in full here
+ * (other devices only see the masked hint). localStorage, because the emailed link opens in a
+ * new tab; it expires with the link (15 minutes) and is cleared on sign-in.
+ */
+const REQUESTED_KEY = "rb-signin-requested";
+const REQUESTED_TTL_MS = 15 * 60 * 1000;
+
+export function rememberRequestedEmail(email: string): void {
+  try {
+    localStorage.setItem(REQUESTED_KEY, JSON.stringify({ email, at: Date.now() }));
+  } catch {
+    /* storage unavailable: the verify page shows the masked hint */
+  }
+}
+
+/** The email this device requested, if it matches `hint` (`j***@example.com`) and is fresh. */
+export function requestedEmailFor(hint: string | null): string | null {
+  if (!hint) return null;
+  try {
+    const raw = localStorage.getItem(REQUESTED_KEY);
+    if (!raw) return null;
+    const { email, at } = JSON.parse(raw) as { email?: string; at?: number };
+    if (!email || !at || Date.now() - at > REQUESTED_TTL_MS) return null;
+    const [hl, hd] = hint.toLowerCase().split("@");
+    const [el, ed] = email.toLowerCase().split("@");
+    if (!hl || !el || hd !== ed) return null;
+    const visible = hl.replace(/\*+$/, "");
+    return el.startsWith(visible) ? email : null;
+  } catch {
+    return null;
+  }
+}
+
+export function forgetRequestedEmail(): void {
+  try {
+    localStorage.removeItem(REQUESTED_KEY);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
 /** Email field + "Email me a sign-in link" (SYSTEM §4.12). */
 export function SignInForm({
   next,
@@ -64,6 +106,7 @@ export function SignInForm({
     try {
       const res = await requestMagicLink(api, request);
       savePending({ request, devLink: res.dev_link ?? null });
+      rememberRequestedEmail(value);
       router.push(`/signin/check?email=${encodeURIComponent(value)}`);
     } catch (err) {
       setError({

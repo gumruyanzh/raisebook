@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { Button } from "@/components/ui";
 import { ApiError, api, errorMessage, setCsrfToken } from "@/lib/api/client";
 import { peekMagicLink, verifyMagicLink } from "@/lib/api/core";
+
+import { forgetRequestedEmail, requestedEmailFor } from "../../signin/SignInForm";
 
 type State =
   | { kind: "checking" }
@@ -43,6 +45,7 @@ const USED: State = {
 export function Verify({ token }: { token: string | null }) {
   const router = useRouter();
   const [state, setState] = useState<State>(token ? { kind: "checking" } : INCOMPLETE);
+  const continueRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -50,7 +53,9 @@ export function Verify({ token }: { token: string | null }) {
     peekMagicLink(api, token)
       .then((p) => {
         if (!live) return;
-        setState(p.valid ? { kind: "ready", emailHint: p.email_hint ?? null } : USED);
+        // On the device that asked for the link, show the whole address instead of the hint.
+        const hint = p.email_hint ?? null;
+        setState(p.valid ? { kind: "ready", emailHint: requestedEmailFor(hint) ?? hint } : USED);
       })
       .catch(() => {
         // The peek is only a courtesy: fall back to a plain Continue.
@@ -68,6 +73,7 @@ export function Verify({ token }: { token: string | null }) {
       try {
         const res = await verifyMagicLink(api, token, switchAccount);
         setCsrfToken(res.csrf_token);
+        forgetRequestedEmail();
         setState({ kind: "done" });
         const target =
           safePath(res.redirect_path) ?? (res.workspaces.length ? "/app" : "/onboarding");
@@ -146,6 +152,31 @@ export function Verify({ token }: { token: string | null }) {
 
   const hint = state.kind === "ready" || state.kind === "working" ? state.emailHint : null;
   return (
+    <VerifyReady
+      state={state}
+      hint={hint}
+      continueRef={continueRef}
+      onContinue={() => void run()}
+    />
+  );
+}
+
+/** "Continue as …": Continue takes focus as soon as the link checks out, so Enter signs in. */
+function VerifyReady({
+  state,
+  hint,
+  continueRef,
+  onContinue,
+}: {
+  state: State;
+  hint: string | null;
+  continueRef: RefObject<HTMLButtonElement | null>;
+  onContinue: () => void;
+}) {
+  useEffect(() => {
+    if (state.kind === "ready") continueRef.current?.focus();
+  }, [state.kind, continueRef]);
+  return (
     <div className="flex flex-col gap-14">
       <h1 className="t-display-s">
         {state.kind === "done" ? "Signed in" : "Sign in to Raisebook"}
@@ -163,10 +194,16 @@ export function Verify({ token }: { token: string | null }) {
           "Press Continue to finish signing in."
         )}
       </p>
+      {state.kind === "ready" || state.kind === "working" || state.kind === "checking" ? (
+        <p className="t-body-s text-muted">
+          One click keeps the link safe: email scanners open links too, and they can&apos;t press a button.
+        </p>
+      ) : null}
       <Button
+        ref={continueRef}
         variant="primary"
         className="self-start"
-        onClick={() => void run()}
+        onClick={onContinue}
         busy={state.kind === "working" ? "Signing in…" : false}
         disabled={state.kind === "done" || state.kind === "checking"}
       >
