@@ -1,7 +1,7 @@
 import { SettingsNav } from "@/components/app/settings/SettingsNav";
 import { PageHeader } from "@/components/ui";
 
-/** Settings frame (SYSTEM §4.9): page title, sub-nav (General · Members · API keys · Connect an agent · Data). */
+/** Settings frame (SYSTEM §4.9): page title, sub-nav (General · Members · API keys · Connect an agent · AI research · Company profile · Data). */
 export default async function SettingsLayout({
   params,
   children,

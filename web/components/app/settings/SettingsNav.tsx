@@ -11,6 +11,8 @@ const ITEMS = [
   { key: "/members", label: "Members" },
   { key: "/api-keys", label: "API keys" },
   { key: "/mcp", label: "Connect an agent" },
+  { key: "/ai", label: "AI research" },
+  { key: "/company", label: "Company profile" },
   { key: "/data", label: "Data" },
 ];
 

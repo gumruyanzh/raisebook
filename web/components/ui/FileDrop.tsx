@@ -8,18 +8,22 @@ import { Button } from "./Button";
 
 /**
  * Dashed drop zone (SYSTEM 3.30): "Drop a CSV here, or paste below" + "Choose file". Reads the
- * file client-side as text (≤ 5 MB by default) and hands it to `onText`; nothing is uploaded
- * until the user confirms elsewhere.
+ * file client-side as text (≤ 5 MB by default) and hands it to `onText`, or hands a binary
+ * file (a deck PDF) to `onFile` unread; nothing is uploaded until the user confirms elsewhere.
  */
 export function FileDrop({
   onText,
+  onFile,
   accept = ".csv,.tsv,.txt,.json,text/csv,application/json",
   maxBytes = 5 * 1024 * 1024,
   prompt = "Drop a CSV here, or paste below",
   className,
   disabled,
 }: {
-  onText: (text: string, file: { name: string; size: number }) => void;
+  /** Text files (CSV, JSON): read in the browser. */
+  onText?: (text: string, file: { name: string; size: number }) => void;
+  /** Binary files (a PDF deck): handed over as they are, nothing is read here. */
+  onFile?: (file: File) => void;
   accept?: string;
   maxBytes?: number;
   prompt?: string;
@@ -36,13 +40,22 @@ export function FileDrop({
     if (!file) return;
     setError(null);
     if (file.size > maxBytes) {
-      setError(`${file.name} is ${(file.size / 1048576).toFixed(1)} MB. The limit is ${Math.round(maxBytes / 1048576)} MB; split the file and import it in parts.`);
+      setError(
+        onFile
+          ? `${file.name} is ${(file.size / 1048576).toFixed(1)} MB. The limit is ${Math.round(maxBytes / 1048576)} MB.`
+          : `${file.name} is ${(file.size / 1048576).toFixed(1)} MB. The limit is ${Math.round(maxBytes / 1048576)} MB; split the file and import it in parts.`,
+      );
+      return;
+    }
+    if (onFile) {
+      setName(file.name);
+      onFile(file);
       return;
     }
     try {
       const text = await file.text();
       setName(file.name);
-      onText(text, { name: file.name, size: file.size });
+      onText?.(text, { name: file.name, size: file.size });
     } catch {
       setError(`Could not read ${file.name}. Save it as UTF-8 CSV and try again.`);
     }
