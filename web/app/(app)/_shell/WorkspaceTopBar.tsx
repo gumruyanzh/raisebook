@@ -5,6 +5,7 @@ import { useCallback, useRef, useState } from "react";
 
 import { NameDialog, useNamePrompt } from "@/components/app/NamePrompt";
 import { NewRoundDialog } from "@/components/app/settings/NewRoundDialog";
+import { NewWorkspaceDialog } from "@/components/app/settings/NewWorkspaceDialog";
 import { TopBar, useToast } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api/client";
 import { createWorkspace, signOut } from "@/lib/api/core";
@@ -30,6 +31,7 @@ export function WorkspaceTopBar() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [nameOpen, setNameOpen] = useState(false);
   const [newRound, setNewRound] = useState(false);
+  const [newWorkspace, setNewWorkspace] = useState(false);
   const [due, setDue] = useState<Record<string, number>>({});
   const dueLoaded = useRef(0);
 
@@ -132,6 +134,7 @@ export function WorkspaceTopBar() {
           loadDue();
         }}
         newWorkspaceHref="/onboarding"
+        onNewWorkspace={() => setNewWorkspace(true)}
         allWorkspacesHref="/app"
         onOpenSample={onOpenSample}
         accountHref="/account"
@@ -148,6 +151,7 @@ export function WorkspaceTopBar() {
         setShortcutsOpen={setShortcutsOpen}
       />
       <NameDialog open={nameOpen} onClose={() => setNameOpen(false)} />
+      <NewWorkspaceDialog open={newWorkspace} onClose={() => setNewWorkspace(false)} />
       {ws && wsCtx && canWrite ? (
         <NewRoundDialog
           open={newRound}
