@@ -172,129 +172,133 @@ export function TopBar(p: TopBarProps) {
     ) : null;
 
   return (
-    <header className={cn("sticky top-0 z-30 border-b border-line bg-canvas", p.className)}>
-      <div className="gutter mx-auto flex h-56 max-w-app items-center gap-10 sm:gap-14">
-        <Wordmark href={p.homeHref} className="shrink-0" />
-        <span
-          className="min-w-0 shrink"
-          onPointerDownCapture={() => p.onWorkspaceMenu?.()}
-          onKeyDownCapture={(e) => {
-            if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") p.onWorkspaceMenu?.();
-          }}
-        >
-          <Menu
-            label="Workspaces"
-            items={wsItems}
-            minWidth={260}
-            className="min-w-0 max-w-full"
-            trigger={
-              <>
-                <span className="max-w-[160px] truncate" title={ws ? ws.name : undefined}>
-                  {ws ? ws.name : "Workspaces"}
-                </span>
-                <span aria-hidden className="text-muted">
-                  ▾
-                </span>
-              </>
-            }
-            triggerClassName="inline-flex h-32 min-w-0 max-w-full items-center gap-6 rounded-sm border border-transparent bg-transparent px-8 font-medium hover:border-line"
-          />
-        </span>
-        {modeChips ? <span className="hidden shrink-0 gap-6 sm:inline-flex">{modeChips}</span> : null}
-
-        {pickerProps ? (
-          <RoundPicker {...pickerProps} collapse="auto" className="hidden lg:flex" />
-        ) : (
-          <span className="hidden flex-1 lg:block" />
-        )}
-
-        <div className="ml-auto flex shrink-0 items-center gap-14 2xl:gap-18">
-          {nav.length ? (
-            <nav aria-label="Workspace" className="hidden items-center gap-14 lg:flex 2xl:gap-18">
-              {nav.map((n) => {
-                const on = n.key === p.activeNav;
-                return (
-                  <Link
-                    key={n.key}
-                    href={n.href}
-                    aria-current={on ? "page" : undefined}
-                    title={n.kbd ? `${n.label} (${comboLabel(n.kbd)})` : undefined}
-                    className={cn(NAV_LINK, on ? "text-fg" : "text-muted hover:text-fg")}
-                  >
-                    {n.label}
-                    {on ? <span aria-hidden className="absolute inset-x-0 bottom-0 h-2 bg-accent" /> : null}
-                  </Link>
-                );
-              })}
-            </nav>
-          ) : null}
-          {nav.length ? (
+    <>
+      <header className={cn("sticky top-0 z-30 border-b border-line bg-canvas", p.className)}>
+        <div className="gutter mx-auto flex h-56 max-w-app items-center gap-10 sm:gap-14">
+          <Wordmark href={p.homeHref} className="shrink-0" />
+          <span
+            className="min-w-0 shrink"
+            onPointerDownCapture={() => p.onWorkspaceMenu?.()}
+            onKeyDownCapture={(e) => {
+              if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") p.onWorkspaceMenu?.();
+            }}
+          >
             <Menu
-              label="Navigation"
-              align="end"
-              className="lg:hidden"
-              trigger="Menu"
-              triggerClassName="inline-flex h-32 items-center rounded-sm border border-line bg-surface px-10 font-medium"
-              items={[
-                ...nav.map(
-                  (n): MenuEntry => ({
-                    label: n.label,
-                    href: n.href,
-                    selected: n.key === p.activeNav,
-                    hint: n.kbd ? <span className="[@media(pointer:coarse)]:hidden">{comboLabel(n.kbd)}</span> : undefined,
-                  }),
-                ),
-                ...(p.onOpenPalette
-                  ? [
-                      { type: "separator" } as MenuEntry,
-                      { label: "Search…", textValue: "Search", onSelect: p.onOpenPalette, hint: comboLabel("mod+k") } as MenuEntry,
-                    ]
-                  : []),
-              ]}
+              label="Workspaces"
+              items={wsItems}
+              minWidth={260}
+              className="min-w-0 max-w-full"
+              trigger={
+                <>
+                  <span className="max-w-[160px] truncate" title={ws ? ws.name : undefined}>
+                    {ws ? ws.name : "Workspaces"}
+                  </span>
+                  <span aria-hidden className="text-muted">
+                    ▾
+                  </span>
+                </>
+              }
+              triggerClassName="inline-flex h-32 min-w-0 max-w-full items-center gap-6 rounded-sm border border-transparent bg-transparent px-8 font-medium hover:border-line"
             />
-          ) : null}
-          {p.onOpenPalette ? (
-            <button
-              type="button"
-              onClick={p.onOpenPalette}
-              aria-label="Search and commands"
-              aria-keyshortcuts="Meta+K Control+K"
-              className="hidden h-32 items-center gap-8 rounded-sm border border-line bg-surface px-8 text-muted transition-colors duration-[120ms] hover:border-muted hover:text-fg sm:inline-flex"
-            >
-              {/* Never a bare "⌘K": a glass always, the word from 1024px (critique 2). */}
-              <svg aria-hidden viewBox="0 0 16 16" className="size-14 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.6">
-                <circle cx="7" cy="7" r="4.5" />
-                <path d="m10.5 10.5 3.5 3.5" strokeLinecap="round" />
-              </svg>
-              <span className="hidden xl:[@media(pointer:fine)]:inline">Search</span>
-              <kbd className="inline-flex h-18 items-center rounded-kbd border border-line px-4 font-mono text-xs leading-none text-muted [@media(pointer:coarse)]:hidden">
-                {comboLabel("mod+k")}
-              </kbd>
-              <span className="[@media(pointer:fine)]:hidden">Search</span>
-            </button>
-          ) : null}
-          <Menu
-            label="Account"
-            align="end"
-            items={accountItems}
-            minWidth={220}
-            trigger={
-              <span
-                aria-label={`Account: ${userName}${p.onEditName ? " (add your name)" : ""}`}
-                className="relative inline-flex size-28 items-center justify-center rounded-pill bg-sunk font-mono text-xs font-medium text-fg"
+          </span>
+          {modeChips ? <span className="hidden shrink-0 gap-6 sm:inline-flex">{modeChips}</span> : null}
+
+          {pickerProps ? (
+            <RoundPicker {...pickerProps} collapse="auto" className="hidden lg:flex" />
+          ) : (
+            <span className="hidden flex-1 lg:block" />
+          )}
+
+          <div className="ml-auto flex shrink-0 items-center gap-14 2xl:gap-18">
+            {nav.length ? (
+              <nav aria-label="Workspace" className="hidden items-center gap-14 lg:flex 2xl:gap-18">
+                {nav.map((n) => {
+                  const on = n.key === p.activeNav;
+                  return (
+                    <Link
+                      key={n.key}
+                      href={n.href}
+                      aria-current={on ? "page" : undefined}
+                      title={n.kbd ? `${n.label} (${comboLabel(n.kbd)})` : undefined}
+                      className={cn(NAV_LINK, on ? "text-fg" : "text-muted hover:text-fg")}
+                    >
+                      {n.label}
+                      {on ? <span aria-hidden className="absolute inset-x-0 bottom-0 h-2 bg-accent" /> : null}
+                    </Link>
+                  );
+                })}
+              </nav>
+            ) : null}
+            {nav.length ? (
+              <Menu
+                label="Navigation"
+                align="end"
+                className="lg:hidden"
+                trigger="Menu"
+                triggerClassName="inline-flex h-32 items-center rounded-sm border border-line bg-surface px-10 font-medium"
+                items={[
+                  ...nav.map(
+                    (n): MenuEntry => ({
+                      label: n.label,
+                      href: n.href,
+                      selected: n.key === p.activeNav,
+                      hint: n.kbd ? <span className="[@media(pointer:coarse)]:hidden">{comboLabel(n.kbd)}</span> : undefined,
+                    }),
+                  ),
+                  ...(p.onOpenPalette
+                    ? [
+                        { type: "separator" } as MenuEntry,
+                        { label: "Search…", textValue: "Search", onSelect: p.onOpenPalette, hint: comboLabel("mod+k") } as MenuEntry,
+                      ]
+                    : []),
+                ]}
+              />
+            ) : null}
+            {p.onOpenPalette ? (
+              <button
+                type="button"
+                onClick={p.onOpenPalette}
+                aria-label="Search and commands"
+                aria-keyshortcuts="Meta+K Control+K"
+                className="hidden h-32 items-center gap-8 rounded-sm border border-line bg-surface px-8 text-muted transition-colors duration-[120ms] hover:border-muted hover:text-fg sm:inline-flex"
               >
-                {initials(userName)}
-                {p.onEditName ? (
-                  <span aria-hidden className="absolute -top-1 -right-1 size-9 rounded-pill border-2 border-canvas bg-accent" />
-                ) : null}
-              </span>
-            }
-            triggerClassName="rounded-pill border-0 bg-transparent p-0"
-          />
+                {/* Never a bare "⌘K": a glass always, the word from 1024px (critique 2). */}
+                <svg aria-hidden viewBox="0 0 16 16" className="size-14 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <circle cx="7" cy="7" r="4.5" />
+                  <path d="m10.5 10.5 3.5 3.5" strokeLinecap="round" />
+                </svg>
+                <span className="hidden xl:[@media(pointer:fine)]:inline">Search</span>
+                <kbd className="inline-flex h-18 items-center rounded-kbd border border-line px-4 font-mono text-xs leading-none text-muted [@media(pointer:coarse)]:hidden">
+                  {comboLabel("mod+k")}
+                </kbd>
+                <span className="[@media(pointer:fine)]:hidden">Search</span>
+              </button>
+            ) : null}
+            <Menu
+              label="Account"
+              align="end"
+              items={accountItems}
+              minWidth={220}
+              trigger={
+                <span
+                  aria-label={`Account: ${userName}${p.onEditName ? " (add your name)" : ""}`}
+                  className="relative inline-flex size-28 items-center justify-center rounded-pill bg-sunk font-mono text-xs font-medium text-fg"
+                >
+                  {initials(userName)}
+                  {p.onEditName ? (
+                    <span aria-hidden className="absolute -top-1 -right-1 size-9 rounded-pill border-2 border-canvas bg-accent" />
+                  ) : null}
+                </span>
+              }
+              triggerClassName="rounded-pill border-0 bg-transparent p-0"
+            />
+          </div>
         </div>
-      </div>
+      </header>
+      {/* Phones and tablets: the round picker is a second row that scrolls away, so only one
+          chrome row stays on top of a long list (critique 3). */}
       {pickerProps || modeChips ? (
-        <div className="gutter flex items-center gap-8 pb-8 lg:hidden">
+        <div className="gutter flex items-center gap-8 border-b border-line bg-canvas py-8 lg:hidden">
           {modeChips ? <span className="flex shrink-0 gap-6 sm:hidden">{modeChips}</span> : null}
           {pickerProps ? (
             <div className="min-w-0 overflow-x-auto scrollbar-none">
@@ -303,7 +307,7 @@ export function TopBar(p: TopBarProps) {
           ) : null}
         </div>
       ) : null}
-    </header>
+    </>
   );
 }
 

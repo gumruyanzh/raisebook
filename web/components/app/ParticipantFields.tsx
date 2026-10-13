@@ -273,7 +273,7 @@ export function ParticipantFields({
               <Input
                 value={next}
                 maxLength={500}
-                placeholder={ro ? "" : "e.g. Send the updated deck"}
+                placeholder={ro ? "" : "e.g. Ask Harper for an intro"}
                 disabled={ro}
                 title={roTitle}
                 onChange={(e) => setNext(e.target.value)}

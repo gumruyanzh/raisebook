@@ -168,3 +168,9 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   drafted; no preselected focus. The sheet is a split pane in every view, puts Contact and Facts
   first for open-kind stages and folds Money; imports show once (`collapseImportRuns`). Solo
   workspaces get no owner UI. `useHotkey({ listOnly })` lists keys a component handles itself.
+- Critique 3 (`DECISION.md` §12): Triage has no rail and one population for every count
+  (skipped ones are still New); the pace uses only real single-decision gaps (`paceEstimate`)
+  and desktop Triage reports changes in the decision panel, not toasts. The open file follows
+  the queue. Pips only in not-contacted stages (`hiddenPipFit`); fit-sorted not-contacted
+  columns of 12+ are grouped. Add investor lives in the title row in every view. Long dialogs
+  use `Dialog scrollBody`; the Filter menu never scrolls an ancestor.

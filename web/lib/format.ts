@@ -240,13 +240,14 @@ export function followUpLabel(on: string, state: FollowUpState, today?: string):
 }
 
 /**
- * Follow-up date for tables, never color alone (SYSTEM §5): "Today", "Oct 6 · 4d late",
+ * Follow-up date for tables, never color alone (SYSTEM §5): "Today", "Overdue 4d",
  * or the date.
  */
 export function followUpCellText(on: string, today: string): string {
   const late = daysBetween(on, today);
   if (late === 0) return "Today";
-  if (late > 0) return `${formatDate(on, today)} · ${late}d late`;
+  // The same words as cards, the ledger and the phone list (critique 3); the date is in `title`.
+  if (late > 0) return `Overdue ${late}d`;
   return formatDate(on, today);
 }
 

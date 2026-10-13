@@ -340,8 +340,6 @@ export function Pipeline(props: PipelineProps) {
   const stageFilter = get("stage");
   const kindFilter = get("kind");
   const openId = params.get("investor");
-  const sortCol = (TABLE_COLS.some((c) => c.key === get("sort")) ? get("sort") : "fit") as TableCol;
-  const sortDir = (get("order") === "asc" || get("order") === "desc" ? get("order") : DEFAULT_DIR[sortCol]) as SortDir;
 
   const setParams = useCallback((patch: Record<string, string | null>) => {
     const sp = new URLSearchParams(window.location.search);
@@ -360,6 +358,11 @@ export function Pipeline(props: PipelineProps) {
   const stageN = useMemo(() => countByStage(participants), [participants]);
   const openCount = oStage ? (stageN[oStage.key] ?? 0) : 0;
   const dominantKey = useMemo(() => dominantStage(stageN, participants.length), [stageN, participants.length]);
+  // The table's default order: fit while New holds most of the round (who to look at first),
+  // else follow-up, overdue first (who needs you now; critique 3).
+  const defaultSort: TableCol = oStage && dominantKey === oStage.key ? "fit" : "follow_up";
+  const sortCol = (TABLE_COLS.some((c) => c.key === get("sort")) ? get("sort") : defaultSort) as TableCol;
+  const sortDir = (get("order") === "asc" || get("order") === "desc" ? get("order") : DEFAULT_DIR[sortCol]) as SortDir;
   // undefined until this browser's choice is read (before paint), so the auto rule never flashes.
   const [storedView, setStoredView] = useState<string | null | undefined>(undefined);
   useLayoutEffect(() => setStoredView(readStore(VIEW_KEY(workspace.slug, round.id))), [workspace.slug, round.id]);
@@ -748,15 +751,17 @@ export function Pipeline(props: PipelineProps) {
     setSaved(next);
     writeStore(VIEWS_KEY, JSON.stringify(next));
   };
+  // Built-in views that can say something here (critique 3): "Due now" once any follow-up
+  // exists, "My investors" once someone else could own investors. No "Hot": the fit groups
+  // and the Filter menu already do that.
+  const anyFollowUp = counts.none < participants.length;
   const builtins: SavedView[] = useMemo(
     () => [
       { id: "all", name: "All", query: "", builtin: true },
-      { id: "due", name: "Due now", query: "follow=due", builtin: true },
-      // "My investors" means something once there is someone else to own investors.
+      ...(anyFollowUp ? [{ id: "due", name: "Due now", query: "follow=due", builtin: true }] : []),
       ...(me && props.members.length > 1 ? [{ id: "mine", name: "My investors", query: `owner=${me.user_id}`, builtin: true }] : []),
-      { id: "hot", name: "Hot", query: "prio=hot", builtin: true },
     ],
-    [me, props.members.length],
+    [me, props.members.length, anyFollowUp],
   );
   const allViews = useMemo(() => [...builtins, ...saved], [builtins, saved]);
   const currentQuery = (keys: readonly string[]) => normQuery(params, keys);
@@ -1286,6 +1291,7 @@ export function Pipeline(props: PipelineProps) {
     };
   }, [empty, view, phone, splitOpen]);
 
+  const anyNextStep = useMemo(() => participants.some((p) => p.next_step), [participants]);
   const viewOptions: MenuEntry[] =
     view === "table"
       ? [
@@ -1422,7 +1428,8 @@ export function Pipeline(props: PipelineProps) {
             onOpen={openInvestor}
             onStartTriage={() => startTriage()}
             onFilters={() => setFiltersOpen(true)}
-            activeFilters={activeFilters}
+            // The stage pills are not filters to count (critique 3: "Filter 1" after a pill).
+            activeFilters={activeFilters - (stageFilter ? 1 : 0)}
             search={qText}
             onSearch={onSearch}
             base={base}
@@ -1440,8 +1447,17 @@ export function Pipeline(props: PipelineProps) {
             aside={
               <>
                 {setupNode}
-                {view === "triage" && canWrite ? (
-                  <Button size="sm" onClick={() => setAdding(true)} kbd="C" aria-keyshortcuts="C" className="shrink-0">
+                {/* One place in every view (critique 3): the title row's right-aligned group. */}
+                {canWrite && !empty ? (
+                  <Button
+                    size="sm"
+                    variant={view === "triage" || startTriageOnScreen ? "secondary" : "primary"}
+                    onClick={() => setAdding(true)}
+                    title="Add investor (C)"
+                    kbd="C"
+                    aria-keyshortcuts="C"
+                    className="shrink-0"
+                  >
                     Add investor
                   </Button>
                 ) : null}
@@ -1456,7 +1472,7 @@ export function Pipeline(props: PipelineProps) {
                   : `${num(openCount)} of ${num(participants.length)} are ${oStage?.label ?? "New"}, so the round opens in Triage.`}
               </span>
             ) : null}
-            {!empty && view !== "triage" ? (
+            {!empty && view !== "triage" && (allViews.length > 1 || activeFilters > 0 || Boolean(q)) ? (
               <ViewTabs
                 views={allViews}
                 activeId={activeView?.id ?? null}
@@ -1535,30 +1551,33 @@ export function Pipeline(props: PipelineProps) {
                     return true;
                   }}
                 />
-                <Menu
-                  label="Display options"
-                  align="end"
-                  trigger="Display"
-                  triggerClassName="inline-flex h-32 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-fg hover:border-muted"
-                  items={viewOptions}
-                />
+                {view === "table" ? (
+                  <Menu
+                    label="Display options"
+                    align="end"
+                    trigger="Display"
+                    triggerClassName="inline-flex h-32 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-fg hover:border-muted"
+                    items={viewOptions}
+                  />
+                ) : anyNextStep ? (
+                  // The board has one display option: a toggle, not a menu of one (critique 3).
+                  <button
+                    type="button"
+                    aria-pressed={showStep}
+                    onClick={toggleStep}
+                    className={cn(
+                      "inline-flex h-32 items-center gap-6 rounded-sm border px-10 whitespace-nowrap",
+                      showStep ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface text-fg hover:border-muted",
+                    )}
+                  >
+                    Next steps
+                  </button>
+                ) : null}
                 <span className="t-micro whitespace-nowrap text-muted" aria-live="polite">
                   {n > 0 ? `${num(n)} selected · ` : ""}
                   {countText}
                 </span>
                 {view === "board" ? <span ref={setEndSlot} className="inline-flex shrink-0 empty:hidden" /> : null}
-                {canWrite ? (
-                  <Button
-                    variant={startTriageOnScreen ? "secondary" : "primary"}
-                    className="ml-auto"
-                    onClick={() => setAdding(true)}
-                    title="Add investor (C)"
-                    kbd="C"
-                    aria-keyshortcuts="C"
-                  >
-                    Add investor
-                  </Button>
-                ) : null}
               </div>
               <FilterChips
                 fields={filterFields}
@@ -1646,6 +1665,7 @@ export function Pipeline(props: PipelineProps) {
             store={triageStore}
             keysEnabled={!openId}
             squeezed={splitOpen}
+            fileId={openId}
             onOrder={onTriageOrder}
           />
         </div>
@@ -1668,9 +1688,9 @@ export function Pipeline(props: PipelineProps) {
               focusReq={focusReq}
               openKey={oStage?.key ?? null}
               dominantKey={dominantKey}
-              activePrio={prio}
-              onPrioFilter={(pr) => setParams({ prio: pr })}
-              onTriage={triageOk && openCount > 0 ? (sl) => (sl ? startTriage(sl) : setView("triage")) : undefined}
+              // One way in per screen (critique 3): the strip's Start triage when it shows, else
+              // the New column's "Triage →".
+              onTriage={triageOk && openCount > 0 && !startTriageOnScreen ? () => setView("triage") : undefined}
               selected={canWrite ? selected : null}
               onSelectedChange={setSelected}
               onOpen={openInvestor}

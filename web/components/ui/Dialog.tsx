@@ -21,6 +21,11 @@ export interface DialogProps {
   /** Wrap the body in a <form>; Enter submits. */
   onSubmit?: (e: FormEvent<HTMLFormElement>) => void;
   width?: number;
+  /**
+   * A long read (the shortcuts list): the title and body scroll inside the dialog while the
+   * actions stay pinned, so an autofocused action never scrolls the title away (critique 3).
+   */
+  scrollBody?: boolean;
   className?: string;
 }
 
@@ -38,6 +43,7 @@ export function Dialog({
   dismissible = true,
   onSubmit,
   width = 480,
+  scrollBody = false,
   className,
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -48,13 +54,16 @@ export function Dialog({
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (open && !d.open) d.showModal();
+    if (open && !d.open) {
+      d.showModal();
+      if (scrollBody) d.querySelector<HTMLElement>("[data-dialog-body]")?.scrollTo({ top: 0 });
+    }
     if (!open && d.open) d.close();
-  }, [open]);
+  }, [open, scrollBody]);
 
   const body = (
     <>
-      <div className="px-20 pt-18 pb-16">
+      <div data-dialog-body className={cn("px-20 pt-18 pb-16", scrollBody && "min-h-0 flex-1 overflow-y-auto overscroll-contain")}>
         <h2 id={titleId} className="t-display-s">
           {title}
         </h2>
@@ -62,7 +71,7 @@ export function Dialog({
         {children ? <div className="mt-14">{children}</div> : null}
       </div>
       {actions ? (
-        <div className="flex flex-wrap justify-end gap-8 border-t border-line px-20 py-12">
+        <div className={cn("flex flex-wrap justify-end gap-8 border-t border-line px-20 py-12", scrollBody && "shrink-0")}>
           {actions}
         </div>
       ) : null}
@@ -92,12 +101,14 @@ export function Dialog({
       }}
       className={cn(
         "m-auto w-[calc(100%-32px)] rounded-md border border-line bg-surface p-0 text-fg shadow-dialog",
+        scrollBody && "max-h-[calc(100dvh-48px)] overflow-hidden open:flex open:flex-col",
         className,
       )}
       style={{ maxWidth: width }}
     >
       {onSubmit ? (
         <form
+          className={scrollBody ? "flex min-h-0 flex-1 flex-col" : undefined}
           onSubmit={(e) => {
             e.preventDefault();
             onSubmit(e);

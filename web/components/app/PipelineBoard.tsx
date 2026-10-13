@@ -17,18 +17,17 @@ import { Board, BoardCard, BoardColumn, EmptyStages, Menu, StageDot } from "@/co
 import { CARD_GAP, CARD_H, CARD_H_STEP } from "@/components/ui/Board";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
 import type { Participant, Priority, Round, Stage } from "@/lib/api/types";
-import { PRIORITY_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { moneyCompact, num, priorityFromFit } from "@/lib/format";
 import {
   boardSegments,
   cardSlot,
   GROUP_LABEL,
+  hiddenPipFit,
   PRIORITY_ORDER,
   segmentTrack,
   STAGE_MEANING,
   triageTargets,
-  type TriageSlice,
 } from "@/lib/pipeline";
 
 import { byFit } from "./util";
@@ -110,8 +109,6 @@ export function PipelineBoard({
   focusReq,
   openKey,
   dominantKey,
-  activePrio,
-  onPrioFilter,
   onTriage,
   selected,
   onSelectedChange,
@@ -141,10 +138,8 @@ export function PipelineBoard({
   openKey: string | null;
   /** The stage holding most of the round (over all investors, not the filtered view). */
   dominantKey: string | null;
-  activePrio?: Priority | "";
-  onPrioFilter?: (p: Priority | null) => void;
-  /** "Triage →" in the New header and its fit groups (writers, while New has investors). */
-  onTriage?: (slice?: TriageSlice) => void;
+  /** "Triage →" in the New header (writers, while New has investors and no other way in shows). */
+  onTriage?: () => void;
   selected: Set<string> | null;
   onSelectedChange: (next: Set<string>) => void;
   onOpen: (investorId: string) => void;
@@ -252,6 +247,37 @@ export function PipelineBoard({
     if (focusReq) requestAnimationFrame(() => focusCard(focusReq.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusReq]);
+
+  // The open card stays in view beside the split sheet: opening the file narrows the board,
+  // so its column scrolls fully into view, never left half under the sheet (critique 3).
+  useEffect(() => {
+    if (!openId) return;
+    let frame = 0;
+    const t = setTimeout(() => {
+      frame = requestAnimationFrame(() => {
+        const board = boardRef.current;
+        const card = board?.querySelector<HTMLElement>(`[data-investor="${CSS.escape(openId)}"]`);
+        const col = card?.closest<HTMLElement>("[data-stage]");
+        if (!board || !col) return;
+        const b = board.getBoundingClientRect();
+        const c = col.getBoundingClientRect();
+        // 48px of fade sits on the right edge of a board that scrolls on.
+        const pad = 56;
+        if (c.right > b.right - 8) board.scrollBy({ left: c.right - b.right + pad, behavior: "smooth" });
+        else if (c.left < b.left) board.scrollBy({ left: c.left - b.left - 8, behavior: "smooth" });
+        const body = card!.closest<HTMLElement>(".overflow-y-auto");
+        if (body) {
+          const r = card!.getBoundingClientRect();
+          const br = body.getBoundingClientRect();
+          if (r.top < br.top || r.bottom > br.bottom) card!.scrollIntoView({ block: "nearest" });
+        }
+      });
+    }, 60);
+    return () => {
+      clearTimeout(t);
+      cancelAnimationFrame(frame);
+    };
+  }, [openId]);
 
   const move = useCallback(
     async (investorId: string, key: string) => {
@@ -441,7 +467,10 @@ export function PipelineBoard({
           const { stage: s, cards } = colByKey.get(seg.key)!.c;
           const sort = sorts[s.key] ?? "fit";
           const isOpen = s.key === openKey;
-          const grouped = isOpen && s.key === dominantKey;
+          // Fit groups (Hot · Warm · Maybe · Low fit) where fit decides the next step: the
+          // dominant New column always, and any not-contacted column sorted by fit with 12+
+          // cards (critique 3: a Researching column of identical pips said nothing).
+          const grouped = (isOpen && s.key === dominantKey) || (s.kind === "open" && sort === "fit" && cards.length >= 12);
           return (
             <StageColumn
               key={s.key}
@@ -464,10 +493,7 @@ export function PipelineBoard({
               openId={openId ?? null}
               dragIds={dragIds}
               isDropTarget={dragIds !== null && canWrite}
-              activePrio={activePrio ?? ""}
-              onPrioFilter={grouped ? onPrioFilter : undefined}
               onSelectGroup={canWrite && selected ? selectMany : undefined}
-              onTriageGroup={grouped && onTriage ? onTriage : undefined}
               headerAction={
                 isOpen && onTriage && cards.length > 0 ? (
                   <button
@@ -593,7 +619,7 @@ const EMPTY = new Set<string>();
 const GROUP_H = 28;
 
 /** A wide dominant column lays cards out in columns at least this wide. */
-const GRID_MIN_W = 236;
+const GRID_MIN_W = 220;
 const GRID_GAP = 8;
 
 type Row =
@@ -621,10 +647,7 @@ function StageColumn({
   openId,
   dragIds,
   isDropTarget,
-  activePrio,
-  onPrioFilter,
   onSelectGroup,
-  onTriageGroup,
   headerAction,
   registerApi,
   onDragOver,
@@ -657,11 +680,7 @@ function StageColumn({
   openId: string | null;
   dragIds: string[] | null;
   isDropTarget: boolean;
-  activePrio: Priority | "";
-  onPrioFilter?: (p: Priority | null) => void;
   onSelectGroup?: (ids: string[]) => void;
-  /** "Triage these →" on a fit group of the dominant New column. */
-  onTriageGroup?: (slice: TriageSlice) => void;
   headerAction?: ReactNode;
   registerApi: (api: ColumnApi | null) => void;
   onDragOver?: (e: DragEvent<HTMLElement>) => void;
@@ -695,15 +714,8 @@ function StageColumn({
   }, [grouped]);
 
   // Grouped (the dominant New column): cards partitioned by priority, keeping the column sort.
-  const { rows, groupCounts } = useMemo(() => {
-    const counts: Record<Priority, number> = { hot: 0, warm: 0, maybe: 0, low: 0 };
-    for (const p of cards) counts[priorityFromFit(p.fit)]++;
-    if (!grouped) {
-      return {
-        rows: cards.map((p, idx) => ({ kind: "cards", items: [{ p, idx }] }) as Row),
-        groupCounts: counts,
-      };
-    }
+  const { rows } = useMemo(() => {
+    if (!grouped) return { rows: cards.map((p, idx) => ({ kind: "cards", items: [{ p, idx }] }) as Row) };
     const by: Record<Priority, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
     for (const p of cards) by[priorityFromFit(p.fit)].push(p);
     // The parent passes this column already partitioned by priority (keyboard order = rows).
@@ -716,7 +728,7 @@ function StageColumn({
         out.push({ kind: "cards", items: by[pr].slice(i, i + perRow).map((p) => ({ p, idx: idx++ })) });
       }
     }
-    return { rows: out, groupCounts: counts };
+    return { rows: out };
   }, [cards, grouped, perRow]);
 
   const heightAt = useCallback((i: number) => (rows[i]?.kind === "group" ? GROUP_H : cardH), [rows, cardH]);
@@ -751,11 +763,12 @@ function StageColumn({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollToIndex, placeOf, rows, perRow, grouped]);
 
-  // Pips that never vary say nothing: hidden in the lost stage and in a column where every
-  // card has the same fit (the grouped New column keeps them; its Low fit group varies).
-  const lost = s.kind === "lost";
-  const sameFit = !grouped && cards.length > 1 && cards.every((p) => p.fit === cards[0]!.fit);
-  const hidePips = lost || sameFit;
+  // Pips help decide who to contact: none past the open stages, and in an open column only on
+  // the cards whose fit differs from the one most share (critique 3: a column of identical
+  // ▮▮▮▮▮). The grouped New column's headers say the fit; its Low fit group varies.
+  const pipHidden = useMemo(() => (grouped ? null : hiddenPipFit(s, cards.map((p) => p.fit))), [grouped, s, cards]);
+  const hidePipsFor = (p: Participant) =>
+    pipHidden === "all" || pipHidden === p.fit || (grouped && priorityFromFit(p.fit) !== "low");
 
   // The sticky group header: the last group that starts at or above the scroll position.
   const [scrollTop, setScrollTop] = useState(0);
@@ -790,7 +803,7 @@ function StageColumn({
       >
         <span aria-hidden className={cn("inline-block size-7 rounded-pill", PRIO_FILL[g.priority])} />
         <span className="t-label">{GROUP_LABEL[g.priority]}</span>
-        <span className="font-mono text-[11.5px] text-muted">{num(g.ids.length)}</span>
+        {/* The count stands apart from "fit 5" (critique 3: "fit 5 12"). */}
         <span className="ml-auto flex items-center gap-12">
           {onSelectGroup ? (
             <button
@@ -804,45 +817,11 @@ function StageColumn({
               {all ? "Clear" : `Select ${num(g.ids.length)}`}
             </button>
           ) : null}
-          {onTriageGroup ? (
-            // The way through a group of 95 near-identical cards is Triage, one at a time.
-            <button
-              type="button"
-              onClick={() => onTriageGroup(g.priority === "hot" || g.priority === "warm" ? "hw" : g.priority)}
-              className="t-body-s border-0 bg-transparent p-0 font-medium whitespace-nowrap text-accent hover:underline"
-              title={`Sort the ${PRIORITY_LABEL[g.priority]} group one investor at a time`}
-            >
-              Triage these →
-            </button>
-          ) : null}
+          <span className="font-mono text-[11.5px] text-muted tnum">{num(g.ids.length)}</span>
         </span>
       </div>
     );
   };
-
-  const prioBar =
-    grouped && cards.length ? (
-      // The legend alone (its swatches and counts are the breakdown; a bar repeated them).
-      <div className="flex shrink-0 flex-col px-10 pb-2">
-        <div className="flex flex-wrap gap-x-12 gap-y-2" role="group" aria-label="Filter New by fit">
-          {PRIORITY_ORDER.filter((pr) => groupCounts[pr] > 0 || activePrio === pr).map((pr) => (
-            <button
-              key={pr}
-              type="button"
-              aria-pressed={activePrio === pr}
-              onClick={() => onPrioFilter?.(activePrio === pr ? null : pr)}
-              className={cn(
-                "t-body-s inline-flex items-center gap-4 rounded-pill border-0 bg-transparent px-0 hover:text-fg",
-                activePrio === pr ? "font-semibold text-fg" : "text-muted",
-              )}
-            >
-              <span aria-hidden className={cn("inline-block h-6 w-12 rounded-pill", PRIO_FILL[pr])} />
-              {PRIORITY_LABEL[pr]} <span className="font-mono text-[11.5px]">{num(groupCounts[pr])}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    ) : null;
 
   return (
     <BoardColumn
@@ -863,7 +842,6 @@ function StageColumn({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       headerAction={headerAction}
-      headerExtra={prioBar}
       headerAside={
         cards.length > 1 ? (
           <Menu
@@ -918,7 +896,7 @@ function StageColumn({
               nextStep={p.next_step}
               showNextStep={showNextStep}
               won={won}
-              hidePips={hidePips || (grouped && priorityFromFit(p.fit) !== "low")}
+              hidePips={hidePipsFor(p)}
               current={openId === id}
               selected={isSel}
               inset={anySelected}

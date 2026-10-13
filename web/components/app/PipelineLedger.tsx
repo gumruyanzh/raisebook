@@ -287,16 +287,19 @@ export function LedgerDesk({
     </button>
   );
   const nothingDue = next ? `Nothing due. Next: ${next.investor.name}, ${formatDate(next.follow_up_on, today)}.` : "Nothing due.";
-  const bucketRow = (b: NextUpBucket, short = false) => {
+  const bucketRow = (b: NextUpBucket, short = false, shortText = short) => {
     const c = bucketCopy(b, openLabel);
     return (
       <li key={b.id} className="flex h-28 min-w-0 items-center gap-8">
         <span className={cn("shrink-0 text-right font-mono text-[12.5px] font-medium text-fg tnum", short ? "" : "w-36")}>{num(b.count)}</span>
-        <span className="t-body-s min-w-0 flex-1 truncate">
-          {short ? c.short : c.text}
+        {/* The name is the useful part: the sentence gives way first (critique 3). */}
+        <span className="t-body-s flex min-w-0 flex-1 items-baseline gap-4">
+          <span className="min-w-0 truncate" title={c.text}>
+            {shortText ? c.short : c.text}
+          </span>
           {b.id === "ready" && b.next ? (
-            <>
-              {" · next "}
+            <span className="min-w-0 shrink-0 truncate whitespace-nowrap">
+              {"· next "}
               <button
                 type="button"
                 onClick={() => onOpen(b.next!.id)}
@@ -305,7 +308,7 @@ export function LedgerDesk({
               >
                 {b.next.name}
               </button>
-            </>
+            </span>
           ) : null}
         </span>
         <button type="button" onClick={() => onBucket(b)} className="link t-body-s shrink-0 border-0 bg-transparent p-0">
@@ -409,7 +412,7 @@ export function LedgerDesk({
       <div className="min-w-0 p-14">
         <p className="t-label mb-6">Next up</p>
         {buckets.length ? (
-          <ul className="m-0 flex list-none flex-col p-0">{buckets.slice(0, 4).map((b) => bucketRow(b))}</ul>
+          <ul className="m-0 flex list-none flex-col p-0">{buckets.slice(0, 4).map((b) => bucketRow(b, false, width < 1360))}</ul>
         ) : (
           <p className="t-body-s text-muted">Nothing waiting on you.</p>
         )}

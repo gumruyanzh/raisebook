@@ -115,7 +115,17 @@ export function FilterMenu({
     setQ("");
     setActiveIdx(0);
     const r = btn.current?.getBoundingClientRect();
-    setAlignEnd(Boolean(r && r.left + 300 > window.innerWidth - 16));
+    // The edge that clips the popover: the screen, or a clipping box it sits in (the Triage
+    // queue), so it never hangs out of a box and drags the box sideways (critique 3).
+    let right = window.innerWidth - 16;
+    for (let el = wrap.current?.parentElement; el && el !== document.body; el = el.parentElement) {
+      const o = getComputedStyle(el).overflowX;
+      if (o !== "visible") {
+        right = Math.min(right, el.getBoundingClientRect().right);
+        break;
+      }
+    }
+    setAlignEnd(Boolean(r && r.left + 300 > right));
     setOpen(true);
   }, [onOpenRequest]);
   useImperativeHandle(ref, () => ({ open: doOpen }), [doOpen]);
@@ -127,7 +137,7 @@ export function FilterMenu({
 
   useEffect(() => {
     if (!open) return;
-    requestAnimationFrame(() => input.current?.focus());
+    requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
     const onDown = (e: PointerEvent) => {
       if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
     };
@@ -163,10 +173,16 @@ export function FilterMenu({
   useEffect(() => setActiveIdx(0), [q, level]);
   const cur = options[Math.min(activeIdx, options.length - 1)];
 
-  // Keep the active option in view.
+  // Keep the active option in view, scrolling the list only (scrollIntoView would also scroll
+  // every box around the menu, even an overflow-hidden one).
   useLayoutEffect(() => {
-    if (!open || !cur) return;
-    list.current?.querySelector<HTMLElement>(`[data-opt="${CSS.escape(cur.id)}"]`)?.scrollIntoView({ block: "nearest" });
+    const box = list.current;
+    if (!open || !cur || !box) return;
+    const el = box.querySelector<HTMLElement>(`[data-opt="${CSS.escape(cur.id)}"]`);
+    if (!el) return;
+    const top = el.offsetTop;
+    if (top < box.scrollTop) box.scrollTop = top;
+    else if (top + el.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = top + el.offsetHeight - box.clientHeight;
   }, [open, cur]);
 
   const choose = (o: Option | undefined) => {
@@ -174,7 +190,7 @@ export function FilterMenu({
     if (o.kind === "field") {
       setLevel(o.field.key);
       setQ("");
-      requestAnimationFrame(() => input.current?.focus());
+      requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
       return;
     }
     if (o.kind === "any") onChange(o.field.key, null);
@@ -309,7 +325,7 @@ export function FilterMenu({
               className="h-36 min-w-0 flex-1 border-0 bg-transparent px-4 text-base outline-none placeholder:text-faint"
             />
           </div>
-          <div ref={list} id={listId} role="listbox" aria-label={field?.label ?? "Fields"} className="max-h-[min(340px,60vh)] overflow-y-auto py-4">
+          <div ref={list} id={listId} role="listbox" aria-label={field?.label ?? "Fields"} className="relative max-h-[min(340px,60vh)] overflow-y-auto py-4">
             {options.length === 0 ? (
               <p className="t-body-s px-12 py-8 text-muted">No match for “{q}”.</p>
             ) : (

@@ -20,6 +20,9 @@ import {
   nextCursor,
   nextUpBuckets,
   paceEstimate,
+  formatEach,
+  formatRest,
+  hiddenPipFit,
   sharedValue,
   breakdown,
   claimsContact,
@@ -290,17 +293,32 @@ test("nextCursor: next undecided, skips done, wraps, null when all done", () => 
   assert.equal(nextCursor([], null, () => false), null);
 });
 
-test("paceEstimate: median gap clamped to 20s–120s, from the 5th decision", () => {
+test("paceEstimate: the median of real gaps between single decisions, breaks left out", () => {
   assert.deepEqual(paceEstimate([0, 10_000, 20_000, 30_000]), { sorted: 4, perMs: null });
-  // Gaps 10s, 10s, 20s, 600s(→120s): median of [10,10,20,120] = 15s.
-  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000]), { sorted: 5, perMs: 20_000 });
-  // Six quick Passes a second apart are not a 1s pace: each gap counts as 20s.
-  assert.deepEqual(paceEstimate([0, 1_000, 2_000, 3_000, 4_000, 5_000]), { sorted: 6, perMs: 20_000 });
+  // Gaps 10s, 10s, 20s and a 10-minute break (left out): three real gaps are not a pace yet.
+  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000]), { sorted: 5, perMs: null });
+  // …one more 30s gap: the median of [10, 10, 20, 30] is 15s.
+  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000, 670_000]), { sorted: 6, perMs: 15_000 });
+  // Quick decisions are the founder's real pace (no invented 20s floor), at least 1s.
+  assert.deepEqual(paceEstimate([0, 2_000, 4_000, 6_000, 8_000]), { sorted: 5, perMs: 2_000 });
+  assert.deepEqual(paceEstimate([0, 100, 200, 300, 400]), { sorted: 5, perMs: 1_000 });
   // Steady 45s reads are the pace.
   assert.deepEqual(paceEstimate([0, 45_000, 90_000, 135_000, 180_000]), { sorted: 5, perMs: 45_000 });
   assert.equal(formatDuration(40 * 20_000), "15 min");
   assert.equal(formatDuration(371 * 26_000), "2h 40m");
   assert.equal(formatDuration(1000), "5 min");
+  assert.equal(formatRest(60_000), "under 5 min");
+  assert.equal(formatRest(40 * 20_000), "15 min");
+  assert.equal(formatEach(2_400), "about 2s each");
+  assert.equal(formatEach(90_000), "about 2 min each");
+});
+
+test("hiddenPipFit: no pips past the open stages; the shared fit of an open column hides", () => {
+  assert.equal(hiddenPipFit({ kind: "active" }, [5, 4, 3]), "all");
+  assert.equal(hiddenPipFit({ kind: "won" }, [5]), "all");
+  assert.equal(hiddenPipFit({ kind: "open" }, [5, 5, 4]), null);
+  assert.equal(hiddenPipFit({ kind: "open" }, [5, 5, 5, 5, 5, 5, 5, 4, 4, 5]), 5);
+  assert.equal(hiddenPipFit({ kind: "open" }, [5, 5, 5, 4, 4, 4, 3, 3, 2, 1]), null);
 });
 
 test("fitColumns: drop the lowest priority until the widths fit; required ones stay", () => {

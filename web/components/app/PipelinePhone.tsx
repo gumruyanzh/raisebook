@@ -8,11 +8,12 @@ import type { Participant, Priority, Round, Stage } from "@/lib/api/types";
 import { INSTRUMENT_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { money, moneyCompact, num, priorityFromFit } from "@/lib/format";
-import { cardSlot, GROUP_LABEL, nextUpBuckets, PRIORITY_ORDER, type NextUpBucket } from "@/lib/pipeline";
+import { cardSlot, GROUP_LABEL, hiddenPipFit, nextUpBuckets, PRIORITY_ORDER, type NextUpBucket } from "@/lib/pipeline";
 
 import { bucketCopy, dueRows, dueText, stripMessage, type LedgerFacts } from "./PipelineLedger";
 
-const ROW_H = 56;
+/** Two lines in 48px: about nine investors above the fold once the list is scrolled. */
+const ROW_H = 48;
 const GROUP_H = 40;
 
 type Row = { kind: "group"; priority: Priority; ids: string[] } | { kind: "row"; p: Participant };
@@ -93,8 +94,11 @@ export function PipelinePhone({
   const list = useMemo(() => {
     const inPick =
       pick === "due" ? dueRows(rows) : rows.filter((p) => p.stage.key === pick);
-    const grouped = pick === openKey && inPick.length >= 50;
-    if (!grouped) return { grouped, rows: inPick.map((p) => ({ kind: "row", p }) as Row) };
+    // Fit groups for a not-contacted stage of 12+, as on the board (no rows of identical pips).
+    const grouped = pickStage?.kind === "open" && inPick.length >= 12;
+    // Pips as on the board: none past the open stages, and not on the fit most cards share.
+    const pipHidden = grouped ? null : hiddenPipFit(pickStage ?? { kind: "active" }, inPick.map((p) => p.fit));
+    if (!grouped) return { grouped, pipHidden, rows: inPick.map((p) => ({ kind: "row", p }) as Row) };
     const by: Record<Priority, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
     for (const p of inPick) by[priorityFromFit(p.fit)].push(p);
     const out: Row[] = [];
@@ -103,8 +107,8 @@ export function PipelinePhone({
       out.push({ kind: "group", priority: pr, ids: by[pr].map((p) => p.investor.id) });
       for (const p of by[pr]) out.push({ kind: "row", p });
     }
-    return { grouped, rows: out };
-  }, [rows, pick, openKey]);
+    return { grouped, pipHidden: null, rows: out };
+  }, [rows, pick, pickStage]);
   useEffect(() => {
     onListChange?.(list.rows.flatMap((r) => (r.kind === "row" ? [r.p.investor.id] : [])));
   }, [list.rows, onListChange]);
@@ -141,13 +145,18 @@ export function PipelinePhone({
     };
   }, [list.rows, tops, stickyTop]);
   // Deep in 300 rows the group header has scrolled away: the current group sticks instead.
+  // The next group's header pushes it up instead of hiding under it.
   const stuck = (() => {
     if (!list.grouped || under <= 0) return null;
     let cur: Extract<Row, { kind: "group" }> | null = null;
+    let nextTop = Infinity;
     list.rows.forEach((r, i) => {
-      if (r.kind === "group" && tops[i]! < under) cur = r;
+      if (r.kind !== "group") return;
+      if (tops[i]! < under) cur = r;
+      else if (nextTop === Infinity) nextTop = tops[i]!;
     });
-    return cur as Extract<Row, { kind: "group" }> | null;
+    if (!cur) return null;
+    return { row: cur as Extract<Row, { kind: "group" }>, shift: Math.min(0, nextTop - under - GROUP_H) };
   })();
 
   // Long-press starts selection.
@@ -195,13 +204,13 @@ export function PipelinePhone({
   const groupHead = (r: Extract<Row, { kind: "group" }>, style?: React.CSSProperties) => {
     const allSel = selected && r.ids.every((id) => selected.has(id));
     return (
-      <div key={`g-${r.priority}`} style={{ ...style, height: GROUP_H }} className="flex items-center gap-8 border-b border-line bg-sunk px-14">
+      <div key={`g-${r.priority}`} style={{ ...style, height: GROUP_H }} className="flex items-center gap-12 border-b border-line bg-sunk px-14">
         <span className="t-label">{GROUP_LABEL[r.priority]}</span>
-        <span className="font-mono text-[12px] text-muted">{num(r.ids.length)}</span>
+        <span className="ml-auto font-mono text-[12px] text-muted tnum">{num(r.ids.length)}</span>
         {canWrite && selected ? (
           <button
             type="button"
-            className="link ml-auto border-0 bg-transparent p-0"
+            className="link border-0 bg-transparent p-0"
             onClick={() => {
               const n = new Set(selected);
               for (const id of r.ids) {
@@ -223,10 +232,10 @@ export function PipelinePhone({
 
   return (
     <div className="flex flex-col gap-12">
-      {/* The round picker above already says "Seed": one slim line instead of a second title. */}
+      {/* The round picker above already says "Seed": the terms only (critique 3: Seed twice). */}
       <div className="-mt-4 flex h-20 items-center gap-10">
         <h1 className="sr-only">{round.name}</h1>
-        <span className="t-micro text-muted uppercase">{[round.name, ...sub].filter(Boolean).join(" · ")}</span>
+        <span className="t-micro text-muted uppercase">{sub.filter(Boolean).join(" · ")}</span>
         {canWrite ? (
           <Link href={`${base}/r/${encodeURIComponent(round.slug)}/settings`} className="link t-body-s ml-auto">
             Edit round
@@ -313,23 +322,21 @@ export function PipelinePhone({
 
       {/* overflow-clip (not hidden): the sticky group header follows the page scroll. */}
       <section aria-label={pick === "due" ? "Due now" : (pickStage?.label ?? "")} className="overflow-clip rounded-md border border-line bg-surface">
-        {pickStage && pick === openKey && triageOk && list.rows.length ? (
-          <div className="flex h-40 items-center gap-8 border-b border-line px-14">
-            <StageDot color={pickStage.color} />
-            <span className="font-semibold">{pickStage.label}</span>
-            <span className="font-mono text-[12px] text-muted">{num(counts[pick] ?? 0)}</span>
-            <button type="button" onClick={onStartTriage} className="link ml-auto border-0 bg-transparent p-0">
-              Triage →
-            </button>
-          </div>
+        {/* One way into Triage per screen (critique 3): the Sorted card's button before money
+            exists; afterwards one line here, without repeating the pill's name and count. */}
+        {moneyOn && pickStage && pick === openKey && triageOk && list.rows.length ? (
+          <button type="button" onClick={onStartTriage} className="flex h-40 w-full items-center gap-8 border-0 border-b border-line bg-transparent px-14 text-left">
+            <span className="t-body-s text-muted">Go through them one at a time</span>
+            <span className="link ml-auto">Triage →</span>
+          </button>
         ) : null}
         {list.rows.length === 0 ? (
           <p className="t-body-s p-14 text-muted">{pick === "due" ? "Nothing due." : `Nobody in ${pickStage?.label ?? "this stage"} yet.`}</p>
         ) : null}
         <div ref={listRef} style={{ height: tops[tops.length - 1], position: "relative" }}>
-          {stuck ? (
+          {stuck && stuck.shift > -GROUP_H ? (
             <div className="sticky z-[2] h-0 overflow-visible" style={{ top: stickyTop }}>
-              {groupHead(stuck)}
+              <div style={{ transform: `translateY(${stuck.shift}px)` }}>{groupHead(stuck.row)}</div>
             </div>
           ) : null}
           {list.rows.slice(win.start, win.end).map((r, k) => {
@@ -374,7 +381,9 @@ export function PipelinePhone({
                   <span className="flex min-w-0 items-center gap-8">
                     <span className="min-w-0 flex-1 truncate font-semibold">{p.investor.name}</span>
                     {/* Inside Hot, Warm or Maybe every row has the same fit: the header says it. */}
-                    {p.stage.kind === "won" || (list.grouped && priorityFromFit(p.fit) !== "low") ? null : <FitMeter value={p.fit} />}
+                    {list.pipHidden === "all" || list.pipHidden === p.fit || (list.grouped && priorityFromFit(p.fit) !== "low") ? null : (
+                      <FitMeter value={p.fit} />
+                    )}
                   </span>
                   <span className="flex min-w-0 items-center gap-8">
                     <span className="t-body-s min-w-0 flex-1 truncate text-muted">{p.investor.firm || p.investor.title || ""}</span>

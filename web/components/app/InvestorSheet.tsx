@@ -29,7 +29,7 @@ import { getInvestor, updateInvestor } from "@/lib/api/investors";
 import { sortedStages } from "@/lib/api/rounds";
 import type { Activity, Investor, Member, Participant, Round } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
-import { formatDate, isoDate, money, moneyCompact, stageFocusLabel } from "@/lib/format";
+import { money, moneyCompact, stageFocusLabel } from "@/lib/format";
 import { visibleIndustries } from "@/lib/pipeline";
 
 import { LogComposer } from "./LogComposer";
@@ -284,7 +284,6 @@ export function InvestorSheet({
 
   const who = [investor?.firm ?? p?.investor.firm, investor?.title ?? p?.investor.title].filter(Boolean).join(" · ");
   const type = investor?.type ?? p?.investor.type;
-  const industries = visibleIndustries(investor?.industries);
   const otherRounds = (investor?.rounds ?? []).filter((r) => r.round_id !== round.id);
   const base = `/w/${encodeURIComponent(wsSlug)}`;
   const navBtn =
@@ -369,7 +368,6 @@ export function InvestorSheet({
                 </span>
               ) : null,
             },
-            { term: "Added", value: formatDate(isoDate(investor.created_at, timeZone), today) },
           ]}
         />
       </section>
@@ -394,15 +392,23 @@ export function InvestorSheet({
       modal={modal}
       top={modal ? undefined : top}
       subline={who || undefined}
+      // Fit and type under the name, as in Triage (critique 3): industries live in Facts only,
+      // so the header has one chip style and no repeats.
       chips={
-        <>
-          {type && type !== "other" ? <Chip tone="type">{INVESTOR_TYPE_LABEL[type]}</Chip> : null}
-          {industries.slice(0, 3).map((i) => (
-            <Chip key={i} tone="industry">
-              {i}
-            </Chip>
-          ))}
-        </>
+        p || (type && type !== "other") ? (
+          <span className="flex flex-wrap items-center gap-10">
+            {p ? (
+              <span className="inline-flex items-center gap-6">
+                <span className="t-label" id={`fit-label-${p.investor.id}`}>
+                  Fit
+                </span>
+                <FitMeter editable value={p.fit} disabled={!canWrite} label={`Fit for ${name}`} onChange={(f) => void fit.save({ fit: f })} />
+                <SaveState state={fit.state} />
+              </span>
+            ) : null}
+            {type && type !== "other" ? <Chip tone="type">{INVESTOR_TYPE_LABEL[type]}</Chip> : null}
+          </span>
+        ) : null
       }
       headerAside={
         investorId ? (
@@ -431,25 +437,7 @@ export function InvestorSheet({
       {p ? (
         <>
           <section aria-label={`Stage for ${round.name}`}>
-            <SectionLabel
-              aside={
-                <span className="flex items-center gap-8">
-                  <SaveState state={fit.state} />
-                  <span className="t-micro text-muted" id={`fit-label-${p.investor.id}`}>
-                    Fit
-                  </span>
-                  <FitMeter
-                    editable
-                    value={p.fit}
-                    disabled={!canWrite}
-                    label={`Fit for ${name}`}
-                    onChange={(f) => void fit.save({ fit: f })}
-                  />
-                </span>
-              }
-            >
-              Stage for {round.name}
-            </SectionLabel>
+            <SectionLabel>Stage for {round.name}</SectionLabel>
             <StageSelector
               label={`Stage for ${round.name}`}
               stages={stages}

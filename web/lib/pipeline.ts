@@ -207,6 +207,26 @@ export function cardSlot(
   return null;
 }
 
+/**
+ * Which fit the card pips leave out in a column (critique 3): pips are for deciding who to
+ * contact, so talking, won and lost stages show none (returns "all"); in an open-kind stage
+ * the fit most cards share (70% or more of 5+ cards) is left out, so the pips mark only the
+ * investors who differ from the rest of the column. null: every card shows its pips.
+ */
+export function hiddenPipFit(
+  stage: Pick<Stage, "kind">,
+  fits: readonly number[],
+): number | "all" | null {
+  if (stage.kind !== "open") return "all";
+  if (fits.length < 5) return null;
+  const m = new Map<number, number>();
+  for (const f of fits) m.set(f, (m.get(f) ?? 0) + 1);
+  let best: number | null = null;
+  let n = 0;
+  for (const [f, c] of m) if (c > n) [best, n] = [f, c];
+  return best !== null && n >= fits.length * 0.7 ? best : null;
+}
+
 /* ---------- priority groups and the triage queue (§4.2) ---------- */
 
 export const PRIORITY_ORDER: Priority[] = ["hot", "warm", "maybe", "low"];
@@ -282,28 +302,39 @@ export function formatElapsed(ms: number): string {
   return min % 60 ? `${h}h ${min % 60}m` : `${h}h`;
 }
 
-/**
- * A decision takes at least this long when estimating the rest: a burst of quick Passes is not
- * a pace, and the investors still to come need reading (critique 2: 8s promised 40 minutes
- * for 285 investors, which nobody reading profiles manages).
- */
-export const MIN_GAP_MS = START_SECONDS * 1000;
-/** …and at most this long (a coffee break is not a pace either). */
+/** A gap longer than this is a break, not a pace: it is left out (critique 3). */
 export const MAX_GAP_MS = 120_000;
 
 /**
- * The session pace: the median gap between decisions, each gap clamped to 20s–120s, from the
- * 5th decision on. `perMs` null before that.
+ * The session pace (critique 3: no invented numbers). `times` are the moments of single
+ * decisions only: a bulk move is one keypress for 86 investors and says nothing about how long
+ * one investor takes. The pace is the median of the real gaps between them, breaks (over 2
+ * minutes) left out, from the 5th decision and with at least 4 real gaps. `perMs` null before.
  */
 export function paceEstimate(times: readonly number[]): { sorted: number; perMs: number | null } {
   const sorted = times.length;
   if (sorted < 5) return { sorted, perMs: null };
   const gaps: number[] = [];
-  for (let i = 1; i < times.length; i++) gaps.push(Math.min(MAX_GAP_MS, Math.max(MIN_GAP_MS, times[i]! - times[i - 1]!)));
+  for (let i = 1; i < times.length; i++) {
+    const g = times[i]! - times[i - 1]!;
+    if (g >= 0 && g <= MAX_GAP_MS) gaps.push(g);
+  }
+  if (gaps.length < 4) return { sorted, perMs: null };
   gaps.sort((a, b) => a - b);
   const mid = gaps.length >> 1;
   const median = gaps.length % 2 ? gaps[mid]! : (gaps[mid - 1]! + gaps[mid]!) / 2;
-  return { sorted, perMs: median };
+  return { sorted, perMs: Math.max(1000, median) };
+}
+
+/** "about 25s each", "about 1 min each": a pace as people say it. */
+export function formatEach(ms: number): string {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s < 60 ? `about ${s}s each` : `about ${Math.round(s / 60)} min each`;
+}
+
+/** A total that may be under 5 minutes: "under 5 min", else formatDuration. */
+export function formatRest(ms: number): string {
+  return ms < 5 * 60_000 ? "under 5 min" : formatDuration(ms);
 }
 
 /* ---------- Next up buckets (§5.1) and the quiet filter ---------- */

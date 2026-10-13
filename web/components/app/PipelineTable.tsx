@@ -69,7 +69,9 @@ export const TABLE_COLS: { key: TableCol; label: string; width: number; required
  */
 // For people not contacted yet the contact columns matter more than Type (critique 2), so
 // Type and Industry leave first and Email stays longest (Firm moves next to the name).
-const DROP_ORDER: TableCol[] = ["title", "last_activity", "type", "industry", "owner", "links", "soft", "next_step", "firm", "email", "follow_up", "committed", "stage"];
+// Committed is empty on all but a handful of rows until the round closes, so it leaves before
+// Next step, the column that says what to do (critique 3); Email leaves before Next step too.
+const DROP_ORDER: TableCol[] = ["title", "last_activity", "type", "industry", "owner", "links", "soft", "committed", "firm", "email", "next_step", "follow_up", "stage"];
 /** Only these may hide for holding one value on every row (Stage: "New" ×411). */
 const CONSTANT_HIDES: TableCol[] = ["stage", "last_activity"];
 
@@ -137,8 +139,8 @@ export function sortParticipants(rows: Participant[], col: TableCol, dir: SortDi
   return [...rows].sort((a, b) => {
     const va = sortValue(a, col);
     const vb = sortValue(b, col);
-    // Empty values always last.
-    if (va === null && vb === null) return a.investor.name.localeCompare(b.investor.name);
+    // Empty values always last, highest fit first among them.
+    if (va === null && vb === null) return b.fit - a.fit || a.investor.name.localeCompare(b.investor.name);
     if (va === null) return 1;
     if (vb === null) return -1;
     if (va < vb) return -1 * sign;

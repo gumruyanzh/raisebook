@@ -57,6 +57,7 @@ export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () =
       onClose={onClose}
       title="Keyboard shortcuts"
       width={560}
+      scrollBody
       actions={
         <Button autoFocus onClick={onClose}>
           Close

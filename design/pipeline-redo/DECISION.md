@@ -661,3 +661,65 @@ view and a few real bugs. These rules now win over §3–§10. Screenshots: `aft
   same contact question in its bottom bar.
 - **Keys**: `?` lists T (Switch to Triage) and the board's M, Alt+→, Alt+←, X and Esc
   (`useHotkey` `listOnly`: listed, handled by the card).
+
+## 12. Amendments after design critique 3 (2026-10-12)
+
+The review (`review-3/`) found real bugs (Filter dragging the queue sideways, the shortcuts
+dialog opening scrolled to the bottom, counts that disagreed, an invented pace, a cut decision
+panel at 1280) and leftover noise. These rules now win over §3–§11. Screenshots:
+`after-critique-3/`.
+
+- **Triage has no rail.** The page is queue + investor pane at every desktop width (360px queue
+  from 1280, 320px below, 288px beside the split sheet). The pane is as tall as its content
+  (a 300px floor keeps the decision panel at one height for most investors) and the canvas
+  below it stays empty. Where everyone went is a quiet count on each decision button; the
+  session line lives in the queue header. No Up next on desktop (the queue beside it is the
+  list); phones keep three.
+- **One population.** The Triage segment, the pills, the group headers and the pane header all
+  count who is still New, skipped ones included: "399 in New · 1 skipped · highest fit first".
+  No "1 of 398 left".
+- **Honest pace.** Only single decisions make a pace: the median of the real gaps, breaks over
+  2 minutes left out, from the 5th decision ("At about 25s each, the rest of New takes
+  2h 45m."). Bulk moves are said as such ("97 sorted in 2 min, 86 of them in bulk."). Before
+  the first decision the guess is labelled: "about 15 min at 20s each".
+- **Notices, not toasts, on desktop Triage.** "✓ Ada Irvine moved to Passed. Undo U" sits in
+  the decision panel's header line; failures stay toasts. Phones keep the toast above the
+  bottom bar, and not over the follow-up sheet.
+- **The decision panel fits its container**: meaning lines from 680px, counts from 560px,
+  secondary key badges step aside below 560px (the hint line says "1–7 File"), secondary
+  buttons are `minmax(104px, 1fr)`, the follow-up picks stay on one line (chord badges from
+  700px). "Sent it? Press 2 to file Dorian in Contacted."
+- **The file follows the queue.** Enter opens the split sheet; the pane then keeps only the
+  decision panel with one line ("Calla Galloway's file is open on the right…"). A decision
+  opens the next investor's file; J/K in the sheet move the queue's cursor. Digits, S and U
+  work while the file is open.
+- **Reach out is one row, one style, one order** (desktop and phone): LinkedIn (or Search
+  LinkedIn), Draft intro email, the address with Copy, Website, X. The intro email has a real
+  subject ("Lumen Grid: raising a $2M Seed") and an ask. Industry and type chips share the
+  outlined style.
+- **Filter menu** never scrolls a box around it: it scrolls its own list and hangs out of the
+  queue over the pane. **Dialogs** that are long reads (`scrollBody`) pin their actions, so an
+  autofocused Close never scrolls the title away.
+- **Board**: no priority legend and no "Triage these →"; the group header's count stands
+  apart ("HOT · FIT 5 ······ 12"). One way into Triage per screen: the strip's Start triage,
+  else the New column's "Triage →". Not-contacted columns sorted by fit with 12+ cards get the
+  same fit groups as New. Pips show only in not-contacted stages, and not on the fit 70% of a
+  column shares (`hiddenPipFit`). The grouped New column lays cards out at 220px minimum (two
+  per row after a session). Opening the split sheet scrolls the open card's column fully into
+  view.
+- **Title row**: Add investor is in the right-aligned group in every view (primary unless
+  Start triage or Triage is the work). Built-in views: All, Due now (once any follow-up
+  exists) and My investors (two or more members); no "Hot". The strip is hidden when it
+  would only say "All". The board's Display menu of one is a "Next steps" toggle, shown once
+  any next step exists.
+- **Ledger**: the Next up name never truncates; the sentence gives way ("63 to contact · next
+  Bram Keel" under 1360px).
+- **Table**: Committed leaves before Next step and Email at narrow widths; the default sort is
+  Follow-up (overdue first) unless New dominates (then Fit). Overdue reads "Overdue 4d" as
+  everywhere else.
+- **Sheet**: Fit (editable) and type sit under the name; industries only in Facts; no "Added"
+  (the timeline says it). Next step placeholder everywhere: "e.g. Ask Harper for an intro".
+- **Phone**: the round picker row scrolls away (one sticky chrome row); the meta line drops the
+  round name; list rows are 48px; the stage pills do not count as a filter; the next group
+  header pushes the stuck one up; Triage shows no progress sliver at 0; the follow-up sheet is
+  "Follow up with Dorian" with four different dates.
