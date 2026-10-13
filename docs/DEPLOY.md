@@ -1,7 +1,7 @@
 # Deploying raisebook.org
 
-Status: **not deployed.** Hosting is planned on DigitalOcean after Oct 16, 2026. Nothing in
-this repo deploys automatically and nothing touches DNS; every step below is manual and run
+Status: **live.** raisebook.org runs on one DigitalOcean droplet (s-2vcpu-4gb, SFO3). Nothing
+in this repo deploys automatically and nothing touches DNS; every step below is manual and run
 by the owner. The generic self-hosting guide is [`deploy/README.md`](../deploy/README.md).
 
 Target layout:
@@ -14,16 +14,17 @@ Target layout:
 | `https://api.raisebook.org/mcp` | MCP server (streamable HTTP, API-key auth) |
 
 All of it runs on one droplet with `deploy/docker-compose.yml`: Postgres 17, a migration
-job, the API, the web app and Caddy (automatic Let's Encrypt certificates).
+job, the API, a background job runner, the web app and Caddy (automatic Let's Encrypt
+certificates).
 
 ---
 
 ## 1. Create the droplet (DigitalOcean)
 
 1. **Create → Droplets.** Region close to most users (for example SFO3 or NYC3).
-   Image **Ubuntu 24.04 LTS x64**. Size: Basic, Regular SSD, **2 GB / 1 vCPU** is enough to
-   start (1 GB works but `npm run build` inside Docker is slow and can run out of memory;
-   add swap if you pick 1 GB).
+   Image **Ubuntu 24.04 LTS x64**. Size: Basic, Regular SSD. raisebook.org uses
+   **4 GB / 2 vCPU**; 2 GB / 1 vCPU works for a small team. Add 2 GB of swap on any size:
+   the Next.js build needs 1-2 GB of memory next to the running stack.
 2. Authentication: **SSH key** only (no password).
 3. Enable **IPv6** (free) and **Monitoring** (free agent).
 4. **Backups:** see section 6 before enabling droplet backups. The weekly plan keeps copies
@@ -59,7 +60,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
   > /etc/apt/sources.list.d/docker.list
 apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-# Optional on a 1 GB droplet: 2 GB swap for the web build
+# 2 GB swap, so a web build cannot push Postgres into the OOM killer
 fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
 echo '/swapfile none swap sw 0 0' >> /etc/fstab
 ```
@@ -110,7 +111,7 @@ Do not add MX records unless you also want to *receive* mail at raisebook.org.
 
 ```bash
 mkdir -p /opt && cd /opt
-git clone https://github.com/gumruyanzh/raisebook.git   # private until launch: use a deploy key
+git clone https://github.com/gumruyanzh/raisebook.git
 cd raisebook
 cp deploy/.env.example deploy/.env
 chmod 600 deploy/.env
@@ -126,25 +127,24 @@ Fill in `deploy/.env`:
 | `RAISEBOOK_SESSION_COOKIE_DOMAIN` | `raisebook.org` (shared by the web and API hosts) |
 | `RAISEBOOK_SMTP_*` | from the email provider |
 | `RAISEBOOK_GOOGLE_CLIENT_ID` / `RAISEBOOK_GOOGLE_CLIENT_SECRET` | optional: "Continue with Google". Leave both empty to keep it off (the button is hidden). Setup steps, including the exact redirect URI `https://api.raisebook.org/v1/auth/google/callback`, are in `deploy/README.md` under "Continue with Google". After setting them, `docker compose -f deploy/docker-compose.yml up -d api` is enough; no rebuild. |
-
-| `RAISEBOOK_SECRETS_KEK` | optional: turns investor research on. `docker compose -f deploy/docker-compose.yml run --rm api rbctl secrets gen-kek` (or the `python3` line in `.env.example`). It seals each workspace's OpenRouter key; losing it makes saved keys unreadable. Rotation steps are in `deploy/README.md`. |
+| `RAISEBOOK_MAGIC_LINKS_PER_IP_HOUR` | optional, default 100. Raise it (for example 300) before an event where many people sign in on one Wi-Fi. |
+| `RAISEBOOK_EMAIL_GLOBAL_PER_HOUR` | optional, default 500. All outbound email per hour; keep it under the email plan's limits. |
 
 Keep a copy of `deploy/.env` in a password manager: without the session secret everyone is
-signed out, without the Postgres password you cannot restore, and without the KEK saved
-OpenRouter keys cannot be opened.
+signed out, and without the Postgres password you cannot restore.
 
-The `worker` service (`rbctl worker`, same image as the API) runs background jobs: investor
-research and deck prefill. It needs outbound HTTPS to `openrouter.ai`; the compose network
-already has egress. `docker compose stop worker` lets running jobs finish for up to 50 s and
-hands the rest back to the queue.
+The `worker` service (`rbctl worker`, same image as the API) is the background job runner. No
+released feature queues jobs yet, so it idles; it has no HTTP healthcheck.
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d --build
-docker compose -f deploy/docker-compose.yml ps         # migrate "Exited (0)", others running/healthy
+GIT_SHA=$(git rev-parse --short HEAD) docker compose -f deploy/docker-compose.yml build
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml ps         # migrate "Exited (0)"; api, web, postgres healthy
 docker compose -f deploy/docker-compose.yml logs worker | grep worker_started
 docker compose -f deploy/docker-compose.yml logs caddy | grep -i certificate
 curl -sI https://raisebook.org | head -1               # HTTP/2 200
 curl -s https://api.raisebook.org/healthz/ready        # {"status":"ok","db":"ok"}
+curl -s https://api.raisebook.org/healthz              # "commit" is the SHA you built
 ```
 
 Then sign in at `https://raisebook.org/signin` with your own email and create the workspace.
@@ -155,7 +155,8 @@ Create an API key in Settings → API keys, then:
 curl -s https://api.raisebook.org/mcp \
   -H "Authorization: Bearer $RAISEBOOK_API_KEY" \
   -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 300
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+  | python3 -c "import json,sys; print(len(json.load(sys.stdin)['result']['tools']))"   # 17
 ```
 
 ---
@@ -176,7 +177,11 @@ crontab -e
 ```bash
 cd /opt/raisebook
 git pull
-docker compose -f deploy/docker-compose.yml up -d --build   # migrate runs before the new API starts
+# Build while the old containers keep serving (the build takes both vCPUs for minutes),
+# then swap in a quiet moment; recreating web and api gives a few seconds of 502s.
+GIT_SHA=$(git rev-parse --short HEAD) docker compose -f deploy/docker-compose.yml build
+docker compose -f deploy/docker-compose.yml up -d    # migrate runs before the new API starts
+curl -s https://api.raisebook.org/healthz            # "commit" is the new SHA
 docker image prune -f
 ```
 
@@ -204,7 +209,7 @@ The privacy page says backups are kept at most 14 days, so deleted data leaves t
 **Restore drill** (do it once before launch):
 ```bash
 dc="docker compose -f deploy/docker-compose.yml"
-$dc stop api web
+$dc stop api web worker
 $dc exec -T postgres dropdb -U raisebook raisebook
 $dc exec -T postgres createdb -U raisebook raisebook
 $dc exec -T postgres pg_restore -U raisebook -d raisebook --no-owner < /var/backups/raisebook/<file>.dump
@@ -222,4 +227,7 @@ $dc up -d
 - [ ] Response headers include HSTS and the CSP (`curl -sI https://raisebook.org`).
 - [ ] An MCP client connects with a key (section 3).
 - [ ] Backups run, an off-site copy expires after 14 days, and a restore was tested.
-- [ ] The GitHub repository is made public (AGPL source offer) at launch.
+- [x] The GitHub repository is public (AGPL source offer).
+- [ ] `tools/list` on production returns 17 tools (section 3).
+- [ ] External uptime checks on `https://raisebook.org/` and `https://api.raisebook.org/healthz/ready`
+      alert the owner; droplet alerts for CPU, memory and disk are set.

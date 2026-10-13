@@ -1,4 +1,4 @@
-# Raisebook API image (FastAPI + /mcp). SPEC §11. Not deployed yet (hosting undecided).
+# Raisebook API image (FastAPI + /mcp). SPEC §11.
 #
 # Build context is backend/:
 #   docker build -f deploy/api.Dockerfile backend
@@ -34,9 +34,12 @@ RUN uv sync --frozen --no-dev
 RUN useradd --system --uid 10001 --home /app raisebook && chown -R raisebook /app
 USER 10001
 
+# The commit this image was built from; /healthz reports it ("commit").
+ARG GIT_SHA=""
 ENV PATH="/app/.venv/bin:$PATH" \
     RAISEBOOK_ENVIRONMENT=production \
-    RAISEBOOK_LOG_JSON=true
+    RAISEBOOK_LOG_JSON=true \
+    RAISEBOOK_GIT_SHA=$GIT_SHA
 
 EXPOSE 8000
 

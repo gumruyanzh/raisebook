@@ -1,4 +1,4 @@
-# Raisebook web image (Next.js standalone output). SPEC §11. Not deployed yet.
+# Raisebook web image (Next.js standalone output). SPEC §11.
 #
 # Build context is web/:
 #   docker build -f deploy/web.Dockerfile web
@@ -15,13 +15,17 @@ ARG NEXT_PUBLIC_API_URL=https://api.raisebook.org
 ARG NEXT_PUBLIC_SITE_URL=https://raisebook.org
 ARG NEXT_PUBLIC_PUBLIC_API_URL=https://api.raisebook.org
 ARG NEXT_PUBLIC_REPO_URL=https://github.com/gumruyanzh/raisebook
-ARG NEXT_PUBLIC_SPONSOR_URL=https://github.com/sponsors/gumruyanzh
+# Empty hides the "Support Raisebook" buttons.
+ARG NEXT_PUBLIC_SPONSOR_URL=""
+# The commit this image was built from (a <meta name="raisebook-commit"> on every page).
+ARG GIT_SHA=""
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
     NEXT_PUBLIC_PUBLIC_API_URL=$NEXT_PUBLIC_PUBLIC_API_URL \
     NEXT_PUBLIC_REPO_URL=$NEXT_PUBLIC_REPO_URL \
-    NEXT_PUBLIC_SPONSOR_URL=$NEXT_PUBLIC_SPONSOR_URL
+    NEXT_PUBLIC_SPONSOR_URL=$NEXT_PUBLIC_SPONSOR_URL \
+    NEXT_PUBLIC_GIT_SHA=$GIT_SHA
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN mkdir -p public && npm run build

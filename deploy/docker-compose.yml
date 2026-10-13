@@ -1,13 +1,22 @@
-# Raisebook: the whole stack on one host (SPEC §11). Not deployed yet; see docs/DEPLOY.md.
+# Raisebook: the whole stack on one host (SPEC §11). raisebook.org runs this file; see
+# docs/DEPLOY.md.
 #
-#   cp deploy/.env.example deploy/.env      # then fill in the secrets
-#   docker compose -f deploy/docker-compose.yml up -d --build
+#   cp deploy/.env.example deploy/.env      # then set your hosts and secrets
+#   GIT_SHA=$(git rev-parse --short HEAD) docker compose -f deploy/docker-compose.yml build
+#   docker compose -f deploy/docker-compose.yml up -d
 #
 # Services: postgres (data volume), migrate (one-shot alembic upgrade), api (FastAPI + /mcp),
-# worker (background jobs: investor research), web (Next.js), caddy (TLS + reverse proxy).
-# Only caddy publishes ports.
+# worker (background job runner; idle unless a feature queues jobs), web (Next.js), caddy
+# (TLS + reverse proxy). Only caddy publishes ports. Every container's log is capped at
+# 5 x 20 MB, so a traffic spike cannot fill the disk.
 
 name: raisebook
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
 
 x-api-env: &api-env
   RAISEBOOK_ENVIRONMENT: ${RAISEBOOK_ENVIRONMENT:-production}
@@ -33,13 +42,19 @@ x-api-env: &api-env
   RAISEBOOK_WORKSPACE_LIMIT_EXEMPT_EMAILS: ${RAISEBOOK_WORKSPACE_LIMIT_EXEMPT_EMAILS:-}
   RAISEBOOK_LOG_LEVEL: ${RAISEBOOK_LOG_LEVEL:-INFO}
   RAISEBOOK_LOG_JSON: "true"
-  # Investor research: the KEK that seals each workspace's OpenRouter key (empty = research off).
+  # Sign-in links per client IP per hour (default 100; raise it for an event on shared
+  # Wi-Fi) and all outbound email per hour (default 500; keep it under your email plan).
+  RAISEBOOK_MAGIC_LINKS_PER_IP_HOUR: ${RAISEBOOK_MAGIC_LINKS_PER_IP_HOUR:-}
+  RAISEBOOK_EMAIL_GLOBAL_PER_HOUR: ${RAISEBOOK_EMAIL_GLOBAL_PER_HOUR:-}
+  # Unreleased features stay off unless switched on here.
+  RAISEBOOK_RESEARCH_ENABLED: ${RAISEBOOK_RESEARCH_ENABLED:-false}
   RAISEBOOK_SECRETS_KEK: ${RAISEBOOK_SECRETS_KEK:-}
   RAISEBOOK_SECRETS_KEK_PREVIOUS: ${RAISEBOOK_SECRETS_KEK_PREVIOUS:-}
   RAISEBOOK_WORKER_CONCURRENCY: ${RAISEBOOK_WORKER_CONCURRENCY:-4}
 
 services:
   postgres:
+    logging: *logging
     image: postgres:17
     restart: unless-stopped
     environment:
@@ -56,9 +71,12 @@ services:
     networks: [internal]
 
   migrate:
+    logging: *logging
     build:
       context: ../backend
       dockerfile: ../deploy/api.Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
     image: raisebook-api:local
     command: ["alembic", "upgrade", "head"]
     environment: *api-env
@@ -69,6 +87,7 @@ services:
     networks: [internal]
 
   api:
+    logging: *logging
     image: raisebook-api:local
     restart: unless-stopped
     environment: *api-env
@@ -78,10 +97,13 @@ services:
     networks: [internal]
 
   worker:
-    # Background jobs (research runs, deck prefill, removals). Same image as the api; it needs
-    # outbound HTTPS to openrouter.ai (the internal network has egress) and no ports.
+    logging: *logging
+    # Background job runner. Same image as the api, no ports. It serves no HTTP, so the
+    # image's /healthz check is turned off here (it would always report unhealthy).
     image: raisebook-api:local
     command: ["rbctl", "worker"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
     environment: *api-env
     depends_on:
@@ -92,6 +114,7 @@ services:
     networks: [internal]
 
   web:
+    logging: *logging
     build:
       context: ../web
       dockerfile: ../deploy/web.Dockerfile
@@ -100,7 +123,9 @@ services:
         NEXT_PUBLIC_SITE_URL: https://${WEB_HOST:-raisebook.org}
         NEXT_PUBLIC_PUBLIC_API_URL: https://${API_HOST:-api.raisebook.org}
         NEXT_PUBLIC_REPO_URL: ${NEXT_PUBLIC_REPO_URL:-https://github.com/gumruyanzh/raisebook}
-        NEXT_PUBLIC_SPONSOR_URL: ${NEXT_PUBLIC_SPONSOR_URL:-https://github.com/sponsors/gumruyanzh}
+        # Empty hides every "Support Raisebook" button (set it once GitHub Sponsors is live).
+        NEXT_PUBLIC_SPONSOR_URL: ${NEXT_PUBLIC_SPONSOR_URL:-}
+        GIT_SHA: ${GIT_SHA:-}
     image: raisebook-web:local
     restart: unless-stopped
     environment:
@@ -111,6 +136,7 @@ services:
     networks: [internal]
 
   caddy:
+    logging: *logging
     image: caddy:2.10
     restart: unless-stopped
     ports:

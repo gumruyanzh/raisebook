@@ -35,5 +35,13 @@ def test_kek_reaches_api_and_worker_and_is_documented() -> None:
     assert env["RAISEBOOK_SECRETS_KEK_PREVIOUS"] == "${RAISEBOOK_SECRETS_KEK_PREVIOUS:-}"
     example = (DEPLOY / ".env.example").read_text()
     assert "\nRAISEBOOK_SECRETS_KEK=\n" in example  # empty: never a real value in the repo
-    assert "urlsafe_b64encode(os.urandom(32))" in example
-    assert "rbctl secrets gen-kek" in example
+    # Research is unreleased: the example keeps it off, and compose defaults it off.
+    assert "\nRAISEBOOK_RESEARCH_ENABLED=false\n" in example
+    assert env["RAISEBOOK_RESEARCH_ENABLED"] == "${RAISEBOOK_RESEARCH_ENABLED:-false}"
+
+
+def test_every_service_caps_its_logs_and_the_worker_has_no_http_check() -> None:
+    services = compose()["services"]
+    for name, svc in services.items():
+        assert svc["logging"]["options"]["max-size"], name
+    assert services["worker"]["healthcheck"] == {"disable": True}
