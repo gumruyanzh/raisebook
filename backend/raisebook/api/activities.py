@@ -38,28 +38,37 @@ async def list_activities(
     actor_type: Literal["user", "agent", "system"] | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
+    run: str | None = Query(
+        None, max_length=64, description="only the activities of one import run or bulk change"
+    ),
+    collapse_runs: bool = Query(
+        False,
+        description="one entry per import run or bulk change (the newest), sized in `run`",
+    ),
     limit: int = Query(50, ge=1, le=200),
     cursor: str | None = None,
     ws: WorkspaceContext = Depends(get_workspace_ctx),
     db: AsyncSession = Depends(get_session),
 ) -> ActivityPage:
-    """Timeline entries, newest ``occurred_at`` first, with who did what."""
+    """Timeline entries, newest ``occurred_at`` first, with who did what. Feeds pass
+    ``collapse_runs=true`` so a 420-row import is one entry; ``run=<key>`` lists it."""
     if investor_id is not None:
         await investors_svc.get(db, ws, investor_id)  # 404 for other workspaces
     rnd = await resolve_round(db, ws, round, required=False)
+    filters = {
+        "investor_id": investor_id,
+        "round_id": rnd.id if rnd else None,
+        "kinds": kind,
+        "actor_type": actor_type,
+        "since": since,
+        "until": until,
+        "run": run,
+    }
     rows, nxt = await act_svc.list_activities(
-        db,
-        ws,
-        limit=limit,
-        cursor=cursor,
-        investor_id=investor_id,
-        round_id=rnd.id if rnd else None,
-        kinds=kind,
-        actor_type=actor_type,
-        since=since,
-        until=until,
+        db, ws, limit=limit, cursor=cursor, collapse_runs=collapse_runs, **filters
     )
-    return ActivityPage(data=await act_svc.present(db, ws, rows), next_cursor=nxt)
+    runs = await act_svc.run_counts(db, ws, rows, **filters) if collapse_runs else None
+    return ActivityPage(data=await act_svc.present(db, ws, rows, runs), next_cursor=nxt)
 
 
 @router.post("", status_code=201, response_model=ActivityCreated)

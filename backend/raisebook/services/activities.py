@@ -19,7 +19,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, delete, func, select, update
+from sqlalchemy import Select, Text, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import Principal, WorkspaceContext
@@ -37,7 +37,7 @@ from raisebook.models.activity import Activity
 from raisebook.models.enums import LOGGABLE_ACTIVITY_KINDS, ActorType, Role
 from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant
-from raisebook.schemas.activities import ActivityOut, ActorOut
+from raisebook.schemas.activities import ActivityOut, ActorOut, RunOut
 from raisebook.schemas.common import decode_cursor, encode_cursor
 from raisebook.services.users import FORMER_MEMBER, display_names
 from raisebook.services.workspaces import LIMITS
@@ -263,6 +263,12 @@ async def delete_activity(db: AsyncSession, ws: WorkspaceContext, activity_id: U
     await db.flush()
 
 
+def run_key() -> Any:
+    """The run an activity belongs to: its import run, else the ``data.bulk_id`` of a bulk
+    change, else NULL."""
+    return func.coalesce(cast(Activity.import_run_id, Text), Activity.data["bulk_id"].astext)
+
+
 def list_query(
     ws: WorkspaceContext,
     *,
@@ -272,6 +278,7 @@ def list_query(
     actor_type: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
+    run: str | None = None,
 ) -> Select[tuple[Activity]]:
     stmt = select(Activity).where(Activity.workspace_id == ws.workspace_id)
     if investor_id is not None:
@@ -286,6 +293,8 @@ def list_query(
         stmt = stmt.where(Activity.occurred_at >= since)
     if until is not None:
         stmt = stmt.where(Activity.occurred_at < until)
+    if run:
+        stmt = stmt.where(run_key() == run)
     return stmt.order_by(
         Activity.occurred_at.desc(), Activity.created_at.desc(), Activity.id.desc()
     )
@@ -297,18 +306,67 @@ async def list_activities(
     *,
     limit: int = 50,
     cursor: str | None = None,
+    collapse_runs: bool = False,
     **filters: Any,
 ) -> tuple[list[Activity], str | None]:
+    """Newest first. ``collapse_runs`` keeps only the newest activity of each import run or
+    bulk change (the feed shows it as one entry; :func:`run_counts` sizes it)."""
     offset = int((decode_cursor(cursor) or {}).get("o", 0))
-    stmt = list_query(ws, **filters).offset(offset).limit(limit + 1)
-    rows = list(await db.scalars(stmt))
+    stmt = list_query(ws, **filters)
+    if collapse_runs:
+        rk = run_key()
+        rn = func.row_number().over(
+            partition_by=rk,
+            order_by=(Activity.occurred_at.desc(), Activity.created_at.desc(), Activity.id.desc()),
+        )
+        ranked = (
+            list_query(ws, **filters)
+            .order_by(None)
+            .with_only_columns(Activity.id, rk.label("rk"), rn.label("rn"))
+            .subquery()
+        )
+        keep = select(ranked.c.id).where(or_(ranked.c.rk.is_(None), ranked.c.rn == 1))
+        stmt = stmt.where(Activity.id.in_(keep))
+    rows = list(await db.scalars(stmt.offset(offset).limit(limit + 1)))
     more = len(rows) > limit
     rows = rows[:limit]
     return rows, encode_cursor({"o": offset + limit}) if more else None
 
 
+async def run_counts(
+    db: AsyncSession, ws: WorkspaceContext, rows: Sequence[Activity], **filters: Any
+) -> dict[str, RunOut]:
+    """Size of each run the given rows belong to, within the same filters."""
+    keys: dict[str, str] = {}
+    for r in rows:
+        if r.import_run_id is not None:
+            keys[str(r.import_run_id)] = "import"
+        elif isinstance(r.data, dict) and isinstance(r.data.get("bulk_id"), str):
+            keys[r.data["bulk_id"]] = "bulk"
+    if not keys:
+        return {}
+    rk = run_key()
+    q = (
+        list_query(ws, **filters)
+        .order_by(None)
+        .with_only_columns(rk, func.count(), func.count(func.distinct(Activity.investor_id)))
+        .where(rk.in_(list(keys)))
+        .group_by(rk)
+    )
+    out: dict[str, RunOut] = {}
+    for key, size, investors in (await db.execute(q)).tuples():
+        if key is None:
+            continue
+        k = str(key)
+        out[k] = RunOut(key=k, kind=keys[k], size=int(size), investors=int(investors))
+    return out
+
+
 async def present(
-    db: AsyncSession, ws: WorkspaceContext, rows: Sequence[Activity]
+    db: AsyncSession,
+    ws: WorkspaceContext,
+    rows: Sequence[Activity],
+    runs: dict[str, RunOut] | None = None,
 ) -> list[ActivityOut]:
     """Rows → ``Activity`` objects (names resolved at read time, never stored)."""
     if not rows:
@@ -361,6 +419,17 @@ async def present(
                 ),
                 created_at=r.created_at,
                 deletable=can_delete(r, ws.principal),
+                import_run_id=r.import_run_id,
+                run=_run_of(r, runs),
             )
         )
     return out
+
+
+def _run_of(r: Activity, runs: dict[str, RunOut] | None) -> RunOut | None:
+    if not runs:
+        return None
+    if r.import_run_id is not None:
+        return runs.get(str(r.import_run_id))
+    bulk = r.data.get("bulk_id") if isinstance(r.data, dict) else None
+    return runs.get(bulk) if isinstance(bulk, str) else None

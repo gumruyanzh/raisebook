@@ -186,3 +186,87 @@ async def test_follow_ups(db: AsyncSession, key_client: Any, frozen_now: Any) ->
     r = (await c.get("/v1/follow-ups", params={"round": "pre-seed"})).json()
     assert [i["investor"]["id"] for i in r["data"]] == [str(e.id)]
     assert (await c.get("/v1/follow-ups", params={"round": "nope"})).status_code == 404
+
+
+async def test_collapse_runs_groups_an_import_and_lists_it_back(
+    db: AsyncSession, key_client: Any, frozen_now: Any
+) -> None:
+    """A feed with ``collapse_runs`` shows an import as one entry sized in ``run``; the
+    run's key lists every activity of it; a manual note stays its own entry."""
+    w = await world(db)
+    c = key_client(w.key)
+    csv = "Name,Firm,Email\n" + "".join(
+        f"Imported Person {i},Fictional Fund {i},imported{i}@example.com\n" for i in range(6)
+    )
+    r = await c.post("/v1/imports", json={"content": csv, "round": "seed", "filename": "six.csv"})
+    assert r.status_code == 200, r.text
+    run_id = r.json()["import_run_id"]
+    inv = await dana(db, w.ws)
+    await make_participant(db, w.rnd, inv)
+    r = await c.post(
+        "/v1/activities",
+        json={
+            "investor_id": str(inv.id),
+            "kind": "note",
+            "body": "Coffee next week.",
+            "round": "seed",
+        },
+    )
+    assert r.status_code == 201
+
+    full = (await c.get("/v1/activities", params={"round": "seed", "limit": 200})).json()["data"]
+    imported = [a for a in full if a["import_run_id"] == run_id]
+    assert len(imported) >= 6 and all(a["run"] is None for a in full)
+
+    feed = (await c.get("/v1/activities", params={"round": "seed", "collapse_runs": "true"})).json()
+    runs = [a for a in feed["data"] if a["run"]]
+    assert len(runs) == 1
+    run = runs[0]["run"]
+    assert run["key"] == run_id and run["kind"] == "import"
+    assert run["size"] == len(imported) and run["investors"] == 6
+    assert any(a["kind"] == "note" and a["run"] is None for a in feed["data"])
+    assert len(feed["data"]) == len(full) - len(imported) + 1
+
+    params = {"run": run_id, "round": "seed", "limit": 200}
+    back = (await c.get("/v1/activities", params=params)).json()["data"]
+    assert {a["id"] for a in back} == {a["id"] for a in imported}
+    # Without the round filter the run also holds the contact-level "added" entries.
+    everything = (await c.get("/v1/activities", params={"run": run_id, "limit": 200})).json()
+    assert len(everything["data"]) > len(back)
+    assert all(a["import_run_id"] == run_id for a in everything["data"])
+
+
+async def test_collapse_runs_groups_a_bulk_change(
+    db: AsyncSession, key_client: Any, frozen_now: Any
+) -> None:
+    """Activities that share ``data.bulk_id`` collapse the same way, keyed by that id."""
+    from raisebook.services import activities as act_svc
+    from tests.services.test_imports import ctx_for
+
+    w = await world(db)
+    invs = [
+        await make_investor(db, w.ws, name=f"Bulk Person {i}", email=f"bulk{i}@example.com")
+        for i in range(3)
+    ]
+    ctx = ctx_for(w.ws, w.owner)
+    for inv in invs:
+        await make_participant(db, w.rnd, inv)
+        await act_svc.log(
+            db,
+            ctx,
+            investor_id=inv.id,
+            round_id=w.rnd.id,
+            kind="stage_change",
+            data={"bulk_id": "bulk-123", "to": {"key": "passed", "label": "Passed"}},
+            now=frozen_now,
+        )
+    await db.flush()
+    c = key_client(w.key)
+    feed = (await c.get("/v1/activities", params={"collapse_runs": "true"})).json()["data"]
+    bulk = [a for a in feed if a["run"]]
+    assert len(bulk) == 1 and bulk[0]["run"] == {
+        "key": "bulk-123",
+        "kind": "bulk",
+        "size": 3,
+        "investors": 3,
+    }

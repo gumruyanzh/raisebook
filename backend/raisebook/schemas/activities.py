@@ -23,6 +23,16 @@ class ActorOut(BaseModel):
     via: ViaName
 
 
+class RunOut(BaseModel):
+    """A run of activities written by one import or one bulk change, collapsed to one entry
+    in a feed (``collapse_runs=true``). ``key`` filters the run back out (``?run=``)."""
+
+    key: str
+    kind: Literal["import", "bulk"]
+    size: int  # activities in the run (within the same filters)
+    investors: int  # distinct investors they touch
+
+
 class ActivityOut(BaseModel):
     id: UUID
     investor_id: UUID
@@ -36,6 +46,9 @@ class ActivityOut(BaseModel):
     actor: ActorOut
     created_at: Timestamp
     deletable: bool
+    import_run_id: UUID | None = None
+    # Only with ``collapse_runs=true``: this entry stands for a whole import or bulk change.
+    run: RunOut | None = None
 
 
 class ActivityCreate(StrictInput):

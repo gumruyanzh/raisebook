@@ -25,7 +25,7 @@ export default async function OverviewPage({ params }: { params: Promise<Params>
     const week = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
     const [summary, activity, followUps, agentActivity] = await Promise.all([
       getRoundSummary(client, round.id),
-      optional(listActivities(client, { round: round.id, limit: 30 }).then((r) => r.data), []),
+      optional(listActivities(client, { round: round.id, limit: 30, collapse_runs: true }).then((r) => r.data), []),
       optional(listFollowUps(client, { round: round.id, within_days: 7, include_overdue: true, limit: 200 }), {
         today,
         data: [],

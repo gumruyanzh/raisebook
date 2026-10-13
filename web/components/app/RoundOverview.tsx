@@ -87,7 +87,7 @@ export function RoundOverview({
   // After a queue write: refresh the ledger numbers and the feed quietly.
   const reload = useCallback(async () => {
     try {
-      const [s, a] = await Promise.all([getRoundSummary(client, round.id), listActivities(client, { round: round.id, limit: 30 })]);
+      const [s, a] = await Promise.all([getRoundSummary(client, round.id), listActivities(client, { round: round.id, limit: 30, collapse_runs: true })]);
       setSummary(s);
       setFeed(a.data);
     } catch (err) {
@@ -172,6 +172,18 @@ export function RoundOverview({
               withInvestor
               investorHref={(a) => `${pipeline}?investor=${a.investor_id}`}
               filterable
+              loadRun={async (key) => {
+                // A run can hold a few thousand entries; follow cursors (5 pages at most).
+                const out: Activity[] = [];
+                let cursor: string | undefined;
+                for (let i = 0; i < 5; i++) {
+                  const page = await listActivities(client, { round: round.id, run: key, limit: 200, cursor });
+                  out.push(...page.data);
+                  if (!page.next_cursor) break;
+                  cursor = page.next_cursor;
+                }
+                return out;
+              }}
               empty="Nothing has happened in this round yet."
             />
       </section>

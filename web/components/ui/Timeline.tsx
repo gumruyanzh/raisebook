@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 
+import { runKeyOf, type ActivityRun, type FeedActivity } from "@/lib/api/activities";
 import type { Activity, ActivityKind } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import {
@@ -12,6 +13,7 @@ import {
   formatTime,
   isoDate,
   money,
+  plural,
   todayIn,
 } from "@/lib/format";
 
@@ -103,6 +105,81 @@ export function activitySentence(
   }
 }
 
+/** One line for a whole import run or bulk change ("imported 420 investors from x.csv"). */
+export function runSentence(head: Activity, run: Pick<ActivityRun, "kind" | "investors" | "size">): string {
+  const d = head.data ?? {};
+  const n = plural(run.investors, "investor");
+  if (run.kind === "import") {
+    const file = s(d.filename) || s(d.import_filename);
+    return `imported ${n}${file ? ` from ${file}` : ""}`;
+  }
+  switch (head.kind) {
+    case "stage_change": {
+      const to = stageLabel(d.to);
+      return to ? `moved ${n} to ${to}` : `moved ${n}`;
+    }
+    case "follow_up_set": {
+      const to = s(d.to);
+      return to ? `set follow-ups for ${n} on ${formatDate(to)}` : `cleared follow-ups for ${n}`;
+    }
+    case "removed_from_round":
+      return `removed ${n} from the round`;
+    case "added_to_round":
+      return `added ${n} to the round`;
+    case "participant_updated": {
+      const changes = d.changes && typeof d.changes === "object" ? Object.keys(d.changes) : [];
+      return changes.length ? `changed ${changes.join(", ").replaceAll("_", " ")} for ${n}` : `changed ${n}`;
+    }
+    case "investor_updated":
+      return `updated ${n}`;
+    default:
+      return `changed ${n}`;
+  }
+}
+
+/** A row of the feed: one activity, or a run of them shown as one expandable entry. */
+type Entry =
+  | { type: "one"; a: Activity }
+  | { type: "run"; head: Activity; run: ActivityRun; items: Activity[] | null };
+
+/** Client-side runs of at least this many consecutive activities collapse. */
+const MIN_RUN = 3;
+
+function toEntries(items: Activity[], groupRuns: boolean): Entry[] {
+  const out: Entry[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const a = items[i]!;
+    const server = (a as FeedActivity).run;
+    if (server && server.size > 1) {
+      out.push({ type: "run", head: a, run: server, items: null });
+      continue;
+    }
+    const key = groupRuns ? runKeyOf(a) : null;
+    if (key) {
+      let j = i;
+      while (j + 1 < items.length && runKeyOf(items[j + 1]!) === key && !(items[j + 1] as FeedActivity).run) j++;
+      if (j - i + 1 >= MIN_RUN) {
+        const its = items.slice(i, j + 1);
+        out.push({
+          type: "run",
+          head: a,
+          run: {
+            key,
+            kind: (a as FeedActivity).import_run_id ? "import" : "bulk",
+            size: its.length,
+            investors: new Set(its.map((x) => x.investor_id)).size,
+          },
+          items: its,
+        });
+        i = j;
+        continue;
+      }
+    }
+    out.push({ type: "one", a });
+  }
+  return out;
+}
+
 function linkName(sentence: string, a: Activity, href?: (a: Activity) => string): ReactNode {
   const name = a.investor_name;
   const at = href && name ? sentence.indexOf(name) : -1;
@@ -123,6 +200,10 @@ function linkName(sentence: string, a: Activity, href?: (a: Activity) => string)
  * optional body (pre-wrap, 65ch), grouped under day separators. Agent items get the orchid
  * rule and a 50% agent-soft tint. `filterable` adds the All / Conversations / Stage & money /
  * Agent actions control.
+ *
+ * Runs (UX-PASS-1 P1-11): an import or a bulk change is one expandable entry ("Sam imported
+ * 420 investors from investors.csv"). The API collapses them with `collapse_runs` (pass
+ * `loadRun` to expand those); with `groupRuns`, consecutive entries of one run collapse here.
  */
 export function Timeline({
   items,
@@ -137,6 +218,8 @@ export function Timeline({
   roundLabel,
   footer,
   now,
+  groupRuns,
+  loadRun,
   className,
 }: {
   items: Activity[];
@@ -156,6 +239,10 @@ export function Timeline({
   footer?: ReactNode;
   /** Fixed "now" for stable rendering in tests and vignettes. */
   now?: Date;
+  /** Collapse 3+ consecutive entries of one import or bulk change (default: on in feeds). */
+  groupRuns?: boolean;
+  /** Loads the entries of a run the API collapsed (`listActivities({run})`). */
+  loadRun?: (key: string) => Promise<Activity[]>;
   className?: string;
 }) {
   const [filter, setFilter] = useState<TimelineFilter>(defaultFilter);
@@ -168,8 +255,40 @@ export function Timeline({
       if (last && last.day === day) last.items.push(a);
       else out.push({ day, items: [a] });
     }
-    return out;
-  }, [items, filter, timeZone]);
+    const group = groupRuns ?? Boolean(withInvestor);
+    return out.map((g) => ({ day: g.day, entries: toEntries(g.items, group) }));
+  }, [items, filter, timeZone, groupRuns, withInvestor]);
+
+  const row = (a: Activity, nested = false) => {
+    const agent = a.actor.type === "agent";
+    return (
+      <li
+        key={a.id}
+        className={cn(
+          "t-body-s grid grid-cols-[64px_minmax(0,1fr)] gap-x-8 rounded-xs py-5 pr-6",
+          agent
+            ? "bg-[color-mix(in_srgb,var(--agent-soft)_50%,transparent)] pl-6 shadow-[inset_2px_0_0_var(--agent)]"
+            : "pl-8",
+          nested && "py-3",
+        )}
+      >
+        <time dateTime={a.occurred_at} title={formatDateTime(a.occurred_at, timeZone)} className="t-micro pt-1 text-muted">
+          {formatTime(a.occurred_at, timeZone)}
+        </time>
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-baseline gap-x-6">
+            {nested ? null : <ActorName actor={a.actor} />}
+            <span className="text-fg">
+              {linkName(activitySentence(a, { withInvestor: withInvestor || nested, currency }), a, withInvestor || nested ? investorHref : undefined)}
+              {roundLabel?.(a) ? <span className="text-muted"> · in {roundLabel(a)}</span> : null}
+            </span>
+            {renderExtra ? <span className="ml-auto">{renderExtra(a)}</span> : null}
+          </p>
+          {a.body ? <p className="mt-3 max-w-[65ch] whitespace-pre-wrap text-muted">{a.body}</p> : null}
+        </div>
+      </li>
+    );
+  };
 
   return (
     <div className={cn("flex flex-col gap-10", className)}>
@@ -193,45 +312,114 @@ export function Timeline({
         <section key={g.day} aria-label={dayLabel(g.day, today)}>
           <h4 className="t-label mb-6">{dayLabel(g.day, today)}</h4>
           <ol className="m-0 flex list-none flex-col gap-2 p-0">
-            {g.items.map((a) => {
-              const agent = a.actor.type === "agent";
-              return (
-                <li
-                  key={a.id}
-                  className={cn(
-                    "t-body-s grid grid-cols-[64px_minmax(0,1fr)] gap-x-8 rounded-xs py-5 pr-6",
-                    agent
-                      ? "bg-[color-mix(in_srgb,var(--agent-soft)_50%,transparent)] pl-6 shadow-[inset_2px_0_0_var(--agent)]"
-                      : "pl-8",
-                  )}
-                >
-                  <time
-                    dateTime={a.occurred_at}
-                    title={formatDateTime(a.occurred_at, timeZone)}
-                    className="t-micro pt-1 text-muted"
-                  >
-                    {formatTime(a.occurred_at, timeZone)}
-                  </time>
-                  <div className="min-w-0">
-                    <p className="flex flex-wrap items-baseline gap-x-6">
-                      <ActorName actor={a.actor} />
-                      <span className="text-fg">
-                        {linkName(activitySentence(a, { withInvestor, currency }), a, withInvestor ? investorHref : undefined)}
-                        {roundLabel?.(a) ? <span className="text-muted"> · in {roundLabel(a)}</span> : null}
-                      </span>
-                      {renderExtra ? <span className="ml-auto">{renderExtra(a)}</span> : null}
-                    </p>
-                    {a.body ? (
-                      <p className="mt-3 max-w-[65ch] whitespace-pre-wrap text-muted">{a.body}</p>
-                    ) : null}
-                  </div>
-                </li>
-              );
-            })}
+            {g.entries.map((e) =>
+              e.type === "one" ? (
+                row(e.a)
+              ) : (
+                <RunItem
+                  key={`run-${e.run.key}-${e.head.id}`}
+                  head={e.head}
+                  run={e.run}
+                  items={e.items}
+                  loadRun={loadRun}
+                  timeZone={timeZone}
+                  renderRow={(a) => row(a, true)}
+                />
+              ),
+            )}
           </ol>
         </section>
       ))}
       {footer}
     </div>
+  );
+}
+
+const RUN_PAGE = 100;
+
+/** One import run or bulk change: a single line that expands to its entries. */
+function RunItem({
+  head,
+  run,
+  items,
+  loadRun,
+  timeZone,
+  renderRow,
+}: {
+  head: Activity;
+  run: ActivityRun;
+  items: Activity[] | null;
+  loadRun?: (key: string) => Promise<Activity[]>;
+  timeZone?: string;
+  renderRow: (a: Activity) => ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState<Activity[] | null>(items);
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const [limit, setLimit] = useState(RUN_PAGE);
+  const agent = head.actor.type === "agent";
+  const canExpand = Boolean(items || loadRun);
+  const listId = `run-${run.key}-${head.id}`;
+
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !loaded && loadRun) {
+      setState("loading");
+      try {
+        setLoaded(await loadRun(run.key));
+        setState("idle");
+      } catch {
+        setState("error");
+      }
+    }
+  };
+
+  return (
+    <li
+      className={cn(
+        "t-body-s grid grid-cols-[64px_minmax(0,1fr)] gap-x-8 rounded-xs py-5 pr-6",
+        agent ? "bg-[color-mix(in_srgb,var(--agent-soft)_50%,transparent)] pl-6 shadow-[inset_2px_0_0_var(--agent)]" : "pl-8",
+      )}
+    >
+      <time dateTime={head.occurred_at} title={formatDateTime(head.occurred_at, timeZone)} className="t-micro pt-1 text-muted">
+        {formatTime(head.occurred_at, timeZone)}
+      </time>
+      <div className="min-w-0">
+        <p className="flex flex-wrap items-baseline gap-x-6">
+          <ActorName actor={head.actor} />
+          <span className="text-fg">{runSentence(head, run)}</span>
+          {canExpand ? (
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-controls={listId}
+              onClick={() => void toggle()}
+              className="link t-micro ml-auto border-0 bg-transparent p-0"
+            >
+              {open ? "Hide" : `Show ${plural(run.size, "entry", "entries")}`}
+            </button>
+          ) : null}
+        </p>
+        {open ? (
+          <div id={listId} className="mt-4 border-l border-line pl-8">
+            {state === "loading" ? <p className="t-body-s text-muted">Loading…</p> : null}
+            {state === "error" ? <p className="t-body-s text-bad">These entries could not load. Try again.</p> : null}
+            {loaded ? (
+              <ol className="m-0 flex list-none flex-col p-0">
+                {loaded.slice(0, limit).map((a) => renderRow(a))}
+                {loaded.length > limit ? (
+                  <li>
+                    <button type="button" className="link t-body-s border-0 bg-transparent p-0 py-4" onClick={() => setLimit((l) => l + RUN_PAGE * 4)}>
+                      Show {plural(Math.min(loaded.length - limit, RUN_PAGE * 4), "more entry", "more entries")}
+                    </button>
+                  </li>
+                ) : null}
+              </ol>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </li>
   );
 }
