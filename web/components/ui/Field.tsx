@@ -18,8 +18,14 @@ import { cn } from "@/lib/cn";
  */
 type Tone = "form" | "toolbar" | "inline";
 
+/**
+ * Focus (P1-12): a crisp 2px accent edge (border + a 1px inset outline), no halo. Placeholders
+ * are sans and faint even in mono inputs.
+ */
 const CONTROL =
   "w-full min-w-0 rounded-sm border text-fg transition-[border-color,background-color] duration-[120ms] " +
+  "focus-visible:border-accent focus-visible:outline-1 focus-visible:outline-offset-[-1px] focus-visible:outline-accent " +
+  "placeholder:font-body placeholder:text-faint " +
   "disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-bad";
 
 /**
@@ -206,7 +212,7 @@ export function Field({
     : children;
   return (
     <div className={cn("flex min-w-0 flex-col gap-4", className)}>
-      <label htmlFor={cid} className="text-[12px] text-muted">
+      <label id={`${cid}-label`} htmlFor={cid} className="text-[12px] text-muted">
         {label}
         {optional ? <span className="text-muted"> (optional)</span> : null}
       </label>

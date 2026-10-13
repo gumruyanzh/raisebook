@@ -11,7 +11,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./lib/testing/register.mjs --test \"lib/**/*.test.ts\""
   },
   "dependencies": {
     "next": "15.5.27",
