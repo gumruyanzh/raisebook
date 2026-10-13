@@ -58,6 +58,7 @@ ImportField = Literal[
     "probability",
     "next_step",
     "owner_email",
+    "last_contacted",
 ]
 
 CONTACT_FIELDS: Final[tuple[ImportField, ...]] = (
@@ -92,6 +93,7 @@ ROUND_FIELDS: Final[tuple[ImportField, ...]] = (
     "probability",
     "next_step",
     "owner_email",
+    "last_contacted",
 )
 ALL_FIELDS: Final[tuple[ImportField, ...]] = CONTACT_FIELDS + ROUND_FIELDS
 LIST_FIELDS: Final[frozenset[str]] = frozenset({"stage_focus", "industries", "tags"})
@@ -127,6 +129,7 @@ FIELD_LABELS: Final[dict[str, str]] = {
     "probability": "Probability %",
     "next_step": "Next step",
     "owner_email": "Owner email",
+    "last_contacted": "Last contacted",
 }
 
 
@@ -181,6 +184,16 @@ _ALIASES: Final[dict[ImportField, tuple[str, ...]]] = {
     "probability": ("probability", "likelihood", "%", "probability %"),
     "next_step": ("next step", "next action", "todo", "to do"),
     "owner_email": ("owner", "owner email", "assigned to"),
+    "last_contacted": (
+        "last contacted",
+        "last contact",
+        "last contact date",
+        "last touch",
+        "last touched",
+        "last reached out",
+        "contacted on",
+        "last interaction",
+    ),
 }
 
 ALIAS_INDEX: Final[dict[str, ImportField]] = {

@@ -47,6 +47,11 @@ class ImportRequest(StrictInput):
     on_duplicate: OnDuplicateImport = "skip"
     source: str | None = Field(None, max_length=200)
     round_map: list[RoundMapEntry] | None = Field(None, max_length=20)
+    value_map: dict[str, dict[str, str]] | None = Field(
+        None,
+        description='CSV values to Raisebook values per field: {"stage": {"Intro requested": '
+        '"contacted"}, "fit": {"hot": "5"}}. Keys are the cell text as in the file.',
+    )
 
 
 class RowMatch(BaseModel):
@@ -94,6 +99,21 @@ class PreviewCounts(BaseModel):
     cells_left_empty: int = 0
 
 
+class ColumnStats(BaseModel):
+    empty: int = 0  # rows with nothing in this column
+    unreadable: int = 0  # rows whose value here could not be read and is left empty
+
+
+class ValueCount(BaseModel):
+    """One distinct value of a stage or fit column, and what it becomes."""
+
+    value: str
+    count: int
+    stage: str | None = None  # stage key it matches (exactly or by label), if any
+    suggestion: str | None = None  # a likely stage key when it does not match
+    fit: int | None = None  # fit columns: the 0-5 it reads as, if it does
+
+
 class ImportPreview(BaseModel):
     format: ImportFormatName
     columns: list[str]
@@ -105,6 +125,13 @@ class ImportPreview(BaseModel):
     warning_kinds: dict[str, int] = Field(
         default_factory=dict,
         description='Dropped optional cells by kind, e.g. {"follow_up_unreadable": 74}.',
+    )
+    column_stats: dict[str, ColumnStats] = Field(
+        default_factory=dict, description="CSV: per column, empty and unreadable cells."
+    )
+    values: dict[str, list[ValueCount]] = Field(
+        default_factory=dict,
+        description="CSV: distinct values of the columns mapped to stage or fit (top 60).",
     )
     samples: dict[str, list[str]] = Field(
         default_factory=dict, description="Up to three sample values per column (CSV)."

@@ -24,6 +24,7 @@ from raisebook.api.deps import (
 )
 from raisebook.schemas.common import ERROR_RESPONSES
 from raisebook.schemas.data import ImportPreview, ImportRequest, ImportResult, ImportRunList
+from raisebook.services import csv_io
 from raisebook.services import imports as svc
 
 router = APIRouter(prefix="/v1/imports", tags=["imports"], responses=ERROR_RESPONSES)
@@ -39,7 +40,8 @@ async def preview_import(
     """Map the columns (auto-mapped unless `mapping` is given), match every row against the
     workspace (email, then LinkedIn, then name + firm) and against earlier rows, and return
     the action per row with counts. Nothing is written."""
-    return await svc.preview(db, ws, body)
+    # Every row comes back, so the review can list and filter all of them (P1-10).
+    return await svc.preview(db, ws, body, max_rows=csv_io.MAX_ROWS)
 
 
 @router.post("", response_model=ImportResult, summary="Import investors")

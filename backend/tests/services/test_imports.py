@@ -632,6 +632,7 @@ async def test_bad_optional_cells_never_drop_the_row(db: AsyncSession, frozen_no
     assert {r.row: r.action for r in pv.rows} == {2: "create", 3: "create", 4: "create", 5: "error"}
     assert pv.counts.error == 1 and pv.counts.cells_left_empty == 6
     assert pv.warning_kinds == {
+        "type_guessed": 3,  # no type column: Fund / Partners / Capital read as VC
         "follow_up_unreadable": 2,
         "amount_unreadable": 1,
         "check_size_invalid": 1,
@@ -658,3 +659,58 @@ async def test_bad_optional_cells_never_drop_the_row(db: AsyncSession, frozen_no
     pv2 = await imports.preview(db, ctx, csv_req(again))
     assert [r.action for r in pv2.rows] == ["skip", "skip"]
     assert [r.match.matched_on for r in pv2.rows if r.match] == ["linkedin", "name_firm"]
+
+
+REVIEW = (
+    "Name,Firm,Title,Status,Priority,Last contacted,Next Follow Up\n"
+    "Ana Quarrington,Tidewell Ventures,Partner,Intro requested,hot,2026-09-30,next week\n"
+    "Bo Lindqvist,,Angel investor,Intro requested,4,,\n"
+    "Cai Ferreira,Odd Name LLC,Principal,Meeting booked,warm,last spring,\n"
+    "Dee Okonkwo,Saltmarsh Capital,GP,Researching,,,\n"
+)
+
+
+async def test_review_helpers_value_map_stats_and_last_contacted(
+    db: AsyncSession, frozen_now: Any
+) -> None:
+    """P1-10: distinct stage/fit values with matches and suggestions, a value map that sends
+    'Intro requested' to Contacted, empty/unreadable counts per column, a guessed type, and
+    'Last contacted' as a dated note."""
+    ws, _, ctx = await setup_ws(db)
+    rnd = await make_round(db, ws, name="Seed")
+    pv = await imports.preview(db, ctx, csv_req(REVIEW, round="seed"))
+    assert pv.mapping["Status"] == "stage" and pv.mapping["Last contacted"] == "last_contacted"
+    stage_vals = {v.value: (v.count, v.stage, v.suggestion) for v in pv.values["Status"]}
+    assert stage_vals == {
+        "Intro requested": (2, None, "contacted"),
+        "Meeting booked": (1, None, "meeting"),
+        "Researching": (1, "research", None),
+    }
+    fits = {v.value: v.fit for v in pv.values["Priority"]}
+    assert fits["hot"] == 5 and fits["4"] == 4
+    assert pv.column_stats["Firm"].empty == 1
+    assert pv.column_stats["Last contacted"].unreadable == 1
+    assert pv.column_stats["Next Follow Up"].unreadable == 1
+    by_row = {r.row: r for r in pv.rows}
+    assert by_row[2].investor["type"] == "vc" and by_row[3].investor["type"] == "angel"
+    assert by_row[4].investor.get("type", "other") == "other"  # nothing to guess from
+    assert by_row[5].participant is not None and by_row[5].participant.stage == "research"
+    # An unknown stage falls back to the first stage until it is mapped.
+    assert by_row[2].participant is not None and by_row[2].participant.stage == "new"
+
+    mapped = csv_req(REVIEW, round="seed", value_map={"stage": {"Intro requested": "contacted"}})
+    pv2 = await imports.preview(db, ctx, mapped)
+    stages = {r.row: r.participant.stage for r in pv2.rows if r.participant}
+    assert stages[2] == "contacted" and stages[3] == "contacted"
+
+    res = await imports.commit(db, ctx, mapped, now=frozen_now)
+    assert res.counts.created == 4
+    ana = await db.scalar(select(Investor).where(Investor.name == "Ana Quarrington"))
+    assert ana is not None
+    notes = list(
+        await db.scalars(
+            select(Activity).where(Activity.investor_id == ana.id, Activity.kind == "note")
+        )
+    )
+    assert len(notes) == 1 and notes[0].occurred_at.date().isoformat() == "2026-09-30"
+    _ = rnd

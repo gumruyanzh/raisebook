@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ from raisebook.models.round import DEFAULT_STAGES, Round, RoundParticipant, Roun
 from raisebook.models.user import User
 from raisebook.models.workspace import Membership
 from raisebook.schemas.data import (
+    ColumnStats,
     CreatedRow,
     ImportPreview,
     ImportRequest,
@@ -52,6 +54,7 @@ from raisebook.schemas.data import (
     RowError,
     RowMatch,
     RowParticipant,
+    ValueCount,
 )
 from raisebook.services import csv_io
 from raisebook.services.normalize import (
@@ -110,8 +113,12 @@ class RecordIn:
     participations: list[ParticipationIn] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[RowError] = field(default_factory=list)
-    # One machine-readable kind per dropped optional cell ("follow_up_unreadable").
+    # One machine-readable kind per dropped optional cell ("follow_up_unreadable"), and the
+    # field it was in.
     kinds: list[str] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)
+    # Notices that change nothing the user typed ("type_guessed").
+    info: list[str] = field(default_factory=list)
 
 
 # Labels for dropped-cell warnings: "follow-up left empty: 'next week' is not a date".
@@ -136,6 +143,7 @@ CELL_LABEL: dict[str, str] = {
     "fit": "fit",
     "probability": "probability",
     "follow_up_on": "follow-up",
+    "last_contacted": "last contacted",
     "follow_up_note": "follow-up note",
     "next_step": "next step",
     "amount_soft": "soft amount",
@@ -154,6 +162,7 @@ CELL_KIND: dict[str, str] = {
     "fit": "fit_invalid",
     "probability": "probability_invalid",
     "follow_up_on": "follow_up_unreadable",
+    "last_contacted": "date_unreadable",
     "amount_soft": "amount_unreadable",
     "amount_committed": "amount_unreadable",
     "amount": "amount_unreadable",
@@ -169,6 +178,97 @@ def drop_cell(rec: RecordIn, fld: str, raw: Any, reason: str) -> None:
         shown = shown[:57] + "…"
     rec.warnings.append(f"{label} left empty: {shown!r} {reason}")
     rec.kinds.append(CELL_KIND.get(fld, "value_invalid"))
+    rec.dropped.append(fld)
+
+
+_ANGEL = re.compile(r"\b(angel|operator angel|business angel)\b", re.I)
+_VC = re.compile(
+    r"\b(ventures?|capital|partners|vc|fund|funds|investments|holdings|labs? ventures)\b", re.I
+)
+
+
+def guess_type(contact: Mapping[str, Any]) -> str | None:
+    """No type column: "Angel" in the title or firm → angel; a firm named "… Ventures",
+    "… Capital", "… Partners" or "… Fund" → vc. Otherwise None (stays Other)."""
+    title = str(contact.get("title") or "")
+    firm = str(contact.get("firm") or "")
+    if _ANGEL.search(title) or _ANGEL.search(firm):
+        return "angel"
+    if firm and _VC.search(firm):
+        return "vc"
+    return None
+
+
+# Common pipeline words people use in their own sheets → default stage keys.
+STAGE_SYNONYMS: dict[str, str] = {
+    "intro requested": "contacted",
+    "intro": "contacted",
+    "reached out": "contacted",
+    "emailed": "contacted",
+    "pitched": "contacted",
+    "outreach": "contacted",
+    "to contact": "researching",
+    "prospect": "researching",
+    "target": "researching",
+    "lead": "new",
+    "interested": "replied",
+    "responded": "replied",
+    "follow up": "replied",
+    "call scheduled": "meeting",
+    "first call": "meeting",
+    "first meeting": "meeting",
+    "pitch meeting": "meeting",
+    "partner meeting": "diligence",
+    "dd": "diligence",
+    "due diligence": "diligence",
+    "term sheet": "diligence",
+    "signed": "committed",
+    "in": "committed",
+    "yes": "committed",
+    "closed": "committed",
+    "wired": "committed",
+    "pass": "passed",
+    "passed": "passed",
+    "declined": "passed",
+    "no": "passed",
+    "not interested": "passed",
+    "dead": "passed",
+}
+
+
+_CONCEPT_ALIASES: dict[str, tuple[str, ...]] = {
+    "researching": ("research", "researching"),
+    "diligence": ("dd", "diligence", "due diligence"),
+    "committed": ("committed", "won", "closed"),
+    "passed": ("passed", "lost", "pass"),
+}
+
+
+def suggest_stage(value: str, stages: Iterable[tuple[str, str]]) -> str | None:
+    """A likely stage key for a value that matches no stage: a synonym ("Intro requested" →
+    Contacted), else a stage key or label inside the value ("Meeting booked" → Meeting).
+    ``stages`` are (key, label) pairs of the round."""
+    v = norm(value)
+    pairs = [(k, norm(lbl)) for k, lbl in stages]
+
+    def resolve(concept: str) -> str | None:
+        names = _CONCEPT_ALIASES.get(concept, (concept,))
+        for k, lbl in pairs:
+            if k in names or lbl in names or lbl == concept:
+                return k
+        return None
+
+    hit = STAGE_SYNONYMS.get(v)
+    if hit and (k := resolve(hit)):
+        return k
+    words = v.split()
+    for k, lbl in pairs:
+        if (k and k in words) or (lbl and (lbl in words or v.startswith(lbl))):
+            return k
+    for word, concept in STAGE_SYNONYMS.items():
+        if len(word) > 3 and word in v and (k := resolve(concept)):
+            return k
+    return None
 
 
 @dataclass
@@ -181,6 +281,9 @@ class Built:
     rounds: list[Round]
     warnings: list[str]
     default_stage: str | None
+    # CSV only: empty cells per column, and distinct values of the stage and fit columns.
+    empty: dict[str, int] = field(default_factory=dict)
+    raw_values: dict[str, list[tuple[str, int]]] = field(default_factory=dict)
 
 
 # --- context ------------------------------------------------------------------------------
@@ -276,6 +379,9 @@ async def _build_csv(db: AsyncSession, ws: WorkspaceContext, req: ImportRequest)
         vals = [r[idx].strip() for r in parsed.rows if r[idx].strip()][:3]
         samples[col] = [v[:120] for v in vals]
 
+    value_map = {f: dict(m) for f, m in (req.value_map or {}).items()}
+    guess = "type" not in mapped
+    empty: dict[str, int] = {c: 0 for c in parsed.columns}
     records: list[RecordIn] = []
     for cells, line in zip(parsed.rows, parsed.line_numbers, strict=True):
         contact: dict[str, Any] = {}
@@ -284,8 +390,12 @@ async def _build_csv(db: AsyncSession, ws: WorkspaceContext, req: ImportRequest)
         for col, value in zip(parsed.columns, cells, strict=True):
             fld = mapping.get(col)
             text = csv_io.unguard_cell(value).strip()
+            if not text:
+                empty[col] += 1
             if not fld or not text:
                 continue  # empty cells never clear existing data
+            if fld in value_map and text in value_map[fld]:
+                text = str(value_map[fld][text]).strip() or text
             if fld == "first_name":
                 first = text
             elif fld == "last_name":
@@ -297,10 +407,20 @@ async def _build_csv(db: AsyncSession, ws: WorkspaceContext, req: ImportRequest)
         if "name" not in contact and (first or last):
             contact["name"] = f"{first} {last}".strip()
         rec = RecordIn(row=line, contact=contact)
+        if guess and contact.get("name"):
+            t = guess_type(contact)
+            if t:
+                contact["type"] = t
+                from_title = t == "angel" and _ANGEL.search(str(contact.get("title") or ""))
+                label = "Angel" if t == "angel" else "VC"
+                rec.warnings.append(
+                    f"Type guessed as {label} from the {'title' if from_title else 'firm'}."
+                )
+                rec.info.append("type_guessed")
         if rnd is not None:
             rec.participations.append(ParticipationIn(round=rnd, cells=round_cells))
         records.append(rec)
-    return Built(
+    built = Built(
         format="csv",
         columns=parsed.columns,
         mapping=dict(mapping),
@@ -310,6 +430,28 @@ async def _build_csv(db: AsyncSession, ws: WorkspaceContext, req: ImportRequest)
         warnings=warnings,
         default_stage=req.default_stage,
     )
+    built.empty = empty
+    built.raw_values = _distinct_values(parsed, mapping, rnd)
+    return built
+
+
+def _distinct_values(
+    parsed: Any, mapping: Mapping[str, str | None], rnd: Round | None
+) -> dict[str, list[tuple[str, int]]]:
+    """Distinct raw values (most common first, top 60) of the stage and fit columns."""
+    out: dict[str, list[tuple[str, int]]] = {}
+    if rnd is None:
+        return out
+    for idx, col in enumerate(parsed.columns):
+        if mapping.get(col) not in ("stage", "fit"):
+            continue
+        counts: dict[str, int] = {}
+        for r in parsed.rows:
+            v = csv_io.unguard_cell(r[idx]).strip() if idx < len(r) else ""
+            if v:
+                counts[v] = counts.get(v, 0) + 1
+        out[col] = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))[:60]
+    return out
 
 
 def _proto_docs(content: str) -> list[Any]:
@@ -554,7 +696,7 @@ class Plan:
         for r in self.rows:
             if r.action in ("error", "skip"):
                 continue
-            for k in r.rec.kinds:
+            for k in (*r.rec.kinds, *r.rec.info):
                 out[k] = out.get(k, 0) + 1
         return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
 
@@ -662,6 +804,13 @@ def _parse_participation(
                     f"Follow-up date {cells['follow_up_on']!r} was read as month/day "
                     f"({d.isoformat()})."
                 )
+    if "last_contacted" in cells:
+        d, _amb = parse_date_loose(cells["last_contacted"])
+        if d is None:
+            drop_cell(rec, "last_contacted", cells["last_contacted"], "is not a date")
+        else:
+            # A dated note, so the timeline and "going quiet" know when you last talked.
+            p.notes.append(NoteIn("Last contacted (from the imported list).", d))
     for fld in ("amount_soft", "amount_committed", "amount"):
         if fld not in cells:
             continue
@@ -1002,8 +1151,53 @@ async def preview(
         counts=counts,
         warnings=warnings,
         warning_kinds=p.warning_kinds(),
+        column_stats=_column_stats(p),
+        values=await _values(db, ws, p),
         samples=p.built.samples,
     )
+
+
+def _column_stats(p: Plan) -> dict[str, ColumnStats]:
+    b = p.built
+    if b.format != "csv":
+        return {}
+    col_of = {f: c for c, f in b.mapping.items() if f}
+    unreadable: dict[str, int] = {}
+    for r in p.rows:
+        for fld in r.rec.dropped:
+            col = col_of.get(fld) or (col_of.get("amount_soft") if fld == "amount" else None)
+            if col:
+                unreadable[col] = unreadable.get(col, 0) + 1
+    return {
+        c: ColumnStats(empty=b.empty.get(c, 0), unreadable=unreadable.get(c, 0)) for c in b.columns
+    }
+
+
+async def _values(db: AsyncSession, ws: WorkspaceContext, p: Plan) -> dict[str, list[ValueCount]]:
+    b = p.built
+    if not b.raw_values or not b.rounds:
+        return {}
+    rnd = b.rounds[0]
+    ctx = await _load_ctx(db, ws, [rnd])
+    keys = [(st.key, st.label) for st in ctx.stages.get(rnd.id, [])]
+    out: dict[str, list[ValueCount]] = {}
+    for col, vals in b.raw_values.items():
+        fld = b.mapping.get(col)
+        rows: list[ValueCount] = []
+        for v, n in vals:
+            vc = ValueCount(value=v, count=n)
+            if fld == "stage":
+                st = ctx.stage(rnd, v)
+                vc.stage = st.key if st else None
+                vc.suggestion = None if st else suggest_stage(v, keys)
+            else:
+                try:
+                    vc.fit = csv_io.parse_fit(v)
+                except ValueError:
+                    vc.fit = None
+            rows.append(vc)
+        out[col] = rows
+    return out
 
 
 async def _investor_count(db: AsyncSession, ws: WorkspaceContext) -> int:
