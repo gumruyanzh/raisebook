@@ -47,6 +47,8 @@ export interface FilterField {
   values: FilterValue[];
   /** Chip verb: "Stage is Meeting". */
   verb?: string;
+  /** The whole chip text, when "<label> <verb> <value>" reads badly ("Not in Seed"). */
+  chipLabel?: (valueLabel: string) => string;
 }
 
 export interface FilterMenuHandle {
@@ -95,6 +97,8 @@ export function FilterMenu({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // The popover hangs from the button's left edge unless that would run off the screen.
+  const [alignEnd, setAlignEnd] = useState(false);
   const [level, setLevel] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
@@ -110,6 +114,8 @@ export function FilterMenu({
     setLevel(null);
     setQ("");
     setActiveIdx(0);
+    const r = btn.current?.getBoundingClientRect();
+    setAlignEnd(Boolean(r && r.left + 300 > window.innerWidth - 16));
     setOpen(true);
   }, [onOpenRequest]);
   useImperativeHandle(ref, () => ({ open: doOpen }), [doOpen]);
@@ -269,7 +275,10 @@ export function FilterMenu({
         <div
           role="dialog"
           aria-label={field ? `Filter by ${field.label}` : "Filter investors"}
-          className="anim-fade absolute top-full left-0 z-[45] mt-4 flex w-[min(300px,calc(100vw-32px))] flex-col rounded-md border border-line bg-surface shadow-menu"
+          className={cn(
+            alignEnd ? "right-0" : "left-0",
+            "anim-fade absolute top-full z-[45] mt-4 flex w-[min(300px,calc(100vw-32px))] flex-col rounded-md border border-line bg-surface shadow-menu",
+          )}
         >
           <div className="flex items-center gap-6 border-b border-line px-8">
             {field ? (
@@ -393,7 +402,9 @@ export function FilterChips({
         const v = f.values.find((x) => x.value === active[f.key]);
         return {
           key: f.key,
-          label: `${f.label} ${f.verb ?? "is"} ${v?.label ?? active[f.key]}`,
+          label: f.chipLabel
+            ? f.chipLabel(v?.label ?? active[f.key]!)
+            : `${f.label} ${f.verb ?? "is"} ${v?.label ?? active[f.key]}`,
           onRemove: () => onRemove(f.key),
         };
       }),

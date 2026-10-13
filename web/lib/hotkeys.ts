@@ -71,18 +71,23 @@ let pending: { regs: Registration[]; depth: number; at: number } | null = null;
 let installed = false;
 
 function emit() {
-  const seen = new Set<string>();
-  const list: HotkeyInfo[] = [];
-  // Latest registration first, so the live description of a combo wins.
-  for (let i = regs.length - 1; i >= 0; i--) {
-    const r = regs[i]!;
+  // One line per combo. The page's own registration ("Search this round") beats the shell's
+  // generic one ("Search this page"); then priority; then the latest registration.
+  const best = new Map<string, Registration>();
+  const score = (r: Registration) => [r.opts.priority ?? 0, (r.opts.group ?? "General") === "General" ? 0 : 1, r.id];
+  const better = (a: Registration, b: Registration) => {
+    const [sa, sb] = [score(a), score(b)];
+    for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return sa[i]! > sb[i]!;
+    return false;
+  };
+  for (const r of regs) {
     if (!r.opts.description || r.opts.enabled === false) continue;
-    const key = `${r.opts.group ?? "General"}|${r.combo}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    list.push({ id: r.id, combo: r.combo, description: r.opts.description, group: r.opts.group ?? "General" });
+    const cur = best.get(r.combo);
+    if (!cur || better(r, cur)) best.set(r.combo, r);
   }
-  snapshot = list.reverse();
+  snapshot = [...best.values()]
+    .sort((a, b) => a.id - b.id)
+    .map((r) => ({ id: r.id, combo: r.combo, description: r.opts.description!, group: r.opts.group ?? "General" }));
   listeners.forEach((l) => l());
 }
 

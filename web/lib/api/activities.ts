@@ -32,6 +32,37 @@ export function runKeyOf(a: Activity): string | null {
   return typeof b === "string" ? b : null;
 }
 
+/** Consecutive look-alike edits (no shared run id) collapse in feeds from this many… */
+export const MIN_SIMILAR = 5;
+/** …when each one is at most this far from the one before it. */
+export const SIMILAR_GAP_MS = 10 * 60_000;
+
+const CONVERSATION_KINDS: ActivityKind[] = ["note", "email", "call", "meeting"];
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/**
+ * What makes two activities "the same edit" for a feed: one actor, one kind and the same
+ * shape of change (the same fields, the same target stage or date). Conversations and
+ * commitments never match (each one is its own story), nor do members of a real run.
+ */
+export function similarKeyOf(a: Activity): string | null {
+  if (CONVERSATION_KINDS.includes(a.kind) || a.kind === "commitment" || runKeyOf(a)) return null;
+  const d = a.data ?? {};
+  const actor = `${a.actor.type}:${a.actor.user_id ?? a.actor.api_key_id ?? ""}:${a.actor.label}`;
+  let shape = "";
+  if (a.kind === "participant_updated") {
+    shape = d.changes && typeof d.changes === "object" ? Object.keys(d.changes).sort().join(",") : "";
+  } else if (a.kind === "investor_updated") {
+    shape = Array.isArray(d.fields) ? (d.fields as unknown[]).map(String).sort().join(",") : "";
+  } else if (a.kind === "follow_up_set") {
+    shape = `${str(d.to)}|${str(d.note)}`;
+  } else if (a.kind === "stage_change") {
+    const to = d.to && typeof d.to === "object" ? (d.to as Record<string, unknown>) : {};
+    shape = str(to.key) || str(to.label);
+  }
+  return `${actor}|${a.kind}|${shape}`;
+}
+
 export interface ActivityQuery {
   investor_id?: UUID;
   round?: string;

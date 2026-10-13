@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 
-import { runKeyOf, type ActivityRun, type FeedActivity } from "@/lib/api/activities";
+import { MIN_SIMILAR, SIMILAR_GAP_MS, runKeyOf, similarKeyOf, type ActivityRun, type FeedActivity } from "@/lib/api/activities";
 import type { Activity, ActivityKind } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import {
@@ -130,8 +130,12 @@ export function runSentence(head: Activity, run: Pick<ActivityRun, "kind" | "inv
       const changes = d.changes && typeof d.changes === "object" ? Object.keys(d.changes) : [];
       return changes.length ? `changed ${changes.join(", ").replaceAll("_", " ")} for ${n}` : `changed ${n}`;
     }
-    case "investor_updated":
-      return `updated ${n}`;
+    case "investor_updated": {
+      const fields = Array.isArray(d.fields) ? (d.fields as unknown[]).map(String) : [];
+      return fields.length ? `updated ${fields.join(", ").replaceAll("_", " ")} for ${n}` : `updated ${n}`;
+    }
+    case "investor_created":
+      return `added ${n}`;
     default:
       return `changed ${n}`;
   }
@@ -144,7 +148,6 @@ type Entry =
 
 /** Client-side runs of at least this many consecutive activities collapse. */
 const MIN_RUN = 3;
-
 function toEntries(items: Activity[], groupRuns: boolean): Entry[] {
   const out: Entry[] = [];
   for (let i = 0; i < items.length; i++) {
@@ -153,6 +156,28 @@ function toEntries(items: Activity[], groupRuns: boolean): Entry[] {
     if (server && server.size > 1) {
       out.push({ type: "run", head: a, run: server, items: null });
       continue;
+    }
+    const sim = groupRuns ? similarKeyOf(a) : null;
+    if (sim) {
+      let j = i;
+      while (
+        j + 1 < items.length &&
+        !(items[j + 1] as FeedActivity).run &&
+        similarKeyOf(items[j + 1]!) === sim &&
+        Math.abs(Date.parse(items[j]!.occurred_at) - Date.parse(items[j + 1]!.occurred_at)) <= SIMILAR_GAP_MS
+      )
+        j++;
+      if (j - i + 1 >= MIN_SIMILAR) {
+        const its = items.slice(i, j + 1);
+        out.push({
+          type: "run",
+          head: a,
+          run: { key: `similar-${a.id}`, kind: "bulk", size: its.length, investors: new Set(its.map((x) => x.investor_id)).size },
+          items: its,
+        });
+        i = j;
+        continue;
+      }
     }
     const key = groupRuns ? runKeyOf(a) : null;
     if (key) {

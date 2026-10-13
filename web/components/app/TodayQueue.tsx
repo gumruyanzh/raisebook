@@ -22,6 +22,8 @@ type Pick = { label: string; iso: string | null; kbd: string };
 
 const HEAD_H = 30;
 const ROW_H = 58;
+/** A row with no note or next step is one line. */
+const ROW_H_1 = 42;
 const WINDOW_DAYS = 7;
 
 function groupOf(i: FollowUpItem, today: string): GroupKey | null {
@@ -117,7 +119,27 @@ export function TodayQueue({
     return m;
   }, [rows]);
 
-  const height = useCallback((i: number) => (rows[i]?.type === "head" ? HEAD_H : ROW_H), [rows]);
+  // Touch screens move the due date to the second line, so every row there has two.
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    const on = () => setCoarse(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const twoLines = useCallback(
+    (it: FollowUpItem) => Boolean(it.follow_up_note || it.next_step) || (canWrite && coarse),
+    [canWrite, coarse],
+  );
+  const height = useCallback(
+    (i: number) => {
+      const r = rows[i];
+      if (!r || r.type === "head") return HEAD_H;
+      return twoLines(r.item) ? ROW_H : ROW_H_1;
+    },
+    [rows, twoLines],
+  );
   const v = useVirtualRows({ scrollRef: scroll, count: rows.length, height, initial: 40 });
 
   const count = itemRows.length;
@@ -425,7 +447,7 @@ export function TodayQueue({
                   "focus-visible:bg-accent-soft focus-visible:shadow-[inset_2px_0_0_var(--accent)]",
                   on && prompt?.item.investor.id === it.investor.id && "bg-accent-soft shadow-[inset_2px_0_0_var(--accent)]",
                 )}
-                style={{ height: ROW_H }}
+                style={{ height: twoLines(it) ? ROW_H : ROW_H_1 }}
               >
                 <div className="flex min-w-0 items-center gap-8">
                   <StageDot color={it.stage.color} />
@@ -457,16 +479,18 @@ export function TodayQueue({
                     </span>
                   ) : null}
                 </div>
-                <p className="t-body-s min-h-[17px] truncate pl-17 text-muted" title={line || undefined}>
-                  {canWrite ? (
-                    // Touch screens show the actions where the date sits; the date moves here.
-                    <span className={cn("hidden font-mono [@media(pointer:coarse)]:inline", g === "soon" ? "text-muted" : "text-bad")}>
-                      {dueText(it, today)}
-                      {line ? " · " : ""}
-                    </span>
-                  ) : null}
-                  {line}
-                </p>
+                {twoLines(it) ? (
+                  <p className="t-body-s truncate pl-17 text-muted" title={line || undefined}>
+                    {canWrite ? (
+                      // Touch screens show the actions where the date sits; the date moves here.
+                      <span className={cn("hidden font-mono [@media(pointer:coarse)]:inline", g === "soon" ? "text-muted" : "text-bad")}>
+                        {dueText(it, today)}
+                        {line ? " · " : ""}
+                      </span>
+                    ) : null}
+                    {line}
+                  </p>
+                ) : null}
               </div>
             );
           })}

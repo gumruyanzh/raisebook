@@ -302,7 +302,7 @@ export function InvestorSheet({
       subline={who || undefined}
       chips={
         <>
-          {p ? <PriorityChip fit={p.fit} showFit /> : null}
+          {p ? <PriorityChip fit={p.fit} /> : null}
           {type && type !== "other" ? <Chip tone="type">{INVESTOR_TYPE_LABEL[type]}</Chip> : null}
           {industries.slice(0, 3).map((i) => (
             <Chip key={i} tone="industry">

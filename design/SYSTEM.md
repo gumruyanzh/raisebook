@@ -241,7 +241,7 @@ tokens, and works with the keyboard. The live inventory is `/design` (dev only, 
 | 3.15 | `Dialog`, `ConfirmDialog` | Native `<dialog>`: surface, radius 8, dialog shadow, max-width 480. Title `display-s`, body, actions right-aligned (secondary then primary). `ConfirmDialog` with `typed` asks the user to type the slug or name to enable the `danger` button ("Delete workspace permanently"). |
 | 3.16 | `Toast` (`ToastProvider`, `useToast`, `useToastLift`) | The prototype toast: an `fg` box with `canvas` text, radius 8, centered bottom with safe-area offset. One line, plus an optional action ("Undo" for stage moves, bulk changes, Done and Snooze). Auto-dismisses after 4s, or 8s with an action. `role="status"`. A bar at the bottom of the viewport (a selection bar, the Today queue's "Next follow-up?" strip) calls `useToastLift` so the toast rises above it and never covers its buttons. |
 | 3.17 | `EmptyState` | A surface with a 1px **dashed** line and radius 8, padding 28, centered. Title `display-xs`, one sentence in muted, then the action button(s). Copy rules in §6. |
-| 3.18 | `Timeline` | A vertical list: each item has a mono time (11.5, muted, fixed 64px column), the actor (§2.5), the action sentence, and an optional body (pre-wrap, 65ch). Day separators use a `label` style ("TODAY", "OCT 9"). Agent items get the orchid rule and tint. Filters: Segmented All / Conversations / Stage & money / Agent actions. |
+| 3.18 | `Timeline` | A vertical list: each item has a mono time (11.5, muted, fixed 64px column), the actor (§2.5), the action sentence, and an optional body (pre-wrap, 65ch). Day separators use a `label` style ("TODAY", "OCT 9"). Agent items get the orchid rule and tint. Filters: Segmented All / Conversations / Stage & money / Agent actions. Feeds collapse an import run or bulk change into one expandable entry, and also 5+ consecutive look-alike edits (one actor, one kind, the same fields, stage or date, each within 10 minutes of the next): "claude-code changed next step, probability for 28 investors". Conversations and commitments never collapse. |
 | 3.19 | `ActorName` | §2.5. |
 | 3.20 | `CodeBlock` | Always dark (`#0F141C` bg, `#E6EBF2` text) in both themes, radius 8, Plex Mono 12.5. Optional tabs (Claude Code · Codex · Cursor · Other), a copy button ("Copy" → "Copied"), and minimal highlighting for shell/JSON/TOML (strings in `#9FD3A6`, keys in `#7C9BFF`). |
 | 3.21 | `SecretReveal` | The copy-once API key panel: `warm-soft` background, 1px warm border, mono secret in a read-only input, a Copy button, and the line "This is the only time you'll see this key. Store it in your agent's config or a password manager." The secret is never rendered again after this panel closes. |
@@ -261,7 +261,7 @@ tokens, and works with the keyboard. The live inventory is `/design` (dev only, 
 | 3.35 | `CurrencyPicker` | A `Combobox` over every ISO 4217 code from `Intl`. Row: code (mono 500), name (fg), symbol (mono muted). Search by code, name, symbol ("€", "£") or country ("armenia"). Pinned: the current value, the guessed currency (from timezone and locale) as "Suggested", then USD, EUR, GBP, CAD, AUD, SGD, INR, CHF, ILS, JPY. Amounts render with the currency's own symbol (₦250k, CHF 250k). |
 | 3.36 | `DateField` | A date picker in the **workspace** timezone. Trigger: 32px mono "Oct 16 · in 4d", or muted "Set follow-up". Popover: quick picks with key hints (Today 0, Tomorrow 1, In 3 days 3, Next Monday m, In 1 week 7, In 2 weeks 2, Clear ⌫; deadline picks for close dates), a typed input ("fri", "+7", "oct 20", "10/20", "2026-10-20") and a month grid with arrow-key navigation. Full screen under 640px. |
 | 3.37 | `Avatar` | A 20px `sunk` circle with initials, then the first name or "You"; the email is in `title`. Used for owners in tables and menus. |
-| 3.38 | `FilterMenu`, `FilterChips` | The one-line toolbar filter: a 28px secondary "Filter" button (Kbd F) opening a Menu of fields (Stage, Fit, Type, Industry, Follow-up, Owner, Tag), each opening a searchable value list. Applied filters show as removable chips ("Owner is Dana ✕", Backspace removes a focused chip) in a row that appears only when something is applied, with "Clear". The URL query stays the source of truth. Under 900px the Filters sheet stays. |
+| 3.38 | `FilterMenu`, `FilterChips` | The one-line toolbar filter: a 28px secondary "Filter" button (Kbd F) opening a Menu of fields (Stage, Fit, Type, Industry, Follow-up, Owner, Tag), each opening a searchable value list. Applied filters show as removable chips ("Owner is Dana ✕", Backspace removes a focused chip) in a row that appears only when something is applied, with "Clear". The URL query stays the source of truth. Under 900px the Filters sheet stays. The pipeline and the Investors directory both use it (no row of selects anywhere). The popover opens from the button's right edge when the left edge would run off screen. |
 | 3.39 | `CommandPalette` | ⌘K / Ctrl+K: a modal dialog holding an editable combobox over a grouped listbox. It searches investors in the current workspace as you type (server `sort=relevance`, name prefix first), plus go-to pages, actions, rounds, workspaces, theme, recently opened investors and the commands of an open investor sheet. Kbd hints on the right. Esc clears the query, then closes; focus returns. Full screen under 640px. |
 | 3.40 | `ShortcutsSheet` | `?` opens a list of the shortcuts live on the current page, grouped (General, Navigation, Pipeline, Investor file, Today), from `useHotkeyList()`. Shortcuts never fire while typing in a field; a sheet's keys (priority 1) beat the page's. `Kbd` renders in `muted`. |
 
@@ -459,7 +459,7 @@ an agent · Data.
   Cursor / Other, a CodeBlock with the secret filled in if it was just created, else
   `rb_live_…` with a note). 03 Try it: suggested prompts in a CodeBlock ("What follow-ups are
   due this week in Seed?", "Import investors.csv into Seed as Researching, dry run first.").
-  Below: the 15 tools as a Table (tool name in mono, what it does, read/write).
+  Below: the 17 tools as a Table (tool name in mono, what it does, read/write).
 - **Data**: Import (link to the import flow, plus the last 5 import runs), Export (Workspace
   JSON, All investors CSV, a CSV per round), and the **Danger zone** (a 1px `bad` border block):
   "Delete workspace" → ConfirmDialog typed with the slug, plus the copy "Everything in
@@ -543,7 +543,7 @@ Marketing max-width 1120px, canvas background, body-l. Real components with fict
    a surface with a 1px line and radius 8, cropped at the right edge. It is static: hover
    works, drag does not.
 3. **Facts strip**: four mono facts separated by 1px rules: `$0 · no paid tier, ever` ·
-   `15 MCP tools` · `CSV in, CSV + JSON out` · `AGPL-3.0 · self-hostable`.
+   `17 MCP tools` · `CSV in, CSV + JSON out` · `AGPL-3.0 · self-hostable`.
 4. **"Your agent can work the round."** Left: copy (60ch) plus three short points as a ruled
    list ("It logs what happened.", "It sets the next follow-up.", "You see every action, in
    orchid, on the timeline."). Right: a dark CodeBlock styled as a Claude Code transcript (a
@@ -608,7 +608,7 @@ parameters (Name in mono, Type, Required, Description). Headings are `display-l`
 - **Empty states**: what lives here, then how to get it there. One sentence each.
 - **Errors**: what went wrong and what to do, in one or two sentences, with the `error.code`
   in mono. Never "Something went wrong" or "Oops".
-- **Marketing**: plain and specific, with numbers ("15 MCP tools", "$0"), and promises we can
+- **Marketing**: plain and specific, with numbers ("17 MCP tools", "$0"), and promises we can
   keep and link to code. Allowed: "free forever", "open source", "private". Banned: "AI-powered",
   "supercharge", "seamless", "unlock", "revolutionize", "game-changer", "10x", exclamation
   marks, emoji, testimonials, customer logos, "trusted by".

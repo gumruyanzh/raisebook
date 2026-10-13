@@ -29,6 +29,7 @@ import {
   type MenuEntry,
 } from "@/components/ui";
 import { Combobox } from "@/components/ui/Combobox";
+import { FilterChips, FilterMenu, type FilterField, type FilterMenuHandle } from "@/components/ui/FilterBar";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
 import { errorMessage } from "@/lib/api/client";
 import { investorSearchText, listAllInvestors, toInvestorRow, updateInvestor, type InvestorRow } from "@/lib/api/investors";
@@ -501,6 +502,67 @@ export function InvestorsDirectory({
     </>
   );
 
+  // Larger screens: the pipeline's Filter menu (F) and removable chips, one toolbar row.
+  const filterRef = useRef<FilterMenuHandle>(null);
+  const filterFields: FilterField[] = useMemo(() => {
+    const count = (f: (r: InvestorRow) => boolean) => num(rows.filter(f).length);
+    const fields: FilterField[] = [
+      {
+        key: "type",
+        label: "Type",
+        values: (Object.keys(INVESTOR_TYPE_LABEL) as InvestorType[]).map((t) => ({
+          value: t,
+          label: t === "other" ? "Other / not set" : INVESTOR_TYPE_LABEL[t],
+          hint: count((r) => r.type === t),
+        })),
+      },
+      {
+        key: "tag",
+        label: "Tag",
+        values: tags.map((t) => ({ value: t, label: t, hint: count((r) => r.tags.includes(t)) })),
+      },
+      {
+        key: "industry",
+        label: "Industry",
+        values: industries.map((t) => ({ value: t, label: t, hint: count((r) => r.industries.includes(t)) })),
+      },
+    ];
+    if (rounds.length) {
+      fields.push(
+        {
+          key: "in",
+          label: "In round",
+          chipLabel: (v) => `In ${v}`,
+          values: rounds.map((r) => ({ value: r.slug, label: r.name, hint: count((x) => x.rounds.some((y) => y.slug === r.slug)) })),
+        },
+        {
+          key: "out",
+          label: "Not in round",
+          chipLabel: (v) => `Not in ${v}`,
+          values: rounds.map((r) => ({ value: r.slug, label: r.name, hint: count((x) => !x.rounds.some((y) => y.slug === r.slug)) })),
+        },
+      );
+    }
+    return fields;
+  }, [rows, tags, industries, rounds]);
+  const activeMap: Record<string, string | undefined> = {
+    type: type || undefined,
+    tag: tag || undefined,
+    industry: industry || undefined,
+    in: roundFilter.startsWith("in:") ? roundFilter.slice(3) : undefined,
+    out: roundFilter.startsWith("out:") ? roundFilter.slice(4) : undefined,
+  };
+  const setFilter = (k: string, v: string | null) => {
+    if (k === "in" || k === "out") setParams({ round: v ? `${k}:${v}` : null });
+    else setParams({ [k]: v });
+  };
+  useHotkey("f", () => filterRef.current?.open(), {
+    description: "Filter",
+    group: "Investors",
+    blockedByModals: true,
+    enabled: rows.length > 0,
+  });
+
   const activeFilters = [type, tag, industry, roundFilter].filter(Boolean).length;
   const emptyActions = canWrite ? (
     <>
@@ -558,19 +620,36 @@ export function InvestorsDirectory({
                 <Kbd className="pointer-events-none absolute top-1/2 right-8 -translate-y-1/2">/</Kbd>
               ) : null}
             </div>
-            <div className="hidden flex-wrap items-center gap-8 sm:flex">{filterControls(false)}</div>
+            <FilterMenu
+              ref={filterRef}
+              fields={filterFields}
+              active={activeMap}
+              onChange={setFilter}
+              onOpenRequest={() => {
+                if (!phone) return false;
+                setFiltersOpen(true);
+                return true;
+              }}
+              className="max-sm:hidden"
+            />
             <Button className="sm:hidden" onClick={() => setFiltersOpen(true)}>
               Filters{activeFilters ? ` · ${activeFilters}` : ""}
             </Button>
-            {filtered ? (
-              <Button variant="ghost" size="sm" onClick={clearAll}>
-                Clear
-              </Button>
-            ) : null}
             <span className="t-micro ml-auto text-muted" aria-live="polite">
               {num(shown.length)} of {num(rows.length)}
             </span>
           </div>
+          <FilterChips
+            className="-mt-2 mb-10"
+            fields={filterFields}
+            active={activeMap}
+            onRemove={(k) => setFilter(k, null)}
+            onClear={clearAll}
+            focusAfterRemove={() =>
+              requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-label="Filter contacts"] [aria-keyshortcuts="F"]')?.focus())
+            }
+            extra={q ? [{ key: "q", label: `Matches “${q}”`, onRemove: () => onSearch("") }] : undefined}
+          />
 
           {shown.length === 0 ? (
             <EmptyState title="No contacts match" actions={<Button onClick={clearAll}>Clear filters</Button>}>
@@ -580,31 +659,14 @@ export function InvestorsDirectory({
             <>
               {/* Phones: a list, one contact per row. */}
               {phone ? (
-              <ul className="m-0 flex list-none flex-col rounded-md border border-line bg-surface p-0">
-                {shown.slice(0, 200).map((r) => (
-                  <li key={r.id} className="flex min-h-56 items-center gap-10 border-b border-line px-12 py-8 last:border-b-0">
-                    <Checkbox aria-label={`Select ${r.name}`} checked={selected.has(r.id)} onChange={() => toggle(r.id)} className="size-20" />
-                    <Link href={`${base}/investors/${r.id}`} className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold">{r.name}</span>
-                      <span className="t-body-s block truncate text-muted">{[r.title, r.firm].filter(Boolean).join(" · ") || typeText(r.type)}</span>
-                      {r.rounds.length ? (
-                        <span className="t-body-s mt-2 flex min-w-0 items-center gap-6 text-muted">
-                          <StageDot color={r.rounds[0]!.color} />
-                          <span className="truncate">
-                            {r.rounds[0]!.name} · {r.rounds[0]!.label}
-                            {r.rounds.length > 1 ? ` +${r.rounds.length - 1}` : ""}
-                          </span>
-                        </span>
-                      ) : null}
-                    </Link>
-                  </li>
-                ))}
-                {shown.length > 200 ? (
-                  <li className="t-body-s px-12 py-10 text-muted">
-                    Showing 200 of {num(shown.length)}. Search or filter to narrow the list.
-                  </li>
-                ) : null}
-              </ul>
+                <PhoneList
+                  rows={shown}
+                  base={base}
+                  selected={selected}
+                  onToggle={toggle}
+                  typeText={typeText}
+                  bottomGap={selected.size ? 88 : 16}
+                />
               ) : null}
 
               {phone ? null : (
@@ -909,5 +971,68 @@ function DialogLite({ title, onClose, children }: { title: string; onClose: () =
         {children}
       </div>
     </dialog>
+  );
+}
+
+const PHONE_ROW_H = 76;
+
+/** Phones: one contact per row, windowed in a list that fills the screen below the toolbar. */
+function PhoneList({
+  rows,
+  base,
+  selected,
+  onToggle,
+  typeText,
+  bottomGap,
+}: {
+  rows: InvestorRow[];
+  base: string;
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+  typeText: (t: InvestorType) => string;
+  bottomGap: number;
+}) {
+  const scroll = useRef<HTMLUListElement>(null);
+  const [h, setH] = useState<number | string>("70vh");
+  useLayoutEffect(() => {
+    const fit = () => {
+      const el = scroll.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      setH(Math.max(320, window.innerHeight - top - bottomGap));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [bottomGap]);
+  const v = useVirtualRows({ scrollRef: scroll, count: rows.length, height: PHONE_ROW_H, initial: 14 });
+  return (
+    <ul
+      ref={scroll}
+      aria-label="Contacts"
+      className="m-0 list-none overflow-y-auto overscroll-contain rounded-md border border-line bg-surface p-0"
+      style={{ height: h }}
+    >
+      {v.padTop > 0 ? <li aria-hidden style={{ height: v.padTop }} /> : null}
+      {rows.slice(v.start, v.end).map((r) => (
+        <li key={r.id} className="flex items-center gap-10 border-b border-line px-12" style={{ height: PHONE_ROW_H }}>
+          <Checkbox aria-label={`Select ${r.name}`} checked={selected.has(r.id)} onChange={() => onToggle(r.id)} className="size-20" />
+          <Link href={`${base}/investors/${r.id}`} className="min-w-0 flex-1">
+            <span className="block truncate font-semibold">{r.name}</span>
+            <span className="t-body-s block truncate text-muted">{[r.title, r.firm].filter(Boolean).join(" · ") || typeText(r.type)}</span>
+            {r.rounds.length ? (
+              <span className="t-body-s mt-2 flex min-w-0 items-center gap-6 text-muted">
+                <StageDot color={r.rounds[0]!.color} />
+                <span className="truncate">
+                  {r.rounds[0]!.name} · {r.rounds[0]!.label}
+                  {r.rounds.length > 1 ? ` +${r.rounds.length - 1}` : ""}
+                </span>
+              </span>
+            ) : null}
+          </Link>
+        </li>
+      ))}
+      {v.padBottom > 0 ? <li aria-hidden style={{ height: v.padBottom }} /> : null}
+    </ul>
   );
 }

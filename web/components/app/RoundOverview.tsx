@@ -92,7 +92,7 @@ export function RoundOverview({
   // After a queue write: refresh the ledger numbers and the feed quietly.
   const reload = useCallback(async () => {
     try {
-      const [s, a] = await Promise.all([getRoundSummary(client, round.id), listActivities(client, { round: round.id, limit: 30, collapse_runs: true })]);
+      const [s, a] = await Promise.all([getRoundSummary(client, round.id), listActivities(client, { round: round.id, limit: 50, collapse_runs: true })]);
       setSummary(s);
       setFeed(a.data);
     } catch (err) {
@@ -190,7 +190,7 @@ export function RoundOverview({
         className="order-4 min-w-0 rounded-md border border-line bg-surface p-14 xl:order-none xl:col-span-8"
         style={{ gridRow: closed ? workRow : workRow + 1 }}
       >
-            <SectionLabel aside={<span className="t-micro text-muted">Last {num(feed.length)}</span>}>Recent activity</SectionLabel>
+            <SectionLabel>Recent activity</SectionLabel>
             <Timeline
               className="mt-8"
               items={feed}

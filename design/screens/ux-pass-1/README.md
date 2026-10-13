@@ -6,6 +6,33 @@ against a local API and a production web build with a throwaway database and fic
 only. Browser checks use `playwright-core` with the system Chrome, from a scratch folder
 (never added to `package.json`).
 
+## Polish pass (2026-10-12)
+
+Setup: database `raisebook_polish`, API on :8150, web on :3150 (dev while fixing, then the
+production build for the screenshots), the 420-row fictional CSV imported into "Seed" with an
+API key, then 30 look-alike agent edits. Screenshots: `POLISH-*--{light,dark,mobile}.jpg`.
+
+Found in the review and fixed:
+- Overview feed: 30 one-line "changed owner, probability for X" rows buried the real
+  activity. Five or more consecutive look-alike edits now collapse into one expandable entry
+  (`similarKeyOf` in `lib/api/activities.ts`, unit-tested). The feed loads 50 entries and the
+  meaningless "Last 30" count is gone.
+- Today queue: rows without a note or next step kept an empty second line (58px). They are
+  one line (42px) now; touch screens keep two lines because the date moves there.
+- Investors directory: four mismatched controls (a native select, two comboboxes that looked
+  disabled, another select) replaced by the pipeline's Filter menu (`F`) and removable chips,
+  including "In Seed" / "Not in Seed".
+- Filter popover ran off the right edge (and scrolled the page sideways) when the button sits
+  at the end of a toolbar; it now opens from the right edge there.
+- `?` sheet listed "/" and "C" twice (General and Pipeline). One line per key; the page's own
+  binding wins.
+- Directory on phones stopped at 200 rows ("Showing 200 of 420"); it is a windowed list of
+  every row now.
+- Sheet header said "Hot · fit 5/5" right above the Fit meter; the chip says "Hot".
+- SYSTEM.md still said 15 MCP tools; it is 17.
+
+Checked: 1440, 1024 (dark) and 390px; no sideways scroll; no console errors.
+
 ## Integration run (2026-10-12)
 
 Setup: database `raisebook_int`, API on :8140, web production build on :3140
