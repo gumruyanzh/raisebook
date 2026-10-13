@@ -32,8 +32,12 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy raisebook
 RAISEBOOK_DATABASE_URL=postgresql://localhost/raisebook_dev uv run alembic upgrade head
 RAISEBOOK_ENV=dev uv run uvicorn --factory raisebook.main:create_app --reload   # API + /mcp on :8000
-uv run rbctl --help    # workspace create | apikey create/revoke | seed-demo --email | housekeeping
+uv run rbctl worker    # background jobs (research), beside uvicorn; --once drains and exits
+uv run rbctl --help    # workspace | apikey | seed-demo --email | housekeeping | worker | secrets
 ```
+Research needs `RAISEBOOK_SECRETS_KEK` (`uv run rbctl secrets gen-kek`); without it the app
+works and research reports `research_unavailable`. Never point dev at real OpenRouter money:
+`RAISEBOOK_OPENROUTER_BASE_URL` can target a local mock.
 Sign in locally: run the API with `RAISEBOOK_ENV=dev`, request a link at `/signin`, and the
 "check your email" page shows the `dev_link`. `uv run rbctl seed-demo --email you@example.com`
 creates the fictional sandbox workspace "Kestrel Robotics (sample)".
@@ -77,6 +81,12 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   new route or tool that the isolation suite does not cover fails the build.
 - No network calls in tests. Use an injectable clock everywhere (`core/clock.get_now`, MCP
   `Clock`). Never call `datetime.now()` deep inside logic.
+- OpenRouter is never reached from tests: an autouse guard installs a refusing transport (an
+  unmocked request fails the test). Use the `openrouter_mock` fixture
+  (`tests/research/openrouter_mock.py`, fictional `FAKE_KEY`, recorded models list in
+  `tests/research/fixtures/`). conftest sets a throwaway `RAISEBOOK_SECRETS_KEK` per run.
+- Queue and worker races use `committing_sessionmaker` with a test-only job kind
+  (`test.<hex>`) and delete their rows afterwards.
 
 ## Conventions and contracts
 - Every workspace-scoped service function takes `ws: WorkspaceContext` (from the principal)
@@ -185,3 +195,24 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   ones included with "Drag investors here"; no rails, no shared "Drop to file" track, no fit
   groups on the board. Columns are windowed and sorted by `defaultColumnSort` (fit, follow-up,
   amount, recency by stage kind). Drag a card onto a column to move it; §5.5 keys still work.
+
+## Investor research, Part 1 foundation (spec `docs/RESEARCH-SPEC.md`, plan `docs/RESEARCH-PLAN.md`)
+- Migration `0003_research` holds every research table. Public facts (`research_sources`,
+  `investor_identities`, `investor_identity_candidates`, `dossier_facts`) stay apart from
+  private analysis (`dossiers`, `research_runs`, `field_suggestions`). Composite
+  `(workspace_id, …)` FKs everywhere; `activities.kind` includes `research`.
+- The OpenRouter key is sealed by `core/secrets.py` (AES-256-GCM DEK per key, wrapped by the
+  KEK; AAD = workspace id). Only `key_last4` is ever returned; no export, log or error carries
+  the key; `sk-or-…` is redacted from logs. Only an owner signed in to the web sets or removes
+  it (`require_owner_session`); preset, model ids and cap need `raisebook:admin`.
+- `services/ai_settings.PRESETS` is pinned to the recorded models list by a test; ids are
+  verified on `GET /models` when a key is saved and when models change with a key present.
+- Money for AI is USD micros (`*_micros bigint`). Every OpenRouter call reserves first with
+  `services/spend.reserve_for_run` (one conditional UPDATE; never over the cap), then
+  `settle_for_run` with OpenRouter's reported cost; recovery, cancel and shutdown call
+  `release_for_run`.
+- Jobs: `services/jobs.py` (enqueue with `dedupe_key`, `FOR UPDATE SKIP LOCKED` claims, leases,
+  backoff, `recover_stuck`) and `raisebook/worker.py` (`rbctl worker`). Handlers register with
+  `worker.register(kind, handler, on_recover=…)` from a module listed in
+  `worker.HANDLER_MODULES`, are idempotent per step and call `ctx.check_lease()` between steps.
+  Jobs carry ids only, never secrets or investor fields.

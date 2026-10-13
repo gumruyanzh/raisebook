@@ -127,12 +127,21 @@ Fill in `deploy/.env`:
 | `RAISEBOOK_SMTP_*` | from the email provider |
 | `RAISEBOOK_GOOGLE_CLIENT_ID` / `RAISEBOOK_GOOGLE_CLIENT_SECRET` | optional: "Continue with Google". Leave both empty to keep it off (the button is hidden). Setup steps, including the exact redirect URI `https://api.raisebook.org/v1/auth/google/callback`, are in `deploy/README.md` under "Continue with Google". After setting them, `docker compose -f deploy/docker-compose.yml up -d api` is enough; no rebuild. |
 
+| `RAISEBOOK_SECRETS_KEK` | optional: turns investor research on. `docker compose -f deploy/docker-compose.yml run --rm api rbctl secrets gen-kek` (or the `python3` line in `.env.example`). It seals each workspace's OpenRouter key; losing it makes saved keys unreadable. Rotation steps are in `deploy/README.md`. |
+
 Keep a copy of `deploy/.env` in a password manager: without the session secret everyone is
-signed out, and without the Postgres password you cannot restore.
+signed out, without the Postgres password you cannot restore, and without the KEK saved
+OpenRouter keys cannot be opened.
+
+The `worker` service (`rbctl worker`, same image as the API) runs background jobs: investor
+research and deck prefill. It needs outbound HTTPS to `openrouter.ai`; the compose network
+already has egress. `docker compose stop worker` lets running jobs finish for up to 50 s and
+hands the rest back to the queue.
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d --build
 docker compose -f deploy/docker-compose.yml ps         # migrate "Exited (0)", others running/healthy
+docker compose -f deploy/docker-compose.yml logs worker | grep worker_started
 docker compose -f deploy/docker-compose.yml logs caddy | grep -i certificate
 curl -sI https://raisebook.org | head -1               # HTTP/2 200
 curl -s https://api.raisebook.org/healthz/ready        # {"status":"ok","db":"ok"}

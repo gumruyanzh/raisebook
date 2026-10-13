@@ -1,7 +1,8 @@
 # Self-hosting Raisebook
 
-Raisebook runs as five containers on one machine: Postgres 17, a one-shot migration job,
-the API (REST under `/v1` and the MCP server at `/mcp`), the web app, and Caddy for HTTPS.
+Raisebook runs as six containers on one machine: Postgres 17, a one-shot migration job,
+the API (REST under `/v1` and the MCP server at `/mcp`), the background worker, the web app,
+and Caddy for HTTPS.
 Any Linux host with Docker and 1 GB of RAM is enough for a team.
 
 The production setup for raisebook.org (DigitalOcean, DNS records, backups) is in
@@ -13,7 +14,7 @@ The production setup for raisebook.org (DigitalOcean, DNS records, backups) is i
 |---|---|
 | `api.Dockerfile` | API image (Python 3.12, uv, non-root uid 10001). Build context `backend/`. |
 | `web.Dockerfile` | Web image (Next.js standalone, Node 22, non-root). Build context `web/`. |
-| `docker-compose.yml` | `postgres`, `migrate`, `api`, `web`, `caddy`. Only Caddy publishes ports (80, 443). |
+| `docker-compose.yml` | `postgres`, `migrate`, `api`, `worker`, `web`, `caddy`. Only Caddy publishes ports (80, 443). `worker` runs `rbctl worker` on the API image. |
 | `Caddyfile` | `WEB_HOST` → web, `www.WEB_HOST` → redirect, `API_HOST` → API and `/mcp` (unbuffered). Security headers and a self-only CSP. |
 | `.env.example` | Every setting. Copy to `deploy/.env` (git-ignored). |
 | `backup.sh` | Nightly `pg_dump` with a 14-day retention limit. |
@@ -40,6 +41,23 @@ The production setup for raisebook.org (DigitalOcean, DNS records, backups) is i
 4. Sign in at `https://$WEB_HOST/signin`. The sign-in link arrives by email, so SMTP must
    work. To check email without a provider, set `RAISEBOOK_EMAIL_BACKEND=log` and read the
    link from `docker compose logs api`, then switch back.
+
+## Investor research (optional)
+
+Research runs on each workspace's own OpenRouter key; Raisebook never pays for model calls.
+The key is stored encrypted under a key-encryption key (KEK) that only lives in `deploy/.env`.
+Research stays off until `RAISEBOOK_SECRETS_KEK` is set:
+
+```bash
+docker compose -f deploy/docker-compose.yml run --rm api rbctl secrets gen-kek
+# put the printed k1:… line in deploy/.env as RAISEBOOK_SECRETS_KEK, then
+docker compose -f deploy/docker-compose.yml up -d api worker
+```
+
+Keep the KEK with your other secrets: losing it makes saved OpenRouter keys unreadable (owners
+then enter them again). To rotate, set a new KEK with a new id (`k2:…`), move the old line to
+`RAISEBOOK_SECRETS_KEK_PREVIOUS`, restart, run `rbctl secrets rotate`, then clear `_PREVIOUS`.
+The `worker` container runs research jobs and needs outbound HTTPS to `openrouter.ai`.
 
 ## "Continue with Google" (optional)
 

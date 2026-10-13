@@ -4,7 +4,8 @@
 #   docker compose -f deploy/docker-compose.yml up -d --build
 #
 # Services: postgres (data volume), migrate (one-shot alembic upgrade), api (FastAPI + /mcp),
-# web (Next.js), caddy (TLS + reverse proxy). Only caddy publishes ports.
+# worker (background jobs: investor research), web (Next.js), caddy (TLS + reverse proxy).
+# Only caddy publishes ports.
 
 name: raisebook
 
@@ -32,6 +33,10 @@ x-api-env: &api-env
   RAISEBOOK_WORKSPACE_LIMIT_EXEMPT_EMAILS: ${RAISEBOOK_WORKSPACE_LIMIT_EXEMPT_EMAILS:-}
   RAISEBOOK_LOG_LEVEL: ${RAISEBOOK_LOG_LEVEL:-INFO}
   RAISEBOOK_LOG_JSON: "true"
+  # Investor research: the KEK that seals each workspace's OpenRouter key (empty = research off).
+  RAISEBOOK_SECRETS_KEK: ${RAISEBOOK_SECRETS_KEK:-}
+  RAISEBOOK_SECRETS_KEK_PREVIOUS: ${RAISEBOOK_SECRETS_KEK_PREVIOUS:-}
+  RAISEBOOK_WORKER_CONCURRENCY: ${RAISEBOOK_WORKER_CONCURRENCY:-4}
 
 services:
   postgres:
@@ -70,6 +75,20 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    networks: [internal]
+
+  worker:
+    # Background jobs (research runs, deck prefill, removals). Same image as the api; it needs
+    # outbound HTTPS to openrouter.ai (the internal network has egress) and no ports.
+    image: raisebook-api:local
+    command: ["rbctl", "worker"]
+    restart: unless-stopped
+    environment: *api-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # SIGTERM gives running jobs RAISEBOOK_WORKER_GRACE_S (50 s), then hands them back.
+    stop_grace_period: 60s
     networks: [internal]
 
   web:
