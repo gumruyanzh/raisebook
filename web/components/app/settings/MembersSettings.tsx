@@ -8,7 +8,6 @@ import {
   CodeBlock,
   ConfirmDialog,
   Field,
-  Input,
   SectionLabel,
   Select,
   Table,
@@ -17,6 +16,7 @@ import {
   Td,
   Th,
   THead,
+  Textarea,
   Tr,
   useToast,
 } from "@/components/ui";
@@ -30,6 +30,28 @@ import { useWorkspace } from "@/lib/session";
 import { personName } from "../util";
 
 const ROLES: Role[] = ["owner", "editor", "viewer"];
+
+const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
+
+/** "a@x.com, b@x.com\nc@x.com" → unique addresses in order, plus the pieces that aren't emails. */
+export function parseEmails(raw: string): { emails: string[]; invalid: string[] } {
+  const seen = new Set<string>();
+  const emails: string[] = [];
+  const invalid: string[] = [];
+  for (const part of raw.split(/[\s,;]+/)) {
+    const p = part.trim().replace(/^<|>$/g, "");
+    if (!p) continue;
+    if (!EMAIL_RE.test(p)) {
+      invalid.push(p);
+      continue;
+    }
+    const key = p.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    emails.push(p);
+  }
+  return { emails, invalid };
+}
 const ROLE_HINT: Record<Role, string> = {
   owner: "Everything, including members, API keys and deleting the workspace.",
   editor: "Works the pipeline: investors, stages, follow-ups, imports.",
@@ -47,7 +69,8 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
   const [role, setRole] = useState<Role>("editor");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; code?: string } | null>(null);
-  const [devLink, setDevLink] = useState<string | null>(null);
+  const [devLinks, setDevLinks] = useState<string[]>([]);
+  const [failures, setFailures] = useState<{ email: string; message: string; code?: string }[]>([]);
   const [leaving, setLeaving] = useState<Member | null>(null);
   const [leaveBusy, setLeaveBusy] = useState(false);
   const [leaveErr, setLeaveErr] = useState<string | null>(null);
@@ -70,23 +93,50 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
     }
   };
 
+  // Several addresses at once (comma, space or newline), all with one role. Sent one by one so
+  // each gets its own result; a workspace limit stops the rest.
   const invite = async () => {
-    if (!email.trim()) return;
-    setBusy(true);
+    const { emails, invalid } = parseEmails(email);
     setError(null);
-    setDevLink(null);
-    try {
-      const inv = await createInvite(client, email.trim(), role);
-      setEmail("");
-      toast.show(`Invite sent to ${inv.email}.`);
-      setDevLink(inv.dev_link ?? null);
-      await reload();
-    } catch (err) {
-      setError(err instanceof ApiError ? { message: err.message, code: err.code } : { message: errorMessage(err) });
-    } finally {
-      setBusy(false);
+    setFailures([]);
+    setDevLinks([]);
+    if (invalid.length) {
+      setError({ message: `${invalid.map((x) => `"${x}"`).join(", ")} ${invalid.length === 1 ? "isn't an email address" : "aren't email addresses"}.` });
+      return;
     }
+    if (!emails.length) {
+      setError({ message: "Enter one or more email addresses." });
+      return;
+    }
+    setBusy(true);
+    const sent: string[] = [];
+    const failed: { email: string; message: string; code?: string }[] = [];
+    const links: string[] = [];
+    for (let i = 0; i < emails.length; i++) {
+      const addr = emails[i]!;
+      try {
+        const inv = await createInvite(client, addr, role);
+        sent.push(inv.email);
+        if (inv.dev_link) links.push(inv.dev_link);
+      } catch (err) {
+        const f = err instanceof ApiError ? { email: addr, message: err.message, code: err.code } : { email: addr, message: errorMessage(err) };
+        failed.push(f);
+        if (err instanceof ApiError && (err.code === "limit_reached" || err.status === 429)) {
+          for (const rest of emails.slice(i + 1)) failed.push({ email: rest, message: "Not sent: the limit above was reached." });
+          break;
+        }
+      }
+    }
+    setBusy(false);
+    setEmail(failed.map((f) => f.email).join(", "));
+    setFailures(failed);
+    setDevLinks(links);
+    if (sent.length) toast.show(sent.length === 1 ? `Invite sent to ${sent[0]}.` : `Invites sent to ${sent.length} people.`);
+    await reload();
   };
+
+  const parsed = parseEmails(email);
+  const count = parsed.emails.length;
 
   const setMemberRole = async (mb: Member, r: Role, confirmed = false) => {
     if (!confirmed && mb.role === "owner" && r !== "owner" && (mb.active_api_keys ?? 0) > 0) {
@@ -131,6 +181,11 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
     <div className="flex flex-col gap-32">
       <section aria-label="Members">
         <SectionLabel aside={<span className="t-micro text-muted">{num(members.length)} of 20</span>}>Members</SectionLabel>
+        {members.some((mb) => mb.is_you && isLastOwner(mb)) && members.length > 1 ? (
+          <p className="t-body-s mb-8 text-muted">
+            You&apos;re the only owner. Make someone else an owner before you can leave.
+          </p>
+        ) : null}
         <TableScroll>
           <Table minWidth={640}>
             <THead>
@@ -257,9 +312,28 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
                 void invite();
               }}
             >
-              <div className="grid grid-cols-1 gap-12 sm:grid-cols-[minmax(0,1fr)_180px_auto] sm:items-end">
-                <Field label="Email" error={error ? { message: error.message, code: error.code } : null}>
-                  <Input type="email" required value={email} maxLength={254} onChange={(e) => setEmail(e.target.value)} placeholder="cofounder@example.com" />
+              <div className="grid grid-cols-1 gap-12 sm:grid-cols-[minmax(0,1fr)_180px_auto] sm:items-start">
+                <Field
+                  label="Emails"
+                  hint="Paste several, separated by commas or new lines."
+                  error={error ? { message: error.message, code: error.code } : null}
+                >
+                  <Textarea
+                    rows={1}
+                    value={email}
+                    maxLength={5000}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(e) => setEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void invite();
+                      }
+                    }}
+                    placeholder="cofounder@example.com, advisor@example.com"
+                    className="min-h-32! resize-none! py-6! [field-sizing:content]"
+                  />
                 </Field>
                 <Field label="Role">
                   <Select value={role} onChange={(e) => setRole(e.target.value as Role)}>
@@ -270,15 +344,25 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
                     ))}
                   </Select>
                 </Field>
-                <Button type="submit" variant="primary" busy={busy ? "Sending…" : false} className="self-end">
-                  Send invite
+                <Button type="submit" variant="primary" busy={busy ? "Sending…" : false} className="sm:mt-21">
+                  {count > 1 ? `Send ${count} invites` : "Send invite"}
                 </Button>
               </div>
               <p className="t-body-s mt-8 text-muted">{ROLE_HINT[role]} The link works for 7 days.</p>
-              {devLink ? (
+              {failures.length ? (
+                <ul className="t-body-s mt-10 flex list-none flex-col gap-4 p-0 text-bad" role="alert">
+                  {failures.map((f) => (
+                    <li key={f.email}>
+                      <span className="font-mono">{f.email}</span>: {f.message}
+                      {f.code ? <span className="ml-6 font-mono text-micro">{f.code}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {devLinks.length ? (
                 <div className="mt-12 flex flex-col gap-6">
-                  <p className="t-label">Development invite link</p>
-                  <CodeBlock code={devLink} title="dev_link (shown only when the API runs locally)" />
+                  <p className="t-label">Development invite {devLinks.length === 1 ? "link" : "links"}</p>
+                  <CodeBlock code={devLinks.join("\n")} title="dev_link (shown only when the API runs locally)" />
                 </div>
               ) : null}
             </form>
