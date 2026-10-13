@@ -47,6 +47,8 @@ BucketKind = Literal[
     "invite_user",
     "invite_user_new",
     "ai_key",
+    "removal_request",
+    "removal_email",
 ]
 
 
@@ -76,6 +78,9 @@ LIMITS: dict[str, Limit] = {
     "invite_user_new": Limit(5, 86400),
     # Saving an OpenRouter key calls OpenRouter: per workspace, per hour.
     "ai_key": Limit(10, 3600),
+    # Research removal requests (anonymous): per IP per hour, per email per day.
+    "removal_request": Limit(5, 3600),
+    "removal_email": Limit(3, 86400),
 }
 
 

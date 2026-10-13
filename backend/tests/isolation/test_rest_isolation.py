@@ -22,6 +22,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raisebook.models.activity import Activity
 from raisebook.models.ai import CompanyProfile, WorkspaceAiSettings
 from raisebook.models.investor import Investor
+from raisebook.models.research import (
+    Dossier,
+    DossierFacts,
+    FieldSuggestion,
+    InvestorIdentity,
+    InvestorIdentityCandidate,
+    ResearchBatch,
+    ResearchRun,
+    ResearchSource,
+)
 from raisebook.models.round import Round, RoundParticipant, RoundStage
 from raisebook.models.workspace import ApiKey, Invite, Membership, Workspace
 from tests.factories import (
@@ -58,12 +68,17 @@ ORGLESS = {
     ("POST", "/v1/workspaces"),
     ("GET", "/v1/invites/lookup"),
     ("POST", "/v1/invites/accept"),
+    # The Research Policy's public removal process (anonymous; R13).
+    ("POST", "/v1/research-policy/removal-requests"),
+    ("POST", "/v1/research-policy/removal-requests/verify"),
 }
 
 B_EMAIL = "blake.quill@example.com"
 B_LINKEDIN = "https://www.linkedin.com/in/example-blake-quill"
 B_NAME = "Blake Quill"
 B_PITCH = "Bravo secret pitch for quill robots"
+B_DOSSIER = "Bravo secret dossier verdict line"
+B_SOURCE = "https://quill.example/bravo-secret-source"
 
 
 @dataclass
@@ -91,6 +106,10 @@ class Two:
     b_activity: Ref
     b_invite: Ref
     b_key: Ref
+    b_run: Ref
+    b_batch: Ref
+    b_suggestion: Ref
+    b_candidate: Ref
 
 
 async def two_workspaces(db: AsyncSession) -> Two:
@@ -133,6 +152,7 @@ async def two_workspaces(db: AsyncSession) -> Two:
         )
     )
     await db.flush()
+    b_research = await _b_research(db, b, b_inv, b_round)
     return Two(
         a=Ref(a.id, str(a.slug), a.name),
         b=Ref(b.id, str(b.slug), b.name),
@@ -148,7 +168,98 @@ async def two_workspaces(db: AsyncSession) -> Two:
         b_activity=Ref(b_activity.id),
         b_invite=Ref(b_invite.id),
         b_key=Ref(b_key.id),
+        **b_research,
     )
+
+
+async def _b_research(db: AsyncSession, b: Any, b_inv: Any, b_round: Any) -> dict[str, Ref]:
+    """B's research rows: a batch, a finished run, a dossier, a source, a pending suggestion
+    and identity candidates (what A must never see or change)."""
+    actor = {"actor_type": "system", "via": "system", "actor_label": "raisebook"}
+    batch = ResearchBatch(workspace_id=b.id, kind="dossier", total=1, **actor)
+    db.add(batch)
+    await db.flush()
+    run = ResearchRun(
+        workspace_id=b.id,
+        investor_id=b_inv.id,
+        batch_id=batch.id,
+        kind="dossier",
+        status="partial",
+        error_code="invalid_dossier",
+        **actor,
+    )
+    db.add(run)
+    await db.flush()
+    src = ResearchSource(
+        workspace_id=b.id,
+        run_id=run.id,
+        investor_id=b_inv.id,
+        url=B_SOURCE,
+        url_key=B_SOURCE,
+        domain="quill.example",
+        title="Bravo source",
+        fetched_at=run.created_at,
+        matched_anchor="firm_domain",
+        accepted=True,
+    )
+    db.add(src)
+    dossier = Dossier(
+        workspace_id=b.id,
+        investor_id=b_inv.id,
+        run_id=run.id,
+        version=1,
+        author_kind="model",
+        author_label="anthropic/claude-opus-5.5",
+        verdict="strong",
+        analysis={"brief": {"verdict": "strong", "why": B_DOSSIER, "fact_keys": []}},
+        **actor,
+    )
+    db.add(dossier)
+    await db.flush()
+    db.add(
+        DossierFacts(
+            dossier_id=dossier.id,
+            workspace_id=b.id,
+            investor_id=b_inv.id,
+            facts=[
+                {
+                    "key": "f1",
+                    "section": "profile",
+                    "kind": "role",
+                    "text": B_DOSSIER,
+                    "source_ids": [str(src.id)],
+                }
+            ],
+            as_of=run.created_at.date(),
+        )
+    )
+    sug = FieldSuggestion(
+        workspace_id=b.id,
+        investor_id=b_inv.id,
+        dossier_id=dossier.id,
+        field="title",
+        current_value=None,
+        suggested_value="Bravo GP",
+    )
+    db.add(sug)
+    db.add(InvestorIdentity(workspace_id=b.id, investor_id=b_inv.id, status="needs_pick"))
+    cand = InvestorIdentityCandidate(
+        workspace_id=b.id,
+        investor_id=b_inv.id,
+        run_id=run.id,
+        rank=1,
+        name=B_NAME,
+        linkedin_url=B_LINKEDIN,
+        confidence=0.6,
+    )
+    db.add(cand)
+    await db.flush()
+    return {
+        "b_run": Ref(run.id),
+        "b_batch": Ref(batch.id),
+        "b_suggestion": Ref(sug.id),
+        "b_candidate": Ref(cand.id),
+    }
 
 
 async def snapshot_b(db: AsyncSession, t: Two) -> dict[str, Any]:
@@ -226,6 +337,26 @@ async def snapshot_b(db: AsyncSession, t: Two) -> dict[str, Any]:
                 CompanyProfile.workspace_id == wid
             )
         ),
+        "research": await rows(
+            select(ResearchRun.id, ResearchRun.status, ResearchRun.updated_at)
+            .where(ResearchRun.workspace_id == wid)
+            .order_by(ResearchRun.id)
+        )
+        + await rows(
+            select(Dossier.id, Dossier.version, Dossier.verdict)
+            .where(Dossier.workspace_id == wid)
+            .order_by(Dossier.id)
+        )
+        + await rows(
+            select(FieldSuggestion.id, FieldSuggestion.status)
+            .where(FieldSuggestion.workspace_id == wid)
+            .order_by(FieldSuggestion.id)
+        )
+        + await rows(
+            select(InvestorIdentity.status, InvestorIdentity.linkedin_url).where(
+                InvestorIdentity.workspace_id == wid
+            )
+        ),
         "ai_settings": await rows(
             select(
                 WorkspaceAiSettings.preset,
@@ -254,6 +385,13 @@ def no_b(text: str, t: Two) -> None:
         "B's call notes",
         B_PITCH,
         "bravo-sector",
+        B_DOSSIER,
+        B_SOURCE,
+        str(t.b_run.id),
+        str(t.b_batch.id),
+        str(t.b_suggestion.id),
+        str(t.b_candidate.id),
+        "Bravo GP",
     ):
         assert marker not in text, f"leaked {marker!r}: {text[:300]}"
 
@@ -807,6 +945,186 @@ async def _profile_put(c: Any, t: Two, who: str) -> None:
         )
     r = await c.put("/v1/workspace/company-profile", json=body)
     assert r.status_code == 200 and r.json()["pitch"] == body["pitch"], r.text
+    no_b(r.text, t)
+
+
+# --- investor research: runs, identities, dossiers, suggestions (Part 2) ------------------
+
+
+def b_inv_paths(t: Two, suffix: str) -> list[str]:
+    return [f"/v1/investors/{t.b_inv.id}{suffix}"]
+
+
+@case("POST", "/v1/investors/{investor_id}/research")
+async def _research_start(c: Any, t: Two, who: str) -> None:
+    for kind in ("identity", "dossier", "refresh"):
+        is_404(await c.post(f"/v1/investors/{t.b_inv.id}/research", json={"kind": kind}))
+    is_404(await c.post(f"/v1/investors/{t.a_inv.id}/research", json={"round": t.b_round.slug}))
+
+
+@case("GET", "/v1/research/runs")
+async def _runs(c: Any, t: Two, who: str) -> None:
+    r = await c.get("/v1/research/runs")
+    assert r.status_code == 200 and r.json()["data"] == [], r.text
+    no_b(r.text, t)
+    is_404(await c.get("/v1/research/runs", params={"investor_id": str(t.b_inv.id)}))
+    is_404(await c.get("/v1/research/runs", params={"batch_id": str(t.b_batch.id)}))
+
+
+@case("GET", "/v1/research/runs/{run_id}")
+async def _run_get(c: Any, t: Two, who: str) -> None:
+    is_404(await c.get(f"/v1/research/runs/{t.b_run.id}"))
+
+
+@case("POST", "/v1/research/runs/{run_id}/cancel")
+async def _run_cancel(c: Any, t: Two, who: str) -> None:
+    is_404(await c.post(f"/v1/research/runs/{t.b_run.id}/cancel"))
+
+
+@case("POST", "/v1/research/runs/{run_id}/resume")
+async def _run_resume(c: Any, t: Two, who: str) -> None:
+    is_404(await c.post(f"/v1/research/runs/{t.b_run.id}/resume"))
+
+
+@case("GET", "/v1/research/usage")
+async def _usage(c: Any, t: Two, who: str) -> None:
+    r = await c.get("/v1/research/usage")
+    assert r.status_code == 200 and r.json()["by_kind"] == {}, r.text
+    no_b(r.text, t)
+
+
+@case("POST", "/v1/research/estimate")
+async def _estimate(c: Any, t: Two, who: str) -> None:
+    is_404(await c.post("/v1/research/estimate", json={"investor_ids": [str(t.b_inv.id)]}))
+    is_404(
+        await c.post(
+            "/v1/research/estimate", json={"investor_ids": [str(t.a_inv.id), str(t.b_inv.id)]}
+        )
+    )
+    is_404(await c.post("/v1/research/estimate", json={"round": t.b_round.slug}))
+    r = await c.post("/v1/research/estimate", json={"round": "seed"})
+    assert r.status_code == 200 and r.json()["count"] == 1, r.text
+
+
+@case("POST", "/v1/research/batches")
+async def _batches(c: Any, t: Two, who: str) -> None:
+    body = {"investor_ids": [str(t.b_inv.id)], "confirm_usd": 100}
+    is_404(await c.post("/v1/research/batches", json=body))
+    is_404(
+        await c.post("/v1/research/batches", json={"round": str(t.b_round.id), "confirm_usd": 9})
+    )
+
+
+@case("GET", "/v1/research/batches/{batch_id}")
+async def _batch_get(c: Any, t: Two, who: str) -> None:
+    is_404(await c.get(f"/v1/research/batches/{t.b_batch.id}"))
+
+
+@case("POST", "/v1/research/batches/{batch_id}/cancel")
+async def _batch_cancel(c: Any, t: Two, who: str) -> None:
+    is_404(await c.post(f"/v1/research/batches/{t.b_batch.id}/cancel"))
+
+
+@case("GET", "/v1/investors/{investor_id}/identity")
+async def _identity_get(c: Any, t: Two, who: str) -> None:
+    is_404(await c.get(f"/v1/investors/{t.b_inv.id}/identity"))
+    r = await c.get(f"/v1/investors/{t.a_inv.id}/identity")
+    assert r.status_code == 200 and r.json()["status"] == "none"
+    no_b(r.text, t)
+
+
+@case("POST", "/v1/investors/{investor_id}/identity")
+async def _identity_pick(c: Any, t: Two, who: str) -> None:
+    is_404(await c.post(f"/v1/investors/{t.b_inv.id}/identity", json={"rank": 1}))
+    is_404(await c.post(f"/v1/investors/{t.b_inv.id}/identity", json={"none": True}))
+    # B's candidate cannot be picked for A's investor.
+    is_404(
+        await c.post(
+            f"/v1/investors/{t.a_inv.id}/identity", json={"candidate_id": str(t.b_candidate.id)}
+        )
+    )
+
+
+@case("GET", "/v1/investors/{investor_id}/dossier")
+async def _dossier_get(c: Any, t: Two, who: str) -> None:
+    is_404(await c.get(f"/v1/investors/{t.b_inv.id}/dossier"))
+    r = await c.get(f"/v1/investors/{t.a_inv.id}/dossier")
+    assert r.status_code == 404 and r.json()["error"]["code"] == "no_dossier"
+
+
+@case("GET", "/v1/investors/{investor_id}/dossiers")
+async def _dossiers(c: Any, t: Two, who: str) -> None:
+    is_404(await c.get(f"/v1/investors/{t.b_inv.id}/dossiers"))
+
+
+@case("POST", "/v1/investors/{investor_id}/dossier")
+async def _dossier_save(c: Any, t: Two, who: str) -> None:
+    doc = {
+        "identity": {"name": B_NAME},
+        "sources": [{"id": "s1", "url": B_SOURCE, "title": f"{B_NAME} of Quill Ventures"}],
+        "facts": [
+            {"key": "f1", "section": "profile", "kind": "role", "text": "x", "source_ids": ["s1"]}
+        ],
+        "analysis": {"brief": {"verdict": "poor", "why": "x"}},
+    }
+    is_404(await c.post(f"/v1/investors/{t.b_inv.id}/dossier", json={"dossier": doc}))
+    is_404(
+        await c.post(
+            f"/v1/investors/{t.a_inv.id}/dossier", json={"dossier": doc, "round": t.b_round.slug}
+        )
+    )
+
+
+@case("GET", "/v1/research/suggestions")
+async def _suggestions(c: Any, t: Two, who: str) -> None:
+    r = await c.get("/v1/research/suggestions")
+    assert r.status_code == 200 and r.json()["data"] == []
+    no_b(r.text, t)
+    is_404(await c.get("/v1/research/suggestions", params={"investor_id": str(t.b_inv.id)}))
+    is_404(await c.get("/v1/research/suggestions", params={"round": t.b_round.slug}))
+
+
+@case("POST", "/v1/research/suggestions/{suggestion_id}/accept")
+async def _sug_accept(c: Any, t: Two, who: str) -> None:
+    is_404(await c.post(f"/v1/research/suggestions/{t.b_suggestion.id}/accept"))
+
+
+@case("POST", "/v1/research/suggestions/{suggestion_id}/ignore")
+async def _sug_ignore(c: Any, t: Two, who: str) -> None:
+    is_404(await c.post(f"/v1/research/suggestions/{t.b_suggestion.id}/ignore"))
+
+
+@case("POST", "/v1/research/suggestions/accept-all")
+async def _sug_accept_all(c: Any, t: Two, who: str) -> None:
+    is_404(
+        await c.post(
+            "/v1/research/suggestions/accept-all", json={"investor_ids": [str(t.b_inv.id)]}
+        )
+    )
+    is_404(await c.post("/v1/research/suggestions/accept-all", json={"round": t.b_round.slug}))
+
+
+@case("GET", "/v1/rounds/{round}/research")
+async def _round_research(c: Any, t: Two, who: str) -> None:
+    for ref in b_round_refs(t):
+        is_404(await c.get(f"/v1/rounds/{ref}/research"))
+    r = await c.get("/v1/rounds/seed/research")
+    assert r.status_code == 200 and len(r.json()["data"]) == 1
+    no_b(r.text, t)
+
+
+@case("POST", "/v1/workspace/company-profile/prefill")
+async def _prefill(c: Any, t: Two, who: str) -> None:
+    if who == "session":
+        is_404(
+            await c.post(
+                "/v1/workspace/company-profile/prefill",
+                data={"website_url": "alpha.example"},
+                headers={"X-Workspace": t.b.slug},
+            )
+        )
+    r = await c.post("/v1/workspace/company-profile/prefill", data={"website_url": "a.example"})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "no_ai_key"  # A has no key
     no_b(r.text, t)
 
 

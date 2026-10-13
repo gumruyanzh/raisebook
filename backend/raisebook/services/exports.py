@@ -30,6 +30,13 @@ from raisebook.models.activity import Activity
 from raisebook.models.enums import LOGGABLE_ACTIVITY_KINDS
 from raisebook.models.imports import ImportRun
 from raisebook.models.investor import Investor
+from raisebook.models.research import (
+    Dossier,
+    DossierFacts,
+    FieldSuggestion,
+    InvestorIdentity,
+    ResearchSource,
+)
 from raisebook.models.round import Round, RoundParticipant, RoundStage
 from raisebook.models.user import User
 from raisebook.models.workspace import Membership, Workspace
@@ -618,9 +625,115 @@ async def export_workspace_json(
 
 
 async def _research_dict(db: AsyncSession, ws: WorkspaceContext) -> dict[str, Any]:
-    """Research settings and the company profile. Never key material, not even its last 4."""
+    """Research settings, the company profile, identities and each investor's latest dossier
+    with its facts, cited sources and suggestions. Never key material, not even its last 4."""
     settings = await ai_settings.get_row(db, ws.workspace_id)
+    identities = list(
+        await db.scalars(
+            select(InvestorIdentity)
+            .where(InvestorIdentity.workspace_id == ws.workspace_id)
+            .order_by(InvestorIdentity.investor_id)
+        )
+    )
+    latest = list(
+        await db.scalars(
+            select(Dossier)
+            .where(Dossier.workspace_id == ws.workspace_id)
+            .distinct(Dossier.investor_id)
+            .order_by(Dossier.investor_id, Dossier.version.desc())
+        )
+    )
+    facts = (
+        {
+            f.dossier_id: f
+            for f in await db.scalars(
+                select(DossierFacts).where(
+                    DossierFacts.workspace_id == ws.workspace_id,
+                    DossierFacts.dossier_id.in_([d.id for d in latest]),
+                )
+            )
+        }
+        if latest
+        else {}
+    )
+    cited = {
+        UUID(s) for f in facts.values() for fact in f.facts for s in fact.get("source_ids", [])
+    }
+    sources = (
+        list(
+            await db.scalars(
+                select(ResearchSource).where(
+                    ResearchSource.workspace_id == ws.workspace_id, ResearchSource.id.in_(cited)
+                )
+            )
+        )
+        if cited
+        else []
+    )
+    suggestions = list(
+        await db.scalars(
+            select(FieldSuggestion)
+            .where(FieldSuggestion.workspace_id == ws.workspace_id)
+            .order_by(FieldSuggestion.created_at)
+        )
+    )
+    dossiers_out = []
+    for d in latest:
+        f = facts.get(d.id)
+        dossiers_out.append(
+            {
+                "id": str(d.id),
+                "investor_id": str(d.investor_id),
+                "version": d.version,
+                "verdict": d.verdict,
+                "author": {"kind": d.author_kind, "label": d.author_label},
+                "created_at": _ts(d.created_at),
+                "analysis": d.analysis,
+                "unverified": d.unverified,
+                "facts": [
+                    {k: v for k, v in fact.items() if k not in ("fid", "loose")}
+                    for fact in (f.facts if f else [])
+                ],
+            }
+        )
+    research_rows = {
+        "identities": [
+            {
+                "investor_id": str(i.investor_id),
+                "status": i.status,
+                "source": i.source,
+                "linkedin_url": i.linkedin_url,
+                "firm": i.firm,
+                "firm_website": i.firm_website,
+                "title": i.title,
+                "confidence": float(i.confidence) if i.confidence is not None else None,
+            }
+            for i in identities
+        ],
+        "dossiers": dossiers_out,
+        "sources": [
+            {
+                "id": str(s.id),
+                "investor_id": str(s.investor_id),
+                "url": s.url,
+                "title": s.title,
+                "published_at": s.published_at.isoformat() if s.published_at else None,
+            }
+            for s in sources
+        ],
+        "suggestions": [
+            {
+                "investor_id": str(s.investor_id),
+                "field": s.field,
+                "current_value": s.current_value,
+                "suggested_value": s.suggested_value,
+                "status": s.status,
+            }
+            for s in suggestions
+        ],
+    }
     return {
+        **research_rows,
         "company_profile": company_profile.export_dict(await company_profile.get_profile(db, ws)),
         "ai_settings": None
         if settings is None

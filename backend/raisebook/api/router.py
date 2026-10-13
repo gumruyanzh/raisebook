@@ -1,7 +1,7 @@
 """API router registry: every module from SPEC §2.1 is registered here already.
 
 Each listed module exposes ``router: APIRouter`` with its own prefix. Feature
-builders replace the stub modules' contents; they never edit this list.
+builders replace the stub modules' contents.
 
 Order matters where paths overlap: ``exports`` (``/v1/investors/export``,
 ``/v1/rounds/{round}/export``) and ``imports`` come before ``investors`` and
@@ -25,6 +25,9 @@ API_MODULES: list[str] = [
     # Investor research (docs/RESEARCH-PLAN.md): settings and company profile (Part 1).
     "raisebook.api.ai_settings",
     "raisebook.api.company_profile",
+    # Investor research, Part 2: runs, identities, dossiers, suggestions; the Research Policy.
+    "raisebook.api.research",
+    "raisebook.api.research_policy",
     # Import-Export+Ops (IE)
     "raisebook.api.imports",
     "raisebook.api.exports",

@@ -1,7 +1,8 @@
 """``rbctl``: the Raisebook operator CLI.
 
 Commands: ``user create``, ``workspace create|list``, ``apikey create|list|revoke``,
-``seed-demo``, ``housekeeping``, ``worker [--once]``, ``secrets gen-kek|rotate``. Output is
+``seed-demo``, ``housekeeping``, ``worker [--once]``, ``secrets gen-kek|rotate``,
+``research removals list|apply|reject`` and ``research usage``. Output is
 JSON on stdout (one object per line) so scripts can parse it. API key secrets are printed
 once, on creation only.
 """
@@ -38,6 +39,10 @@ app.add_typer(user_app, name="user")
 app.add_typer(ws_app, name="workspace")
 app.add_typer(key_app, name="apikey")
 app.add_typer(secrets_app, name="secrets", no_args_is_help=True)
+research_app = typer.Typer(help="Investor research (operator actions)", no_args_is_help=True)
+removals_app = typer.Typer(help="Research removal requests (R13)", no_args_is_help=True)
+research_app.add_typer(removals_app, name="removals")
+app.add_typer(research_app, name="research")
 
 
 def _run[T](fn: Callable[[AsyncSession], Awaitable[T]]) -> T:
@@ -328,3 +333,95 @@ def secrets_rotate() -> None:
         return counts
 
     _emit(_run(go))
+
+
+@removals_app.command("list")
+def removals_list(
+    status: Annotated[
+        str | None, typer.Option(help="unverified, verified, applied or rejected")
+    ] = None,
+) -> None:
+    """Removal requests, newest first (one JSON object per line)."""
+    from raisebook.services import research_removal
+
+    async def go(s: AsyncSession) -> list[dict[str, Any]]:
+        return [
+            research_removal.request_dict(r)
+            for r in await research_removal.list_requests(s, status=status)
+        ]
+
+    for row in _run(go):
+        _emit(row)
+
+
+@removals_app.command("apply")
+def removals_apply(
+    request_id: Annotated[str, typer.Argument(help="Removal request id")],
+    now_: Annotated[
+        bool, typer.Option("--now", help="Apply here instead of queueing a worker job")
+    ] = False,
+) -> None:
+    """Delete research about the requester in every workspace and stop researching them.
+    Queues a ``research.removal`` job (``--now`` applies it in this process). Counts only."""
+    from raisebook.services import research_removal
+    from raisebook.services.email import build_email_sender
+
+    async def go(s: AsyncSession) -> dict[str, Any]:
+        rid = UUID(request_id)
+        if now_:
+            counts = await research_removal.apply_request(
+                s, rid, now=get_now(), sender=build_email_sender()
+            )
+            await s.commit()
+            return {"request_id": request_id, "applied": counts}
+        job_id = await research_removal.enqueue_apply(s, rid, now=get_now())
+        await s.commit()
+        return {"request_id": request_id, "queued_job": str(job_id)}
+
+    _emit(_run(go))
+
+
+@removals_app.command("reject")
+def removals_reject(
+    request_id: Annotated[str, typer.Argument(help="Removal request id")],
+    note: Annotated[str, typer.Option(help="Why (kept 90 days)")] = "",
+) -> None:
+    """Reject a removal request (for example, a request about someone else)."""
+    from raisebook.services import research_removal
+
+    async def go(s: AsyncSession) -> None:
+        await research_removal.reject(s, UUID(request_id), note=note, now=get_now())
+        await s.commit()
+
+    _run(go)
+    _emit({"request_id": request_id, "status": "rejected"})
+
+
+@research_app.command("usage")
+def research_usage(
+    workspace: Annotated[str, typer.Option(help="Workspace slug or id")],
+) -> None:
+    """A workspace's AI spend per month (counts and USD only)."""
+    from sqlalchemy import text
+
+    async def go(s: AsyncSession) -> list[dict[str, Any]]:
+        ws = await _workspace(s, workspace)
+        rows = await s.execute(
+            text(
+                "SELECT month, spent_micros, reserved_micros, calls FROM ai_usage_months"
+                " WHERE workspace_id = :ws ORDER BY month DESC LIMIT 24"
+            ),
+            {"ws": ws.id},
+        )
+        return [
+            {
+                "month": m.strftime("%Y-%m"),
+                "spent_usd": spent / 1_000_000,
+                "reserved_usd": reserved / 1_000_000,
+                "calls": calls,
+            }
+            for m, spent, reserved, calls in rows.tuples()
+        ]
+
+    for row in _run(go):
+        _emit(row)

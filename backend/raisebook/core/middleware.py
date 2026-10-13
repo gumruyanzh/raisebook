@@ -16,7 +16,12 @@ log = structlog.get_logger("raisebook.access")
 MB = 1024 * 1024
 DEFAULT_BODY_LIMIT = 1 * MB
 # Paths with a larger limit: imports (≤5 MB of CSV/JSON) and /mcp (import_investors_csv).
-LARGE_BODY_PREFIXES: tuple[tuple[str, int], ...] = (("/v1/imports", 6 * MB), ("/mcp", 6 * MB))
+# The company-profile prefill takes a deck PDF (≤10 MB) as multipart.
+LARGE_BODY_PREFIXES: tuple[tuple[str, int], ...] = (
+    ("/v1/imports", 6 * MB),
+    ("/mcp", 6 * MB),
+    ("/v1/workspace/company-profile/prefill", 11 * MB),
+)
 
 
 class _TooLarge(Exception):
