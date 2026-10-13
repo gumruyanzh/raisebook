@@ -22,7 +22,7 @@ export default async function ImportPage({
         title="Import investors"
         subline={
           <>
-            A CSV from any spreadsheet, or a Raisebook prototype JSON file. You see every row before anything is
+            A CSV from any spreadsheet. You see every row before anything is
             written. <TextLink href={`/w/${ws}/settings/data`}>Import history and exports</TextLink>
           </>
         }

@@ -116,6 +116,8 @@ export function RoundOverview({
     });
   const hasProbabilities = summary.money.weighted_pipeline > 0 || summary.money.soft_circled === 0;
   const workRow = notes.length ? 3 : 2;
+  // A new round: the way in first, beside the terms; no empty feed, Going quiet or Agents.
+  const emptyRound = summary.counts.total === 0 && !closed;
 
   return (
     // Phones: the queue first, then the ledger. From 1024px: the ledger across the top, the
@@ -148,9 +150,10 @@ export function RoundOverview({
         </ul>
       ) : null}
 
-      {summary.counts.total === 0 && !closed ? (
+      {emptyRound ? (
         <EmptyState
-          className="order-1 xl:order-none xl:col-span-12"
+          className="order-1 xl:order-none xl:col-span-8"
+          style={{ gridRow: workRow }}
           title={`No investors in ${round.name} yet`}
           actions={
             canWrite ? (
@@ -185,6 +188,7 @@ export function RoundOverview({
         />
       )}
 
+      {emptyRound ? null : (
       <section
         aria-label="Recent activity"
         className="order-4 min-w-0 rounded-md border border-line bg-surface p-14 xl:order-none xl:col-span-8"
@@ -214,10 +218,11 @@ export function RoundOverview({
               empty="Nothing has happened in this round yet."
             />
       </section>
+      )}
 
       <aside
         className="order-5 flex min-w-0 flex-col gap-14 xl:order-none xl:col-span-4 xl:col-start-9"
-        style={{ gridRow: `${workRow} / span ${closed ? 1 : 2}` }}
+        style={{ gridRow: `${workRow} / span ${closed || emptyRound ? 1 : 2}` }}
         aria-label="Round details"
       >
           <Panel
@@ -261,7 +266,7 @@ export function RoundOverview({
             />
           </Panel>
 
-          {closed ? null : (
+          {closed || emptyRound ? null : (
             <Panel
               title="Going quiet"
               aside={
@@ -271,7 +276,7 @@ export function RoundOverview({
               }
             >
               {summary.stale.length === 0 ? (
-                <p className="t-body-s text-muted">Every active conversation has moved in the last two weeks.</p>
+                <p className="t-body-s text-muted">No conversation has gone quiet.</p>
               ) : (
                 <ul className="m-0 flex max-h-[360px] list-none flex-col overflow-y-auto p-0">
                   {summary.stale.map((s) => (
@@ -288,6 +293,7 @@ export function RoundOverview({
             </Panel>
           )}
 
+          {emptyRound ? null : (
           <Panel title="Agents" aside={<span className="t-micro text-muted">Last 7 days</span>}>
             {agents.length === 0 ? (
               <div className="flex flex-col gap-8">
@@ -309,6 +315,7 @@ export function RoundOverview({
               </ul>
             )}
           </Panel>
+          )}
       </aside>
       {canWrite ? (
         <AddInvestorDialog

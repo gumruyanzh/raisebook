@@ -264,11 +264,11 @@ export const GROUP_LABEL: Record<Priority, string> = {
   hot: "Hot · fit 5",
   warm: "Warm · fit 4",
   maybe: "Maybe · fit 3",
-  low: "Low fit · 0–2",
+  low: "Low or not rated · 0–2",
 };
 
 export type TriageSlice = "all" | "hw" | "maybe" | "low";
-export const SLICE_LABEL: Record<TriageSlice, string> = { all: "All", hw: "Hot + Warm", maybe: "Maybe", low: "Low fit" };
+export const SLICE_LABEL: Record<TriageSlice, string> = { all: "All", hw: "Hot + Warm", maybe: "Maybe", low: "Low / unrated" };
 
 export function inSlice(fit: number, slice: TriageSlice): boolean {
   const pr = priorityFromFit(fit);

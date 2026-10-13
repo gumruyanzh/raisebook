@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
@@ -11,15 +11,18 @@ export function EmptyState({
   children,
   actions,
   className,
+  style,
 }: {
   title: ReactNode;
   /** One sentence in muted. */
   children?: ReactNode;
   actions?: ReactNode;
   className?: string;
+  style?: CSSProperties;
 }) {
   return (
     <div
+      style={style}
       className={cn(
         "rounded-md border border-dashed border-line bg-surface p-28 text-center text-muted",
         className,

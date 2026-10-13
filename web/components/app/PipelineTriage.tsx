@@ -1692,7 +1692,7 @@ function InvestorPane({
             ) : null}
           </div>
         ) : (
-          <p className="t-body-s text-muted">Only the basics came in with the import. LinkedIn is the quickest way to size them up.</p>
+          <p className="t-body-s text-muted">Only the basics so far. LinkedIn is the quickest way to size them up.</p>
         )
       ) : full?.error ? null : (
         <div className="flex flex-col gap-8" aria-hidden>
@@ -2292,7 +2292,7 @@ function TriagePhone({
                   <Skeleton className="mt-12" width="60%" />
                 )}
                 {inv && !facts.length && !inv.notes ? (
-                  <p className="t-body-s mt-10 text-muted">Only the basics came in with the import.</p>
+                  <p className="t-body-s mt-10 text-muted">Only the basics so far.</p>
                 ) : null}
               </article>
               <div className="mt-12">

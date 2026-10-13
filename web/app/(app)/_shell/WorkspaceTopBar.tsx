@@ -122,6 +122,11 @@ export function WorkspaceTopBar() {
         }
         onNewRound={onNewRound}
         nav={nav}
+        menuExtras={
+          ws && canWrite
+            ? [{ label: "Import CSV", href: `${base}/import${activeRound ? `?round=${enc(activeRound)}` : ""}` }]
+            : undefined
+        }
         activeNav={activeNav}
         user={session.user}
         homeHref={ws ? (defaultRound ? roundPath(defaultRound) : base) : "/app"}

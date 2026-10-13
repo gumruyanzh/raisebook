@@ -95,7 +95,7 @@ export function DataSettings({
           Import
         </SectionLabel>
         <p className="mb-10 text-muted">
-          Bring investors in from a spreadsheet (CSV) or a Raisebook prototype JSON file. Duplicates are matched by
+          Bring investors in from a spreadsheet (CSV). Duplicates are matched by
           email, LinkedIn, then name and firm.
         </p>
         {runs.length ? (

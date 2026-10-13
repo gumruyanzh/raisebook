@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/components/ui";
@@ -72,6 +73,14 @@ export default async function WorkspaceLayout({
   return (
     <WorkspaceProvider workspace={workspace} rounds={rounds}>
       <AppShell topBar={<WorkspaceTopBar />}>
+        {workspace.is_sandbox && !s.session.workspaces.some((w) => !w.is_sandbox) ? (
+          <p className="t-body-s mb-14 flex flex-wrap items-center gap-x-10 gap-y-4 rounded-md border border-line bg-surface px-14 py-8 text-muted">
+            <span>This is a sample with fictional investors. Try anything; nothing here is real.</span>
+            <Link href="/onboarding" className="link font-medium">
+              Start your own raise →
+            </Link>
+          </p>
+        ) : null}
         {children}
       </AppShell>
     </WorkspaceProvider>

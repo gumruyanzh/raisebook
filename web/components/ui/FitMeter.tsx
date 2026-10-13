@@ -99,7 +99,8 @@ export function FitMeter({
           tabIndex={disabled ? -1 : i === (v === 0 ? 1 : v) ? 0 : -1}
           onClick={() => set(i)}
           className={cn(
-            "flex items-center justify-center rounded-xs",
+            "rb-fit-pip flex items-center justify-center rounded-xs",
+            i === 0 && "rb-fit-clear",
             disabled ? "cursor-not-allowed" : "cursor-pointer",
             i === 0
               ? "order-last ml-4 size-16 text-[11px] text-muted opacity-0 group-hover/fit:opacity-100 group-focus-within/fit:opacity-100 hover:bg-sunk hover:text-fg focus-visible:opacity-100"

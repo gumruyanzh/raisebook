@@ -18,6 +18,9 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <Link href="/privacy" className="hover:text-fg">
             Privacy
           </Link>
+          <Link href="/terms" className="hover:text-fg">
+            Terms
+          </Link>
           <Link href="/docs" className="hover:text-fg">
             Docs
           </Link>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
@@ -107,7 +108,8 @@ export function SignInForm({
       const res = await requestMagicLink(api, request);
       savePending({ request, devLink: res.dev_link ?? null });
       rememberRequestedEmail(value);
-      router.push(`/signin/check?email=${encodeURIComponent(value)}`);
+      // The address travels in sessionStorage (savePending), never in the URL or history.
+      router.push("/signin/check");
     } catch (err) {
       setError({
         message: errorMessage(err),
@@ -136,6 +138,17 @@ export function SignInForm({
         {submitLabel}
       </Button>
       <p className="t-body-s text-muted">No password. The link works once and expires in 15 minutes.</p>
+      <p className="t-body-s text-muted">
+        By continuing you agree to the{" "}
+        <Link href="/terms" className="link">
+          Terms
+        </Link>{" "}
+        and the{" "}
+        <Link href="/privacy" className="link">
+          Privacy policy
+        </Link>
+        .
+      </p>
     </form>
   );
 }

@@ -16,6 +16,7 @@ type State =
   | { kind: "working"; emailHint: string | null }
   | { kind: "conflict"; signedInAs: string; linkFor: string }
   | { kind: "done" }
+  | { kind: "already"; email: string }
   | { kind: "failed"; message: string; code?: string; retry: boolean };
 
 function safePath(p: string | null | undefined): string | null {
@@ -55,7 +56,20 @@ export function Verify({ token }: { token: string | null }) {
         if (!live) return;
         // On the device that asked for the link, show the whole address instead of the hint.
         const hint = p.email_hint ?? null;
-        setState(p.valid ? { kind: "ready", emailHint: requestedEmailFor(hint) ?? hint } : USED);
+        if (p.valid) {
+          setState({ kind: "ready", emailHint: requestedEmailFor(hint) ?? hint });
+          return;
+        }
+        // A used link opened again (a second tap, or a mail app that pre-opened it) while
+        // this browser is already signed in: that is not a failure.
+        return api
+          .get<{ user: { email: string } }>("/v1/auth/session")
+          .then((sess) => {
+            if (live) setState({ kind: "already", email: sess.user.email });
+          })
+          .catch(() => {
+            if (live) setState(USED);
+          });
       })
       .catch(() => {
         // The peek is only a courtesy: fall back to a plain Continue.
@@ -104,13 +118,29 @@ export function Verify({ token }: { token: string | null }) {
     [token, router],
   );
 
+  if (state.kind === "already") {
+    return (
+      <div className="flex flex-col gap-14">
+        <h1 className="t-display-s">You&apos;re already signed in</h1>
+        <p>
+          This browser is signed in as <span className="font-mono break-all">{state.email}</span>.
+          The link was already used, so there is nothing more to do.
+        </p>
+        <div>
+          <Link href="/app" className="link font-medium">
+            Open Raisebook →
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (state.kind === "failed") {
     return (
       <div className="flex flex-col gap-14">
         <h1 className="t-display-s">We couldn&apos;t sign you in</h1>
-        <p role="alert">
+        <p role="alert" data-code={state.code}>
           {state.message}
-          {state.code ? <span className="ml-6 font-mono text-micro text-muted">{state.code}</span> : null}
         </p>
         <div className="flex flex-wrap items-center gap-10">
           {state.retry ? (

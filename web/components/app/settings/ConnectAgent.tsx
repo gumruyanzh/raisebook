@@ -195,6 +195,19 @@ export function ConnectAgent() {
   const [error, setError] = useState<string | null>(null);
   const base = `/w/${encodeURIComponent(workspace.slug)}`;
   const round = rounds.find((r) => r.status === "open")?.name ?? "Seed";
+  // On a phone the key would be shown once on a device that cannot run the agent: say so,
+  // offer the link for the laptop, and create a key here only when asked.
+  const [onPhoneAnyway, setOnPhoneAnyway] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const holdKey = phone && !onPhoneAnyway && !secret;
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}${base}/settings/mcp`);
+      setCopied(true);
+    } catch {
+      /* clipboard blocked: the address is on screen */
+    }
+  };
 
   return (
     <div className="flex flex-col gap-24">
@@ -203,10 +216,36 @@ export function ConnectAgent() {
         with you. Every action an agent takes shows on the timeline in{" "}
         <span className="text-agent">its own color</span>, under its name.
       </p>
+      {phone ? (
+        <div className="flex flex-col gap-8 rounded-md border border-line bg-surface p-14">
+          <p className="font-medium">Agents run on your computer.</p>
+          <p className="t-body-s text-muted">
+            Open this page on the computer where Claude Code, Codex or Cursor runs, and create the key there. A key is
+            shown only once.
+          </p>
+          <p className="t-data break-all text-muted">
+            {base}/settings/mcp
+          </p>
+          <div>
+            <Button size="sm" onClick={() => void copyLink()}>
+              {copied ? "Link copied" : "Copy link"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <ol className="m-0 list-none rounded-md border border-line bg-surface px-16 py-4">
         <Step n="01" title="Create a key">
           {!isOwner ? (
             <p className="t-body-s text-muted">Only an owner of {workspace.name} can create keys. Ask one for a key, then continue with step 02.</p>
+          ) : holdKey ? (
+            <div className="flex flex-col gap-8">
+              <p className="t-body-s text-muted">Best done on your computer (above).</p>
+              <div>
+                <Button size="sm" variant="ghost" onClick={() => setOnPhoneAnyway(true)}>
+                  Create a key on this phone anyway
+                </Button>
+              </div>
+            </div>
           ) : secret ? (
             <div className="flex flex-col gap-8">
               <SecretReveal secret={secret} label={d.name} />

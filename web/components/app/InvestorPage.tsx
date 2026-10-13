@@ -206,7 +206,6 @@ function RoundRow({
             inputMode="decimal"
             value={committed}
             disabled={ro}
-            
             onChange={(e) => setCommitted(e.target.value)}
             onBlur={() => {
               const v = parseMoney(committed);
@@ -215,17 +214,20 @@ function RoundRow({
             }}
           />
         </label>
-        <label className="flex min-w-0 flex-col gap-4">
-          <span className="text-[12px] text-muted">Owner</span>
-          <Select value={p.owner?.user_id ?? ""} disabled={ro} onChange={(e) => void save({ owner_user_id: e.target.value || null })}>
-            <option value="">No owner</option>
-            {members.map((m) => (
-              <option key={m.user_id} value={m.user_id}>
-                {personName(m)}
-              </option>
-            ))}
-          </Select>
-        </label>
+        {/* Solo workspaces get no owner UI (same guard as ParticipantFields). */}
+        {members.length > 1 || p.owner ? (
+          <label className="flex min-w-0 flex-col gap-4">
+            <span className="text-[12px] text-muted">Owner</span>
+            <Select value={p.owner?.user_id ?? ""} disabled={ro} onChange={(e) => void save({ owner_user_id: e.target.value || null })}>
+              <option value="">No owner</option>
+              {members.map((m) => (
+                <option key={m.user_id} value={m.user_id}>
+                  {personName(m)}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : null}
       </div>
       {p.next_step || p.follow_up_note ? (
         <p className="t-body-s text-muted">

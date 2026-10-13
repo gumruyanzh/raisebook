@@ -332,7 +332,8 @@ export interface DealCardProps extends Omit<ComponentProps<"button">, "title" | 
   /** Line 2: "Partner · Ember Labs" (title and firm, either may be missing). */
   title?: string | null;
   firm?: string | null;
-  priority: Priority;
+  /** null: not rated yet, so no chip. */
+  priority: Priority | null;
   /** Up to three short facts ("VC", "Seed", "Fintech"). */
   meta: string[];
   /** "$250k–1M", mono. */
@@ -425,9 +426,11 @@ export function DealCard({
             <span className="agent-diamond self-center" aria-label={agentMark.tip} role="img" />
           </Tooltip>
         ) : null}
-        <Chip tone={priority} className="ml-auto shrink-0">
-          {PRIORITY_LABEL[priority]}
-        </Chip>
+        {priority ? (
+          <Chip tone={priority} className="ml-auto shrink-0">
+            {PRIORITY_LABEL[priority]}
+          </Chip>
+        ) : null}
       </span>
       <span className="t-body-s block w-full truncate leading-[18px] text-muted" style={{ height: DEAL.sub }}>
         {who || " "}

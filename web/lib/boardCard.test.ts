@@ -17,9 +17,11 @@ test("closeLikelihood: stage base × (0.6 + 0.1 × fit), with the working in the
     source: "derived",
     why: "Meeting 40% × fit 5 → 44%",
   });
-  assert.equal(closeLikelihood({ stage: MEETING, fit: 0 }).value, 24);
+  // Not rated counts as a neutral 3, not as the lowest fit.
+  assert.equal(closeLikelihood({ stage: MEETING, fit: 0 }).value, 36);
+  assert.equal(closeLikelihood({ stage: MEETING, fit: 0 }).why, "Meeting 40% × fit not rated (as 3) → 36%");
   assert.equal(closeLikelihood({ stage: NEW, fit: 3 }).value, 5); // 5 × 0.9 = 4.5 → 5
-  assert.equal(closeLikelihood({ stage: NEW, fit: 0 }).value, 3);
+  assert.equal(closeLikelihood({ stage: NEW, fit: 0 }).value, 5);
   assert.equal(closeLikelihood({ stage: st("replied", "Replied", "active"), fit: 4 }).value, 25);
   assert.equal(closeLikelihood({ stage: st("contacted", "Contacted", "active"), fit: 4 }).value, 15);
   assert.equal(closeLikelihood({ stage: st("research", "Researching", "open"), fit: 5 }).value, 11);
@@ -51,7 +53,8 @@ test("cardPriority follows the app's fit rule", () => {
   assert.equal(cardPriority(4), "warm");
   assert.equal(cardPriority(3), "maybe");
   assert.equal(cardPriority(2), "low");
-  assert.equal(cardPriority(0), "low");
+  assert.equal(cardPriority(1), "low");
+  assert.equal(cardPriority(0), null); // not rated: no chip, not "Low fit"
 });
 
 test("cardMeta: type, first stage focus, first industry; never other; at most 3", () => {

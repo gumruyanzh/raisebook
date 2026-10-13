@@ -942,7 +942,8 @@ export function Pipeline(props: PipelineProps) {
     ];
   }, [participants, props.members.length, props.setup]);
   const setupLeft = setupSteps.filter((x) => !x.done).length;
-  const showSetup = canWrite && !setupDismissed && setupLeft > 0;
+  // Not in a sample workspace: its checklist would be about fictional data.
+  const showSetup = canWrite && !setupDismissed && setupLeft > 0 && !workspace.is_sandbox;
   const dismissSetup = () => {
     writeStore(SETUP_KEY, "1");
     setSetupDismissed(true);
@@ -1396,8 +1397,9 @@ export function Pipeline(props: PipelineProps) {
       />
     );
 
+  // One entry point at a time: an empty round shows the checklist under its empty state.
   const setupNode =
-    showSetup && !phone ? (
+    showSetup && !phone && participants.length > 0 ? (
       <SetupMenu
         steps={setupSteps}
         base={base}
@@ -1439,6 +1441,10 @@ export function Pipeline(props: PipelineProps) {
     >
       {phone ? (
         empty ? null : (
+          <>
+          {showSetup ? (
+            <SetupChecklist steps={setupSteps} base={base} roundSlug={round.slug} onDismiss={dismissSetup} />
+          ) : null}
           <PipelinePhone
             round={round}
             stages={stages}
@@ -1468,7 +1474,9 @@ export function Pipeline(props: PipelineProps) {
             base={base}
             onListChange={onPhoneList}
             stickyTop={stickyTop}
+            onAdd={canWrite ? () => setAdding(true) : undefined}
           />
+          </>
         )
       ) : (
         <div ref={headRef} className="flex flex-col gap-14">
@@ -2042,7 +2050,7 @@ function SetupChecklist({
           x.done ? "border-good bg-good-soft text-good-ink" : "border-line text-transparent",
         )}
       >
-        ✓
+        {x.done ? "✓" : null}
       </span>
       {x.done ? (
         <span className="text-muted">{x.label}</span>

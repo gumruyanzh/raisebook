@@ -806,7 +806,7 @@ function StageColumn({
               draggable={canWrite}
               hint={canWrite ? undefined : "View only"}
               aria-current={openId === id || undefined}
-              aria-label={`${p.investor.name}${p.investor.firm ? `, ${p.investor.firm}` : ""}. ${s.label}. ${PRIORITY_LABEL[cardPriority(p.fit)]}.${view.odds ? ` Likelihood ${view.odds.value}%.` : ""}${isSel ? " Selected." : ""}`}
+              aria-label={`${p.investor.name}${p.investor.firm ? `, ${p.investor.firm}` : ""}. ${s.label}. ${(() => { const pr = cardPriority(p.fit); return pr ? PRIORITY_LABEL[pr] : "Not rated"; })()}.${view.odds ? ` Likelihood ${view.odds.value}%.` : ""}${isSel ? " Selected." : ""}`}
               onFocus={() => onCardFocus(id)}
               onClick={(e) => onCardClick(e, id)}
               onKeyDown={(e) => onCardKey(e, p)}

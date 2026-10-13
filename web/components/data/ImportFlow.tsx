@@ -286,7 +286,7 @@ export function ImportFlow({ initialRound }: { initialRound?: string }) {
               </div>
             ) : (
               <FileDrop
-                prompt="Drop a CSV or prototype JSON file here, or paste below"
+                prompt="Drop a CSV file here, or paste below"
                 onText={(t, f) => {
                   setText(t);
                   setFilename(f.name);
@@ -558,8 +558,47 @@ function ColumnTable({
       hint: used.has(f) && used.get(f) !== col ? `← ${used.get(f)}` : undefined,
     })),
   ];
+  const picker = (col: string) => {
+    const current = mapping[col] ?? null;
+    return (
+      <>
+        <Combobox
+          size="sm"
+          aria-label={`Field for ${col}`}
+          searchPlaceholder="Find a field"
+          value={current ?? IGNORE}
+          options={optionsFor(col)}
+          onChange={(v) => onChange(col, !v || v === IGNORE ? null : (v as ImportField))}
+          renderValue={(o) => (o && o.value !== IGNORE ? o.label : <span className="text-muted">Ignore</span>)}
+          className="w-full"
+        />
+        {current && ROUND_FIELD_SET.has(current) && !round ? (
+          <span className="t-body-s mt-4 block text-muted">Pick a round first; this column is ignored.</span>
+        ) : null}
+      </>
+    );
+  };
   return (
-    <div className="overflow-x-auto rounded-md border border-line bg-surface">
+    <>
+    {/* Phones: one card per column, the field picker in reach (a 680px table hid it). */}
+    <ul className="m-0 flex list-none flex-col gap-8 p-0 md:hidden" aria-label="Columns">
+      {preview.columns.map((col) => {
+        const samples = (preview.samples[col] ?? []).slice(0, 2);
+        return (
+          <li key={col} className="flex min-w-0 flex-col gap-6 rounded-md border border-line bg-surface p-12">
+            <span className="flex min-w-0 items-baseline gap-8">
+              <span className="min-w-0 truncate font-medium">{col}</span>
+              <span aria-hidden className="text-muted">→</span>
+            </span>
+            {picker(col)}
+            <span className="t-data min-w-0 truncate text-muted">
+              {samples.length ? samples.join(" · ") : "empty"}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+    <div className="hidden overflow-x-auto rounded-md border border-line bg-surface md:block">
       <table className="w-full min-w-[680px] border-collapse text-base">
         <thead>
           <tr>
@@ -572,7 +611,6 @@ function ColumnTable({
         </thead>
         <tbody>
           {preview.columns.map((col) => {
-            const current = mapping[col] ?? null;
             const samples = preview.samples[col] ?? [];
             const st = preview.column_stats?.[col];
             return (
@@ -600,27 +638,14 @@ function ColumnTable({
                     {!st?.empty && !st?.unreadable ? <span className="t-micro text-muted">all filled</span> : null}
                   </span>
                 </td>
-                <td className="w-[260px] border-b border-line px-10 py-8 align-top">
-                  <Combobox
-                    size="sm"
-                    aria-label={`Field for ${col}`}
-                    searchPlaceholder="Find a field"
-                    value={current ?? IGNORE}
-                    options={optionsFor(col)}
-                    onChange={(v) => onChange(col, !v || v === IGNORE ? null : (v as ImportField))}
-                    renderValue={(o) => (o && o.value !== IGNORE ? o.label : <span className="text-muted">Ignore</span>)}
-                    className="w-full"
-                  />
-                  {current && ROUND_FIELD_SET.has(current) && !round ? (
-                    <span className="t-body-s mt-4 block text-muted">Pick a round first; this column is ignored.</span>
-                  ) : null}
-                </td>
+                <td className="w-[260px] border-b border-line px-10 py-8 align-top">{picker(col)}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
@@ -907,15 +932,21 @@ function Review({
       <Warnings items={preview.warnings} />
 
       <div ref={scroll} className="max-h-[min(64vh,720px)] overflow-auto overscroll-contain rounded-md border border-line bg-surface">
-        <div role="table" aria-label="Rows to import" aria-rowcount={rows.length + 1} className="min-w-[880px]">
-          <div role="row" className="t-th sticky top-0 z-[1] grid h-33 grid-cols-[56px_76px_minmax(140px,1.1fr)_minmax(120px,1fr)_minmax(140px,1fr)_minmax(150px,1fr)_minmax(200px,1.6fr)] items-center gap-x-10 border-b border-line bg-surface px-10 text-muted">
-            <span role="columnheader" className="text-right">Row</span>
+        <div role="table" aria-label="Rows to import" aria-rowcount={rows.length + 1} className="min-w-[640px] md:min-w-[880px]">
+          <div
+            role="row"
+            className={cn(
+              "t-th sticky top-0 z-[1] grid h-33 items-center gap-x-10 border-b border-line bg-surface px-10 text-muted",
+              REVIEW_COLS,
+            )}
+          >
+            <span role="columnheader" className="text-right max-md:hidden">Row</span>
             <span role="columnheader">Action</span>
             <span role="columnheader">Name</span>
-            <span role="columnheader">Firm</span>
-            <span role="columnheader">Round</span>
-            <span role="columnheader">Matched</span>
-            <span role="columnheader">Notes</span>
+            <span role="columnheader" className="max-md:order-2">Firm</span>
+            <span role="columnheader" className="max-md:order-2">Round</span>
+            <span role="columnheader" className="max-md:order-2">Matched</span>
+            <span role="columnheader" className="max-md:order-1">Notes</span>
           </div>
           <div style={{ height: v.padTop }} aria-hidden />
           {rows.slice(v.start, v.end).map((r, k) => {
@@ -940,6 +971,14 @@ function Review({
     </div>
   );
 }
+
+/**
+ * Review columns. Phones drop the row number and put Notes (why a row is skipped or
+ * flagged) right after the name, so it is on screen without scrolling sideways.
+ */
+const REVIEW_COLS =
+  "grid-cols-[56px_76px_minmax(140px,1.1fr)_minmax(120px,1fr)_minmax(140px,1fr)_minmax(150px,1fr)_minmax(200px,1.6fr)] " +
+  "max-md:grid-cols-[76px_minmax(110px,1fr)_minmax(200px,1.6fr)_minmax(110px,1fr)_minmax(130px,1fr)_minmax(130px,1fr)]";
 
 function ReviewRow({
   r,
@@ -975,12 +1014,12 @@ function ReviewRow({
       aria-rowindex={index + 2}
       className={cn(
         "grid items-center gap-x-10 border-b border-line px-10 outline-none",
-        "grid-cols-[56px_76px_minmax(140px,1.1fr)_minmax(120px,1fr)_minmax(140px,1fr)_minmax(150px,1fr)_minmax(200px,1.6fr)]",
+        REVIEW_COLS,
         "hover:bg-[color-mix(in_oklab,var(--sunk)_55%,var(--surface))] focus-visible:bg-accent-soft focus-visible:shadow-[inset_2px_0_0_var(--accent)]",
       )}
       style={{ height: ROW_H }}
     >
-      <span role="cell" className="t-data text-right text-muted">
+      <span role="cell" className="t-data text-right text-muted max-md:hidden">
         {r.row}
       </span>
       <span role="cell">
@@ -989,10 +1028,10 @@ function ReviewRow({
       <span role="cell" className="truncate font-medium" title={String(r.investor.name ?? "")}>
         {String(r.investor.name ?? "") || <span className="text-muted">No name</span>}
       </span>
-      <span role="cell" className="truncate text-muted" title={String(r.investor.firm ?? "")}>
+      <span role="cell" className="truncate text-muted max-md:order-2" title={String(r.investor.firm ?? "")}>
         {String(r.investor.firm ?? "")}
       </span>
-      <span role="cell" className="t-body-s flex min-w-0 items-center gap-6 whitespace-nowrap">
+      <span role="cell" className="t-body-s flex min-w-0 items-center gap-6 whitespace-nowrap max-md:order-2">
         {p?.stage ? (
           <>
             {st ? <StagePill color={st.color} label={st.label} /> : <span className="font-mono">{p.stage}</span>}
@@ -1003,7 +1042,7 @@ function ReviewRow({
           <span className="text-muted">–</span>
         )}
       </span>
-      <span role="cell" className="t-body-s min-w-0 truncate" title={r.match ? `${r.match.name} (${r.match.matched_on.replace("_", " + ")})` : undefined}>
+      <span role="cell" className="t-body-s min-w-0 truncate max-md:order-2" title={r.match ? `${r.match.name} (${r.match.matched_on.replace("_", " + ")})` : undefined}>
         {r.match ? (
           <>
             {r.match.investor_id ? "Already in Raisebook" : `Same as row ${r.match.row}`}
@@ -1011,7 +1050,7 @@ function ReviewRow({
           </>
         ) : null}
       </span>
-      <span role="cell" className={cn("t-body-s min-w-0 truncate", r.errors.length ? "text-bad" : "text-muted")} title={notes.join("\n") || undefined}>
+      <span role="cell" className={cn("t-body-s min-w-0 truncate max-md:order-1", r.errors.length ? "text-bad" : "text-muted")} title={notes.join("\n") || undefined}>
         {notes[0] ?? ""}
         {notes.length > 1 ? <span className="ml-6 font-mono text-muted">+{notes.length - 1}</span> : null}
       </span>

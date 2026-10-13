@@ -158,7 +158,7 @@ export function CodeBlock({
       {hasHeader ? (
         <div className="flex items-center gap-8 border-b border-code-line px-10 py-6">
           {tabs?.length ? (
-            <div role="tablist" aria-label="Client" className="flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-none">
+            <div role="tablist" aria-label="Client" className="flex min-w-0 flex-1 flex-wrap gap-2">
               {tabs.map((t, i) => (
                 <button
                   key={t.label}

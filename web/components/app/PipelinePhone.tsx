@@ -51,6 +51,7 @@ export function PipelinePhone({
   base,
   onListChange,
   stickyTop = 0,
+  onAdd,
 }: {
   round: Round;
   stages: Stage[];
@@ -82,6 +83,8 @@ export function PipelinePhone({
   onListChange?: (ids: string[]) => void;
   /** Height of the sticky top bar: a long list's group header sticks under it. */
   stickyTop?: number;
+  /** Opens Add investor (writers only): the phone's way to add after the first investor. */
+  onAdd?: () => void;
 }) {
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -231,15 +234,34 @@ export function PipelinePhone({
   const showPills = dueTotal > 0 || pillStages.length > 1;
 
   return (
-    <div className="flex flex-col gap-12">
+    <div className={cn("flex flex-col gap-12", canWrite && onAdd && "pb-64")}>
+      {canWrite && onAdd && !anySel ? (
+        // Always in reach on a phone, whatever the list's length (the title-row button is
+        // desktop-only). Above the page bottom inset on notched phones.
+        <div className="fixed right-16 z-30" style={{ bottom: "calc(16px + env(safe-area-inset-bottom))" }}>
+          <Button
+            variant="primary"
+            onClick={onAdd}
+            aria-label="Add investor"
+            className="h-48 rounded-pill px-18 text-[16px] shadow-menu"
+          >
+            + Investor
+          </Button>
+        </div>
+      ) : null}
       {/* The round picker above already says "Seed": the terms only (critique 3: Seed twice). */}
       <div className="-mt-4 flex h-20 items-center gap-10">
         <h1 className="sr-only">{round.name}</h1>
-        <span className="t-micro text-muted uppercase">{sub.filter(Boolean).join(" · ")}</span>
+        <span className="t-micro min-w-0 truncate text-muted uppercase">{sub.filter(Boolean).join(" · ")}</span>
         {canWrite ? (
-          <Link href={`${base}/r/${encodeURIComponent(round.slug)}/settings`} className="link t-body-s ml-auto">
-            Edit round
-          </Link>
+          <span className="ml-auto flex shrink-0 items-center gap-14">
+            <Link href={`${base}/import?round=${encodeURIComponent(round.slug)}`} className="link t-body-s">
+              Import
+            </Link>
+            <Link href={`${base}/r/${encodeURIComponent(round.slug)}/settings`} className="link t-body-s">
+              Edit round
+            </Link>
+          </span>
         ) : null}
       </div>
 

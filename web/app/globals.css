@@ -608,3 +608,28 @@ dialog::backdrop {
   visibility: visible;
   transition-delay: 300ms, 300ms;
 }
+
+/* Touch screens (outside every layer, so it wins over utilities): iOS Safari zooms into any
+   focused field whose text is under 16px, which throws the layout off from the very first
+   field (sign-in). Fields get 16px text and a 40px minimum height there. Zoom stays enabled. */
+@media (pointer: coarse), (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+@media (pointer: coarse) {
+  /* Form fields (Input/Select with the default tone and size) are 40px tall to the finger. */
+  .rb-field {
+    min-height: 40px;
+  }
+  /* Editable fit pips: a 7x14 pip is too small for a finger. */
+  .rb-fit-pip {
+    min-width: 28px;
+    min-height: 32px;
+  }
+  .rb-fit-clear {
+    opacity: 1;
+  }
+}

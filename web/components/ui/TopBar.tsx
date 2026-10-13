@@ -42,6 +42,8 @@ export interface TopBarProps {
   /** "+ Round" opens the new-round dialog in place (wins over `newRoundHref`). */
   onNewRound?: () => void;
   nav?: TopBarNavItem[];
+  /** Extra entries in the phone "Menu" after the nav (e.g. Import CSV for writers). */
+  menuExtras?: MenuEntry[];
   activeNav?: string | null;
   user: { name?: string | null; email: string };
   /** Wordmark target: the first open round. */
@@ -245,6 +247,7 @@ export function TopBar(p: TopBarProps) {
                       hint: n.kbd ? <span className="[@media(pointer:coarse)]:hidden">{comboLabel(n.kbd)}</span> : undefined,
                     }),
                   ),
+                  ...(p.menuExtras?.length ? [{ type: "separator" } as MenuEntry, ...p.menuExtras] : []),
                   ...(p.onOpenPalette
                     ? [
                         { type: "separator" } as MenuEntry,

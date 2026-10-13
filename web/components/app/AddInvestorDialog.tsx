@@ -61,7 +61,8 @@ export function AddInvestorDialog({
     linkedin: "",
     type: "vc",
     stage: stages[0]?.key ?? "",
-    fit: 3,
+    // Not rated until the person picks one (imports without a fit column agree).
+    fit: 0,
   });
   const [d, setD] = useState<Draft>(blank);
   const [busy, setBusy] = useState(false);

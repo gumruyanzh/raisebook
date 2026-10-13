@@ -54,6 +54,7 @@ export function Input({ tone = "form", size = "md", mono, className, ...rest }: 
         CONTROL,
         TONE[tone],
         size === "sm" ? "h-28 px-8 text-sm" : "h-32 px-9 text-base",
+        tone === "form" && size === "md" && "rb-field",
         mono && "font-mono text-sm tnum",
         className,
       )}
@@ -106,6 +107,7 @@ export function Select({ tone = "form", size = "md", className, children, ...res
         TONE[tone],
         "rb-select pr-26",
         size === "sm" ? "h-28 pl-8 text-sm" : "h-32 pl-9 text-base",
+        tone === "form" && size === "md" && "rb-field",
         className,
       )}
       {...rest}

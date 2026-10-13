@@ -38,6 +38,9 @@ export interface Likelihood {
   why: string;
 }
 
+/** The fit an unrated investor counts as in the likelihood: neutral, not the lowest. */
+export const UNRATED_FIT = 3;
+
 /**
  * Likelihood to close for this round. A probability set on the participant wins. Otherwise
  * it is derived in the open: the stage base × (0.6 + 0.1 × fit), capped at 95% (the won stage
@@ -54,17 +57,25 @@ export function closeLikelihood(
   if (p.stage.kind === "won") return { value: 100, source: "derived", why: `${label}: 100%` };
   if (p.stage.kind === "lost") return { value: 0, source: "derived", why: `${label}: 0%` };
   const base = STAGE_BASE[p.stage.key] ?? KIND_BASE[p.stage.kind] ?? 0;
-  const fit = Math.max(0, Math.min(5, Math.round(p.fit || 0)));
+  const rated = Math.max(0, Math.min(5, Math.round(p.fit || 0)));
+  // Not rated is neutral (counted as 3), not the lowest fit.
+  const fit = rated || UNRATED_FIT;
   const raw = base * (0.6 + 0.1 * fit);
   const value = Math.min(LIKELIHOOD_CAP, Math.round(raw));
   const capped = raw > LIKELIHOOD_CAP ? ` (capped at ${LIKELIHOOD_CAP}%)` : "";
-  return { value, source: "derived", why: `${label} ${base}% × fit ${fit} → ${value}%${capped}` };
+  const fitText = rated ? `fit ${fit}` : "fit not rated (as 3)";
+  return { value, source: "derived", why: `${label} ${base}% × ${fitText} → ${value}%${capped}` };
 }
 
 /* ---------- priority ---------- */
 
-/** The priority chip on a card: the same rule as everywhere else (`priorityFromFit`). */
-export function cardPriority(fit: number): Priority {
+/**
+ * The priority chip on a card: the same rule as everywhere else (`priorityFromFit`), except
+ * that an unrated investor (fit 0, as every import without a fit column) gets no chip rather
+ * than "Low fit": nobody has judged them yet.
+ */
+export function cardPriority(fit: number): Priority | null {
+  if (!(fit > 0)) return null;
   return priorityFromFit(fit);
 }
 
