@@ -78,7 +78,7 @@ RecoveryHook = Callable[[AsyncSession, RecoveredJob, datetime], Awaitable[None]]
 # imports every one before it starts claiming.
 HANDLERS: dict[str, Handler] = {}
 RECOVERY_HOOKS: dict[str, RecoveryHook] = {}
-HANDLER_MODULES: list[str] = []
+HANDLER_MODULES: list[str] = ["raisebook.services.research_jobs"]
 
 
 def load_handlers() -> None:

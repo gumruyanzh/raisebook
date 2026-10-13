@@ -229,6 +229,7 @@ async def apply_changes(
     bulk_id: UUID | None = None,
     known_owners: set[UUID] | None = None,
     undo: bool = False,
+    extra_data: Mapping[str, Any] | None = None,
 ) -> list[str]:
     """Apply participant field changes and log one activity per change type. ``bulk_id``
     goes into every activity's ``data`` so the feed can group a bulk change; ``undo`` marks
@@ -237,6 +238,7 @@ async def apply_changes(
     clean = await _clean(db, ws, stages, raw, known_owners=known_owners)
     by_id = {s.id: s for s in stages}
     extra: dict[str, Any] = {"import_run_id": str(import_run_id)} if import_run_id else {}
+    extra.update(extra_data or {})
     if bulk_id:
         extra["bulk_id"] = str(bulk_id)
     if undo:

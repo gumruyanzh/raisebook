@@ -82,6 +82,8 @@ class Settings(BaseSettings):
     secrets_kek_previous: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_timeout_s: float = 90.0
+    # Told (by email) when a research removal request is confirmed; unset = log line only.
+    operator_email: str | None = None
 
     # Background worker (``rbctl worker``).
     worker_concurrency: int = Field(4, ge=1, le=32)

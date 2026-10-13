@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from raisebook.schemas.common import StrictInput, Timestamp
+from raisebook.schemas.research import ResearchSummaryOut
 from raisebook.schemas.rounds import StageOut
 
 OnDuplicate = Literal["return_existing", "fill_empty", "create_anyway"]
@@ -49,6 +50,11 @@ class InvestorOut(InvestorCompact):
     source: str | None = None
     warm_intro_by: str | None = None
     rounds: list[ParticipationBrief] = []
+    research: ResearchSummaryOut | None = Field(
+        None,
+        description="Identity status, verdict, dossier date, pending suggestions, the active "
+        "run, and fields filled from research (RESEARCH-PLAN §6.4).",
+    )
     created_at: Timestamp
     updated_at: Timestamp
 

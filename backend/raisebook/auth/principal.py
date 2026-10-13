@@ -57,6 +57,7 @@ from raisebook.core import ratelimit
 from raisebook.core.actor import (
     AGENT_MODEL_HEADER,
     AGENT_NAME_HEADER,
+    SYSTEM_ACTOR,
     Actor,
     agent_actor,
     user_actor,
@@ -74,7 +75,7 @@ from raisebook.core.errors import (
 )
 from raisebook.models.enums import ActorType, KeyMode, Role, Via
 from raisebook.models.user import User, UserSession
-from raisebook.models.workspace import Membership, Workspace
+from raisebook.models.workspace import ApiKey, Membership, Workspace
 
 OWNER_SESSION = "owner_session"
 
@@ -417,3 +418,78 @@ get_workspace_ctx = workspace_ctx(SCOPE_READ)
 
 get_write_ctx = workspace_ctx(SCOPE_WRITE)
 """Write access (``raisebook:write``) to the caller's workspace."""
+
+
+async def worker_context(
+    db: AsyncSession,
+    *,
+    workspace_id: UUID,
+    actor_type: str,
+    via: str,
+    actor_user_id: UUID | None,
+    api_key_id: UUID | None,
+    actor_label: str | None,
+    agent_model: str | None,
+    now: datetime,
+) -> WorkspaceContext | None:
+    """The requester's :class:`WorkspaceContext` for background work (RESEARCH-PLAN §3.5).
+
+    Jobs carry ids only; a handler rebuilds who asked from the row's actor columns and acts
+    as them. Returns None when the requester lost write access since (removed or demoted to
+    viewer, or the API key was revoked, expired or lacks ``raisebook:write``).
+    """
+    ws = await db.get(Workspace, workspace_id)
+    if ws is None:
+        return None
+    info = WorkspaceInfo.of(ws)
+    actor_kind = ActorType(actor_type)
+    if actor_kind == ActorType.USER:
+        if actor_user_id is None:
+            return None
+        role_raw = await db.scalar(
+            select(Membership.role).where(
+                Membership.workspace_id == workspace_id, Membership.user_id == actor_user_id
+            )
+        )
+        if role_raw is None or Role(role_raw) not in (Role.OWNER, Role.EDITOR):
+            return None
+        role = Role(role_raw)
+        principal = Principal(
+            type=ActorType.USER,
+            workspace=info,
+            scopes=ROLE_SCOPES[role],
+            user_id=actor_user_id,
+            role=role,
+        )
+        return WorkspaceContext.build(principal, user_actor(actor_user_id))
+    if actor_kind == ActorType.AGENT:
+        key = await db.get(ApiKey, api_key_id) if api_key_id is not None else None
+        if (
+            key is None
+            or key.workspace_id != workspace_id
+            or key.revoked_at is not None
+            or (key.expires_at is not None and key.expires_at <= now)
+            or SCOPE_WRITE not in granted_scopes(key.scopes)
+        ):
+            return None
+        principal = Principal(
+            type=ActorType.AGENT,
+            workspace=info,
+            scopes=granted_scopes(key.scopes),
+            api_key_id=key.id,
+            key_prefix=key.key_prefix,
+            key_name=key.name,
+            key_agent_name=key.agent_name,
+            key_mode=KeyMode(key.mode),
+        )
+        actor = Actor(
+            ActorType.AGENT,
+            Via(via),
+            api_key_id=key.id,
+            label=actor_label or key.agent_name or key.name,
+            model=agent_model,
+        )
+        return WorkspaceContext.build(principal, actor)
+    # System requests (sample data, maintenance) act as the system.
+    principal = Principal(type=ActorType.SYSTEM, workspace=info, scopes=frozenset())
+    return WorkspaceContext.build(principal, SYSTEM_ACTOR)

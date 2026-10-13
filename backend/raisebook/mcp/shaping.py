@@ -94,10 +94,30 @@ def _investor_dict(out: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def research_brief(res: Mapping[str, Any]) -> dict[str, Any] | None:
+    """An investor's research summary, only what an agent can act on (None: nothing yet)."""
+    status = res.get("identity_status")
+    out: dict[str, Any] = {
+        "identity": status if status not in (None, "none") else None,
+        "verdict": res.get("verdict"),
+        "dossier_at": res.get("dossier_at"),
+        "stale": res.get("stale") or None,
+        "pending_suggestions": res.get("pending_suggestions") or None,
+        "running": (res.get("active_run") or {}).get("kind"),
+        "from_research": res.get("from_research") or None,
+    }
+    pruned: dict[str, Any] = prune(out)
+    return pruned or None
+
+
 def investor(
     model: BaseModel | Mapping[str, Any], *, notes_limit: int = LIST_TEXT_LIMIT
 ) -> dict[str, Any]:
     out = _investor_dict(dump(model))
+    res = out.pop("research", None)
+    brief = research_brief(res) if isinstance(res, dict) else None
+    if brief:
+        out["research"] = brief
     rounds = out.get("rounds")
     if isinstance(rounds, list):
         out["rounds"] = [

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import WorkspaceContext
 from raisebook.core.actor import Actor
+from raisebook.core.clock import get_now
 from raisebook.core.errors import (
     AmbiguousReference,
     Duplicate,
@@ -36,6 +37,7 @@ from raisebook.models.enums import Via
 from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant, RoundStage
 from raisebook.schemas.investors import InvestorCompact, InvestorOut, ParticipationBrief
+from raisebook.schemas.research import ResearchSummaryOut
 from raisebook.services import activities
 from raisebook.services.normalize import (
     ARRAY_LIMITS,
@@ -224,6 +226,7 @@ async def update(
     add_industries: Sequence[str] | None = None,
     append_notes: str | None = None,
     fill_empty: bool = False,
+    extra_data: Mapping[str, Any] | None = None,
 ) -> UpdateResult:
     """Apply contact-field changes (absent = unchanged, ``None`` = clear) and write one
     ``investor_updated`` activity listing the changed fields. A no-op writes nothing.
@@ -231,7 +234,8 @@ async def update(
     ``fill_empty=True`` only fills fields that are empty and unions list fields (tags,
     industries, stage focus). Notes changes record ``{"appended": true}`` or
     ``{"changed": true}``, never the text; a signed-in user's notes edits write no
-    activity (the web notes field autosaves).
+    activity (the web notes field autosaves). ``extra_data`` is merged into the activity's
+    ``data`` (research write-back adds ``{"source": "research", "dossier_id": …}``).
     """
     act = actor or ws.actor
     clean = normalize_investor_input(changes, partial=True)
@@ -303,7 +307,7 @@ async def update(
                 diff[f] = {"appended": True} if appended else {"changed": True}
             else:
                 diff[f] = {"from": before[f], "to": after[f]}
-        data: dict[str, Any] = {"fields": log_fields, "changes": diff}
+        data: dict[str, Any] = {"fields": log_fields, "changes": diff, **(extra_data or {})}
         if import_run_id:
             data["import_run_id"] = str(import_run_id)
         await activities.log(
@@ -512,6 +516,7 @@ async def present(
     with_rounds: bool = True,
 ) -> list[InvestorOut]:
     parts = await participations(db, ws, [i.id for i in investors]) if with_rounds else {}
+    research = await _research(db, ws, investors) if with_rounds else {}
     out = []
     for inv in investors:
         base = compact(inv).model_dump()
@@ -530,11 +535,29 @@ async def present(
                 source=inv.source,
                 warm_intro_by=inv.warm_intro_by,
                 rounds=parts.get(inv.id, []),
+                research=research.get(inv.id),
                 created_at=inv.created_at,
                 updated_at=inv.updated_at,
             )
         )
     return out
+
+
+async def _research(
+    db: AsyncSession, ws: WorkspaceContext, investors: Sequence[Investor]
+) -> dict[UUID, ResearchSummaryOut]:
+    """The research summary per investor (identity, verdict, suggestions, "from research")."""
+    from raisebook.services.research_summary import summaries
+    from raisebook.services.research_writeback import from_research_fields
+
+    if not investors:
+        return {}
+    sums = await summaries(db, ws, [i.id for i in investors], now=get_now())
+    marks = await from_research_fields(db, ws, investors)
+    return {
+        i: ResearchSummaryOut.model_validate({**row, "from_research": marks.get(i, [])})
+        for i, row in sums.items()
+    }
 
 
 async def present_one(db: AsyncSession, ws: WorkspaceContext, inv: Investor) -> InvestorOut:

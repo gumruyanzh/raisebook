@@ -278,13 +278,16 @@ class FieldSuggestion(CreatedAtMixin, Base):
         _ws_fk("investor_id", "investors", ondelete="CASCADE", name="fk_suggestions_ws_inv"),
         _ws_fk("round_id", "rounds", ondelete="CASCADE", name="fk_suggestions_ws_round"),
         _ws_fk("dossier_id", "dossiers", ondelete="CASCADE", name="fk_suggestions_ws_dossier"),
+        _ws_fk("run_id", "research_runs", ondelete="SET NULL", name="fk_suggestions_ws_run"),
     )
 
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     investor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     round_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    dossier_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # NULL for identity write-back (made by ``run_id`` before any dossier exists; 0004).
+    dossier_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     field: Mapped[str] = mapped_column(Text, nullable=False)
     current_value: Mapped[Any] = mapped_column(JSONB)
     suggested_value: Mapped[Any] = mapped_column(JSONB, nullable=False)

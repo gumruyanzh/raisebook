@@ -293,6 +293,14 @@ async def remove_key(db: AsyncSession, ws: WorkspaceContext, *, now: datetime) -
         kinds=[jobs_svc.KIND_RESEARCH_RUN, jobs_svc.KIND_COMPANY_PREFILL],
         reason=NO_KEY_REASON,
     )
+    # Identities a cancelled run left "pending" go back to "none".
+    await db.execute(
+        text(
+            "UPDATE investor_identities SET status = 'none', updated_at = :now"
+            " WHERE workspace_id = :ws AND status = 'pending'"
+        ),
+        {"now": now, "ws": ws.workspace_id},
+    )
     return int(getattr(result, "rowcount", 0) or 0)
 
 
