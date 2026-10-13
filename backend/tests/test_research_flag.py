@@ -87,3 +87,29 @@ async def test_research_on_adds_the_five_tools() -> None:
     names = await _tool_names()
     assert RESEARCH_TOOLS <= names
     assert names - RESEARCH_TOOLS == CORE_TOOLS
+
+
+async def test_research_off_leaves_no_trace_in_openapi_or_bodies(
+    research_off: None, db: Any, key_client: Any
+) -> None:
+    """The public OpenAPI document, investor bodies and the JSON export say nothing about
+    research while the flag is off."""
+    import json
+
+    from raisebook.main import create_app
+    from tests.api.helpers import world
+
+    spec = json.dumps(create_app().openapi()).lower()
+    for word in ("dossier", "research-plan", "researchsummary", "openrouter"):
+        assert word not in spec, word
+
+    w = await world(db)
+    c = key_client(w.key)
+    r = await c.post("/v1/investors", json={"name": "Mira Cole", "firm": "Tallow Ventures"})
+    assert r.status_code == 201, r.text
+    inv = r.json()["investor"]
+    assert "research" not in inv
+    got = await c.get(f"/v1/investors/{inv['id']}")
+    assert got.status_code == 200 and "research" not in got.json()
+    export = await c.get("/v1/export?format=json")
+    assert export.status_code == 200 and "research" not in export.json()

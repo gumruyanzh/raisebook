@@ -25,6 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import WorkspaceContext
+from raisebook.config import get_settings
 from raisebook.core.errors import not_found
 from raisebook.models.activity import Activity
 from raisebook.models.enums import LOGGABLE_ACTIVITY_KINDS
@@ -619,7 +620,8 @@ async def export_workspace_json(
             for r in runs
         ],
     }
-    doc["research"] = await _research_dict(db, ws)
+    if get_settings().research_enabled:
+        doc["research"] = await _research_dict(db, ws)
     name = f"raisebook-{ws.slug}-{_stamp(ws, now)}.json"
     return ExportFile(name, "application/json", _json(doc), len(investors))
 

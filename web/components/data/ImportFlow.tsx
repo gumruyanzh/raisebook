@@ -978,7 +978,7 @@ function Review({
  */
 const REVIEW_COLS =
   "grid-cols-[56px_76px_minmax(140px,1.1fr)_minmax(120px,1fr)_minmax(140px,1fr)_minmax(150px,1fr)_minmax(200px,1.6fr)] " +
-  "max-md:grid-cols-[76px_minmax(110px,1fr)_minmax(200px,1.6fr)_minmax(110px,1fr)_minmax(130px,1fr)_minmax(130px,1fr)]";
+  "max-md:grid-cols-[68px_minmax(96px,1fr)_minmax(150px,1.6fr)_minmax(110px,1fr)_minmax(130px,1fr)_minmax(130px,1fr)]";
 
 function ReviewRow({
   r,
@@ -1050,7 +1050,7 @@ function ReviewRow({
           </>
         ) : null}
       </span>
-      <span role="cell" className={cn("t-body-s min-w-0 truncate max-md:order-1", r.errors.length ? "text-bad" : "text-muted")} title={notes.join("\n") || undefined}>
+      <span role="cell" className={cn("t-body-s min-w-0 truncate max-md:order-1 max-md:line-clamp-2 max-md:whitespace-normal max-md:leading-[1.25]", r.errors.length ? "text-bad" : "text-muted")} title={notes.join("\n") || undefined}>
         {notes[0] ?? ""}
         {notes.length > 1 ? <span className="ml-6 font-mono text-muted">+{notes.length - 1}</span> : null}
       </span>

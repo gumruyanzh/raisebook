@@ -24,6 +24,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import WorkspaceContext
+from raisebook.config import get_settings
 from raisebook.core.actor import Actor
 from raisebook.core.clock import get_now
 from raisebook.core.errors import (
@@ -516,7 +517,11 @@ async def present(
     with_rounds: bool = True,
 ) -> list[InvestorOut]:
     parts = await participations(db, ws, [i.id for i in investors]) if with_rounds else {}
-    research = await _research(db, ws, investors) if with_rounds else {}
+    research = (
+        await _research(db, ws, investors)
+        if with_rounds and get_settings().research_enabled
+        else {}
+    )
     out = []
     for inv in investors:
         base = compact(inv).model_dump()
@@ -535,7 +540,7 @@ async def present(
                 source=inv.source,
                 warm_intro_by=inv.warm_intro_by,
                 rounds=parts.get(inv.id, []),
-                research=research.get(inv.id),
+                research=r.model_dump(mode="json") if (r := research.get(inv.id)) else None,
                 created_at=inv.created_at,
                 updated_at=inv.updated_at,
             )

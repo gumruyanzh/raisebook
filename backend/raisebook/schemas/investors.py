@@ -6,10 +6,10 @@ from datetime import date
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
+from pydantic.json_schema import SkipJsonSchema
 
 from raisebook.schemas.common import StrictInput, Timestamp
-from raisebook.schemas.research import ResearchSummaryOut
 from raisebook.schemas.rounds import StageOut
 
 OnDuplicate = Literal["return_existing", "fill_empty", "create_anyway"]
@@ -50,13 +50,19 @@ class InvestorOut(InvestorCompact):
     source: str | None = None
     warm_intro_by: str | None = None
     rounds: list[ParticipationBrief] = []
-    research: ResearchSummaryOut | None = Field(
-        None,
-        description="Identity status, verdict, dossier date, pending suggestions, the active "
-        "run, and fields filled from research (RESEARCH-PLAN §6.4).",
-    )
+    # Unreleased investor research (RAISEBOOK_RESEARCH_ENABLED): a ``ResearchSummaryOut``
+    # dump when the feature is on. It is left out of the OpenAPI schema, and out of the body
+    # when unset, so with the flag off (the default) nothing about research is published.
+    research: SkipJsonSchema[dict[str, Any] | None] = None
     created_at: Timestamp
     updated_at: Timestamp
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_research(self, handler: SerializerFunctionWrapHandler) -> Any:
+        data = handler(self)
+        if isinstance(data, dict) and data.get("research") is None:
+            data.pop("research", None)
+        return data
 
 
 class InvestorFields(StrictInput):
