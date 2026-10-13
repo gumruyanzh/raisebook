@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, Select, func, or_, select
+from sqlalchemy import ColumnElement, Select, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import WorkspaceContext
@@ -20,7 +20,7 @@ from raisebook.models.investor import Investor
 from raisebook.models.round import RoundParticipant
 from raisebook.schemas.common import decode_cursor, encode_cursor
 
-INVESTOR_SORTS = ("name", "firm", "updated", "created")
+INVESTOR_SORTS = ("name", "firm", "updated", "created", "relevance")
 
 
 def _escape_like(word: str) -> str:
@@ -72,6 +72,21 @@ def investors_query(
         raise ValidationFailed(
             ["query", "sort"], f"sort must be one of: {', '.join(INVESTOR_SORTS)}."
         )
+    if sort == "relevance":
+        # The palette's ranking: name starts with the query, then a word of the name does,
+        # then the firm does, then everything else that matched; ties by name.
+        qq = _escape_like((q or "").strip().lower())
+        if qq:
+            name = func.lower(Investor.name)
+            firm = func.lower(func.coalesce(Investor.firm, ""))
+            rank = case(
+                (name.like(f"{qq}%", escape="\\"), 0),
+                (name.like(f"% {qq}%", escape="\\"), 1),
+                (firm.like(f"{qq}%", escape="\\"), 2),
+                else_=3,
+            )
+            return stmt.order_by(rank, name, Investor.id)
+        sort = "name"
     desc = (order or ("desc" if sort in ("updated", "created") else "asc")) == "desc"
     col: Any = {
         "name": func.lower(Investor.name),

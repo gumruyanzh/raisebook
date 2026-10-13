@@ -258,3 +258,22 @@ async def test_create_validation(db: AsyncSession, key_client: Any) -> None:
     assert r.status_code == 201 and r.json()["investor"]["check_max"] == 1_000_000
     r = await c.post("/v1/investors", json={"name": "A", "surprise": 1})
     assert r.status_code == 422
+
+
+async def test_relevance_sort_puts_name_prefix_first(db: AsyncSession, key_client: Any) -> None:
+    """Search-as-you-type (the ⌘K palette): names that start with the query come first,
+    then a word of the name, then the firm; ties by name."""
+    w = await world(db)
+    await make_investor(db, w.ws, name="Abel Harper", firm="Quarry Fund")
+    await make_investor(db, w.ws, name="Harper Coldridge", firm="Foxglove Capital")
+    await make_investor(db, w.ws, name="Mina Ode", firm="Harpwell Partners")
+    await make_investor(db, w.ws, name="Harpo Quill", firm="Kestrel Fund")
+    c = key_client(w.key)
+    r = await c.get("/v1/investors", params={"q": "harp", "sort": "relevance"})
+    assert r.status_code == 200, r.text
+    names = [i["name"] for i in r.json()["data"]]
+    assert names == ["Harper Coldridge", "Harpo Quill", "Abel Harper", "Mina Ode"]
+    # Without a query, relevance falls back to name order.
+    r = await c.get("/v1/investors", params={"sort": "relevance"})
+    all_names = [i["name"] for i in r.json()["data"]]
+    assert all_names == sorted(all_names, key=str.lower)

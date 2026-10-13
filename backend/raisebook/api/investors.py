@@ -46,7 +46,7 @@ async def list_all(
     industry: list[str] | None = Query(None),
     round: str | None = Query(None, max_length=200, description="only investors in this round"),
     not_in_round: str | None = Query(None, max_length=200),
-    sort: Literal["name", "firm", "updated", "created"] = "name",
+    sort: Literal["name", "firm", "updated", "created", "relevance"] = "name",
     order: Literal["asc", "desc"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     cursor: str | None = None,
@@ -54,7 +54,8 @@ async def list_all(
     db: AsyncSession = Depends(get_session),
 ) -> InvestorPage:
     """Workspace contacts, each with their stage in every round. ``q``: every word must
-    match name, firm, title, email, location, tags, industries, source or notes."""
+    match name, firm, title, email, location, tags, industries, source or notes.
+    ``sort=relevance`` puts names that start with ``q`` first (search-as-you-type)."""
     in_round = await resolve_round(db, ws, round, required=False)
     out_round = await resolve_round(db, ws, not_in_round, required=False)
     rows, nxt, total = await list_investors(
