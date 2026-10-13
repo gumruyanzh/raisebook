@@ -12,7 +12,13 @@ from raisebook.models.activity import Activity
 from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant, RoundStage
 from raisebook.models.workspace import Membership, Workspace
-from raisebook.services.workspaces import new_workspace_slug, slugify
+from raisebook.services.workspaces import (
+    LEGACY_ZONES,
+    canonical_timezone,
+    clean_timezone,
+    new_workspace_slug,
+    slugify,
+)
 from tests.factories import add_member, make_api_key, make_user, make_workspace, owner_of
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$")
@@ -100,6 +106,51 @@ async def test_update_workspace(db: AsyncSession, session_client: Any) -> None:
     assert r.status_code == 422
     r = await c.patch("/v1/workspace", json={"default_currency": "usd"})
     assert r.json()["default_currency"] == "USD"
+
+
+def test_canonical_timezone() -> None:
+    assert canonical_timezone("Asia/Calcutta") == "Asia/Kolkata"
+    assert canonical_timezone("Europe/Kiev") == "Europe/Kyiv"
+    assert canonical_timezone("US/Pacific") == "America/Los_Angeles"
+    assert canonical_timezone("Asia/Saigon") == "Asia/Ho_Chi_Minh"
+    assert canonical_timezone("America/Godthab") == "America/Nuuk"
+    assert canonical_timezone("Pacific/Truk") == "Pacific/Chuuk"
+    for alias in ("Etc/UTC", "Etc/GMT", "GMT", "UCT", "utc", "Utc"):
+        assert canonical_timezone(alias) == "UTC", alias
+    assert canonical_timezone("Asia/Yerevan") == "Asia/Yerevan"
+    # Every target is itself canonical and loadable (tzdata present).
+    for target in set(LEGACY_ZONES.values()):
+        assert clean_timezone(target) == target
+        assert canonical_timezone(target) == target
+
+
+async def test_timezone_is_stored_canonical(db: AsyncSession, session_client: Any) -> None:
+    ws = await make_workspace(db)
+    c = await session_client(await owner_of(db, ws), ws)
+    r = await c.patch("/v1/workspace", json={"timezone": "Asia/Calcutta"})
+    assert r.status_code == 200 and r.json()["timezone"] == "Asia/Kolkata"
+    r = await c.patch("/v1/workspace", json={"timezone": "Europe/Kyiv"})
+    assert r.status_code == 200 and r.json()["timezone"] == "Europe/Kyiv"
+    r = await c.patch("/v1/workspace", json={"timezone": "Europe/Kiev"})
+    assert r.json()["timezone"] == "Europe/Kyiv"
+    r = await c.patch("/v1/workspace", json={"timezone": "Etc/UTC"})
+    assert r.json()["timezone"] == "UTC"
+    r = await (await session_client(await make_user(db))).post(
+        "/v1/workspaces", json={"name": "Legacy", "timezone": "US/Eastern"}
+    )
+    assert r.status_code == 201 and r.json()["timezone"] == "America/New_York"
+
+
+async def test_round_currency_any_iso_code(db: AsyncSession, session_client: Any) -> None:
+    ws = await make_workspace(db)
+    c = await session_client(await owner_of(db, ws), ws)
+    r = await c.post("/v1/rounds", json={"name": "Lagos seed", "currency": "ngn"})
+    assert r.status_code == 201 and r.json()["currency"] == "NGN"
+    r = await c.patch(f"/v1/rounds/{r.json()['slug']}", json={"currency": "AMD"})
+    assert r.status_code == 200 and r.json()["currency"] == "AMD"
+    r = await c.post("/v1/rounds", json={"name": "Bad", "currency": "N$"})
+    assert r.status_code == 422
+    assert r.json()["error"]["details"][0]["loc"] == ["body", "currency"]
 
 
 async def test_editor_cannot_update_workspace(db: AsyncSession, session_client: Any) -> None:

@@ -71,8 +71,147 @@ def clean_workspace_name(raw: str) -> str:
     return name
 
 
+# Legacy and alias IANA ids → the canonical id we store (mirrors web/lib/tz/canonical.ts), so
+# agents, the CLI and the web all store Asia/Kolkata, never Asia/Calcutta.
+LEGACY_ZONES: dict[str, str] = {
+    "Asia/Calcutta": "Asia/Kolkata",
+    "Asia/Saigon": "Asia/Ho_Chi_Minh",
+    "Asia/Katmandu": "Asia/Kathmandu",
+    "Asia/Rangoon": "Asia/Yangon",
+    "Asia/Dacca": "Asia/Dhaka",
+    "Asia/Thimbu": "Asia/Thimphu",
+    "Asia/Ulan_Bator": "Asia/Ulaanbaatar",
+    "Asia/Macao": "Asia/Macau",
+    "Asia/Chungking": "Asia/Chongqing",
+    "Asia/Ujung_Pandang": "Asia/Makassar",
+    "Asia/Ashkhabad": "Asia/Ashgabat",
+    "Asia/Istanbul": "Europe/Istanbul",
+    "Asia/Tel_Aviv": "Asia/Jerusalem",
+    "Europe/Kiev": "Europe/Kyiv",
+    "Europe/Uzhgorod": "Europe/Kyiv",
+    "Europe/Zaporozhye": "Europe/Kyiv",
+    "Europe/Nicosia": "Asia/Nicosia",
+    "Europe/Belfast": "Europe/London",
+    "America/Godthab": "America/Nuuk",
+    "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+    "America/Indianapolis": "America/Indiana/Indianapolis",
+    "America/Louisville": "America/Kentucky/Louisville",
+    "America/Montreal": "America/Toronto",
+    "America/Shiprock": "America/Denver",
+    "America/Fort_Wayne": "America/Indiana/Indianapolis",
+    "America/Knox_IN": "America/Indiana/Knox",
+    "America/Ensenada": "America/Tijuana",
+    "America/Santa_Isabel": "America/Tijuana",
+    "America/Porto_Acre": "America/Rio_Branco",
+    "America/Catamarca": "America/Argentina/Catamarca",
+    "America/Cordoba": "America/Argentina/Cordoba",
+    "America/Jujuy": "America/Argentina/Jujuy",
+    "America/Mendoza": "America/Argentina/Mendoza",
+    "America/Rosario": "America/Argentina/Cordoba",
+    "America/Atka": "America/Adak",
+    "America/Coral_Harbour": "America/Atikokan",
+    "Atlantic/Faeroe": "Atlantic/Faroe",
+    "Atlantic/Jan_Mayen": "Europe/Oslo",
+    "Africa/Asmera": "Africa/Asmara",
+    "Africa/Timbuktu": "Africa/Bamako",
+    "Australia/ACT": "Australia/Sydney",
+    "Australia/Canberra": "Australia/Sydney",
+    "Australia/NSW": "Australia/Sydney",
+    "Australia/North": "Australia/Darwin",
+    "Australia/Queensland": "Australia/Brisbane",
+    "Australia/South": "Australia/Adelaide",
+    "Australia/Tasmania": "Australia/Hobart",
+    "Australia/Victoria": "Australia/Melbourne",
+    "Australia/West": "Australia/Perth",
+    "Australia/Yancowinna": "Australia/Broken_Hill",
+    "Australia/LHI": "Australia/Lord_Howe",
+    "Pacific/Truk": "Pacific/Chuuk",
+    "Pacific/Yap": "Pacific/Chuuk",
+    "Pacific/Ponape": "Pacific/Pohnpei",
+    "Pacific/Samoa": "Pacific/Pago_Pago",
+    "Pacific/Enderbury": "Pacific/Kanton",
+    "Pacific/Johnston": "Pacific/Honolulu",
+    "US/Alaska": "America/Anchorage",
+    "US/Aleutian": "America/Adak",
+    "US/Arizona": "America/Phoenix",
+    "US/Central": "America/Chicago",
+    "US/East-Indiana": "America/Indiana/Indianapolis",
+    "US/Eastern": "America/New_York",
+    "US/Hawaii": "Pacific/Honolulu",
+    "US/Indiana-Starke": "America/Indiana/Knox",
+    "US/Michigan": "America/Detroit",
+    "US/Mountain": "America/Denver",
+    "US/Pacific": "America/Los_Angeles",
+    "US/Samoa": "Pacific/Pago_Pago",
+    "Canada/Atlantic": "America/Halifax",
+    "Canada/Central": "America/Winnipeg",
+    "Canada/Eastern": "America/Toronto",
+    "Canada/Mountain": "America/Edmonton",
+    "Canada/Newfoundland": "America/St_Johns",
+    "Canada/Pacific": "America/Vancouver",
+    "Canada/Saskatchewan": "America/Regina",
+    "Canada/Yukon": "America/Whitehorse",
+    "Brazil/East": "America/Sao_Paulo",
+    "Brazil/West": "America/Manaus",
+    "Brazil/Acre": "America/Rio_Branco",
+    "Mexico/General": "America/Mexico_City",
+    "Mexico/BajaNorte": "America/Tijuana",
+    "Mexico/BajaSur": "America/Mazatlan",
+    "Chile/Continental": "America/Santiago",
+    "Chile/EasterIsland": "Pacific/Easter",
+    "Cuba": "America/Havana",
+    "Egypt": "Africa/Cairo",
+    "Eire": "Europe/Dublin",
+    "GB": "Europe/London",
+    "GB-Eire": "Europe/London",
+    "Hongkong": "Asia/Hong_Kong",
+    "Iceland": "Atlantic/Reykjavik",
+    "Iran": "Asia/Tehran",
+    "Israel": "Asia/Jerusalem",
+    "Jamaica": "America/Jamaica",
+    "Japan": "Asia/Tokyo",
+    "Libya": "Africa/Tripoli",
+    "Navajo": "America/Denver",
+    "NZ": "Pacific/Auckland",
+    "NZ-CHAT": "Pacific/Chatham",
+    "Poland": "Europe/Warsaw",
+    "Portugal": "Europe/Lisbon",
+    "PRC": "Asia/Shanghai",
+    "ROC": "Asia/Taipei",
+    "ROK": "Asia/Seoul",
+    "Singapore": "Asia/Singapore",
+    "Turkey": "Europe/Istanbul",
+    "W-SU": "Europe/Moscow",
+    "Etc/UTC": "UTC",
+    "Etc/UCT": "UTC",
+    "Etc/GMT": "UTC",
+    "Etc/GMT0": "UTC",
+    "Etc/GMT+0": "UTC",
+    "Etc/GMT-0": "UTC",
+    "Etc/Greenwich": "UTC",
+    "Etc/Universal": "UTC",
+    "Etc/Zulu": "UTC",
+    "GMT": "UTC",
+    "GMT0": "UTC",
+    "GMT+0": "UTC",
+    "GMT-0": "UTC",
+    "Greenwich": "UTC",
+    "UCT": "UTC",
+    "Universal": "UTC",
+    "Zulu": "UTC",
+}
+_LEGACY_ZONES_FOLDED = {k.lower(): v for k, v in LEGACY_ZONES.items()}
+
+
+def canonical_timezone(tz: str) -> str:
+    """``Asia/Calcutta`` → ``Asia/Kolkata``, ``utc`` → ``UTC``; other ids unchanged."""
+    if tz.upper() == "UTC":
+        return "UTC"
+    return LEGACY_ZONES.get(tz) or _LEGACY_ZONES_FOLDED.get(tz.lower()) or tz
+
+
 def clean_timezone(raw: str | None) -> str:
-    tz = (raw or "UTC").strip()
+    tz = canonical_timezone((raw or "UTC").strip())
     try:
         ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError):
@@ -82,12 +221,10 @@ def clean_timezone(raw: str | None) -> str:
     return tz
 
 
-def clean_currency(raw: str | None) -> str:
+def clean_currency(raw: str | None, field: str = "default_currency") -> str:
     cur = (raw or "USD").strip().upper()
     if not _CURRENCY_RE.match(cur):
-        raise ValidationFailed(
-            "default_currency", "Currency must be a 3-letter ISO code such as USD or EUR."
-        )
+        raise ValidationFailed(field, "Currency must be a 3-letter ISO code such as USD or EUR.")
     return cur
 
 

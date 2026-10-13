@@ -107,7 +107,7 @@ async def create_round(
         name=name,
         status="open",
         instrument=parse_instrument(data.get("instrument") or "safe"),
-        currency=clean_currency(data.get("currency") or ws.currency),
+        currency=clean_currency(data.get("currency") or ws.currency, "currency"),
         target_amount=_money(data.get("target_amount"), "target_amount", positive=False) or 0,
         valuation_cap=_money(data.get("valuation_cap"), "valuation_cap", positive=True),
         pre_money_valuation=_money(
@@ -144,7 +144,7 @@ async def update_round(
     if "instrument" in changes:
         rnd.instrument = parse_instrument(changes["instrument"])
     if "currency" in changes:
-        rnd.currency = clean_currency(changes["currency"])
+        rnd.currency = clean_currency(changes["currency"], "currency")
     if "target_amount" in changes:
         rnd.target_amount = _money(changes["target_amount"], "target_amount", positive=False) or 0
     for f in ("valuation_cap", "pre_money_valuation"):
