@@ -187,7 +187,7 @@ async def test_dossier_happy_path(
     run = (await c.get(f"/v1/research/runs/{run_id}")).json()
     assert run["status"] == "succeeded"
     assert run["cost_usd"] == pytest.approx(DOSSIER_COST)
-    assert run["sources"] == {"gathered": 10, "accepted": 5}
+    assert run["sources"] == {"gathered": 12, "accepted": 5}
     assert run["result"]["moved_to_unverified"] == 2
     assert "draft" not in run["result"]
     assert run["progress"]["privacy_removed"] >= 2
@@ -200,9 +200,14 @@ async def test_dossier_happy_path(
     assert d["author"] == {"kind": "model", "label": "anthropic/claude-opus-5.5", "by": None}
     assert dossier["cost_usd"] == pytest.approx(DOSSIER_COST)
     keys = {f["key"] for f in d["facts"]}
-    assert keys == {"f1", "f2", "f3", "f4", "f5"}  # f6/f7 uncited, f8 private
-    by_key = {f["key"]: f for f in d["facts"]}
-    assert "555-0100" not in by_key["f2"]["text"] and "[removed]" in by_key["f2"]["text"]
+    assert keys == {"f1", "f2", "f3", "f4", "f5"}  # f6/f7 uncited, f8 private, fx a phone
+    assert "555-0100" not in " ".join(f["text"] for f in d["facts"])
+    # The Brief's "best way in" guessed who knows whom (nothing cites Ines co-investing):
+    # it is replaced by the first evidenced way in (verify-correctness finding).
+    brief = dossier["analysis"]["brief"]
+    assert "Ines" not in brief["best_way_in"]
+    assert brief["best_way_in"] == "Brightquay's founders know her well."
+    assert brief["risk"]  # backed by the surviving Brightquay conflict
     # Every fact cites a cited source; rejected pages are never shown.
     shown = {s["id"] for s in d["sources"]}
     assert all(set(f["source_ids"]) <= shown for f in d["facts"])
@@ -348,30 +353,55 @@ async def test_cost_from_usage_and_estimated_when_missing(
 # --- the cap ------------------------------------------------------------------------------
 
 
-async def test_cap_reached_mid_run_stops_cleanly_and_resumes_after_a_raise(
+async def test_a_run_that_cannot_hold_its_upper_bound_never_starts_paying(
     db: AsyncSession, session_client: Any, openrouter_mock: Any, frozen_now: Any
 ) -> None:
-    # $0.25 covers the precheck (≈ $0.21) but not the writer's reservation after the searches.
-    w = await research_world(db, linkedin_url=LINKEDIN, website_url=SITE, cap_usd=0.25)
-    script = Script(search_cost=0.05).install(openrouter_mock)
+    """verify-correctness: the estimate ($0.21) fit under what was left, but every call
+    reserves 1.5x its budget, so the run paid for three searches and then stopped "capped"
+    at the writer with no dossier. Now the run's upper bound must fit to start, the worker
+    holds it before the first call, and a run that cannot hold it ends capped having spent
+    nothing."""
+    w = await research_world(db, linkedin_url=LINKEDIN, website_url=SITE, cap_usd=0.33)
+    script = Script().install(openrouter_mock)
+    from raisebook.services import spend
+
+    await spend.reserve(
+        db,
+        workspace_id=w.ws.id,
+        month=frozen_now.date().replace(day=1),
+        amount_micros=0,
+        cap_micros=10**9,
+        now=frozen_now,
+    )
+    await db.execute(
+        text("UPDATE ai_usage_months SET spent_micros = 112000 WHERE workspace_id = :ws"),
+        {"ws": w.ws.id},
+    )
     c = await session_client(w.owner, w.ws)
+    r = await start(c, w.inv.id)  # $0.218 left ≥ the $0.21 estimate, < the $0.31 upper bound
+    assert r.status_code == 422 and r.json()["error"]["code"] == "spend_cap_reached"
+    err = r.json()["error"]
+    assert "can cost up to $0.31" in err["message"] and "$0.22" in err["message"]
+    assert err["details"]["remaining_usd"] == pytest.approx(0.218)
+    assert script.calls == []
+
+    # Started while there was room, the limit lowered before the worker ran: capped before
+    # any call, nothing spent, resumable.
+    await c.patch("/v1/workspace/ai-settings", json={"monthly_cap_usd": 5})
     run_id = (await start(c, w.inv.id)).json()["run"]["id"]
+    await c.patch("/v1/workspace/ai-settings", json={"monthly_cap_usd": 0.33})
     assert await run_jobs(db) == ["succeeded"]  # capped is a clean end, not a retry
     run = (await c.get(f"/v1/research/runs/{run_id}")).json()
     assert run["status"] == "capped" and run["error"]["code"] == "spend_cap_reached"
-    assert run["sources"]["accepted"] == 5 and run["can_resume"] is True
-    assert script.calls == ["search:activity", "search:thesis", "search:fund"]
-    spent, reserved, _ = await ledger(db, w.ws)
-    assert (spent, reserved) == (micros(0.15), 0)
-    r = await c.post(f"/v1/research/runs/{run_id}/resume")
-    assert r.status_code == 200  # $0.10 left: resumable, the writer's reservation still fails
-    await run_jobs(db)
-    assert (await c.get(f"/v1/research/runs/{run_id}")).json()["status"] == "capped"
+    assert "Only $0.22" in run["error"]["message"] and run["can_resume"] is True
+    assert script.calls == [] and run["cost_usd"] == 0
+    assert all(st["state"] != "running" for st in run["progress"]["steps"])
+    assert await ledger(db, w.ws) == (112_000, 0, 0)
     await c.patch("/v1/workspace/ai-settings", json={"monthly_cap_usd": 5})
-    await c.post(f"/v1/research/runs/{run_id}/resume")
+    assert (await c.post(f"/v1/research/runs/{run_id}/resume")).status_code == 200
     await run_jobs(db)
     assert (await c.get(f"/v1/research/runs/{run_id}")).json()["status"] == "succeeded"
-    assert script.calls.count("search:fund") == 1
+    assert script.calls.count("write") == 1
 
 
 async def test_start_refused_up_front_when_over_cap(
@@ -384,12 +414,14 @@ async def test_start_refused_up_front_when_over_cap(
     assert r.json()["error"]["details"]["cap_usd"] == 0.05
 
 
-async def test_cap_reached_mid_batch_stops_cleanly(
+async def test_a_batch_confirmed_under_fits_is_never_capped(
     db: AsyncSession, session_client: Any, openrouter_mock: Any, frozen_now: Any
 ) -> None:
-    # Identity: ≈ $0.007 estimated, $0.0105 reserved per call, $0.007 billed. A $0.024 cap
-    # passes the estimate for all three, but the third call's reservation does not fit.
-    w = await research_world(db, cap_usd=0.024)
+    # Identity: ≈ $0.007 estimated, $0.0105 held per call while it runs, $0.007 billed. With
+    # $0.028 the estimate alone covers four, but only two fit with their holds: "fits" says
+    # two, and those two finish (verify-correctness: the last runs of a batch confirmed
+    # under "fits" used to end capped).
+    w = await research_world(db, cap_usd=0.028)
     from tests.factories import make_investor, make_participant
 
     others = [
@@ -404,19 +436,25 @@ async def test_cap_reached_mid_batch_stops_cleanly(
     est = (
         await c.post("/v1/research/estimate", json={"kind": "identity", "investor_ids": ids})
     ).json()
-    assert (est["count"], est["fits"]) == (3, 3)
+    assert (est["count"], est["fits"]) == (3, 2)
     assert est["total_usd"] == pytest.approx(0.021)
     r = await c.post(
         "/v1/research/batches",
-        json={"kind": "identity", "investor_ids": ids, "confirm_usd": est["total_usd"]},
+        json={
+            "kind": "identity",
+            "investor_ids": ids,
+            "confirm_usd": 0.014,
+            "allow_partial": True,
+        },
     )
     assert r.status_code == 202, r.text
     batch_id = r.json()["batch"]["id"]
-    assert r.json()["runs"] == 3
-    assert await run_jobs(db) == ["succeeded"] * 3
+    assert r.json()["runs"] == 2
+    assert await run_jobs(db) == ["succeeded"] * 2
     b = (await c.get(f"/v1/research/batches/{batch_id}")).json()
-    assert b["counts"] == {"succeeded": 2, "capped": 1} and b["active"] == 0
-    assert b["spent_usd"] == pytest.approx(0.014)
+    assert b["counts"] == {"succeeded": 2} and b["active"] == 0
+    # The mock only knows Dana: the other one needs a pick, and the batch says so.
+    assert b["identity"] == {"matched": 1, "needs_pick": 1} and b["errors"] == {}
     assert await ledger(db, w.ws) == (14_000, 0, 2)
 
 
@@ -425,7 +463,7 @@ async def test_bulk_estimate_skips_and_confirms(
 ) -> None:
     from tests.factories import make_investor
 
-    w = await research_world(db, cap_usd=0.30)
+    w = await research_world(db, cap_usd=0.35)
     blocked = await make_investor(db, w.ws, name="Priya Strand")
     db.add(
         InvestorIdentity(
@@ -444,7 +482,8 @@ async def test_bulk_estimate_skips_and_confirms(
         await c.post("/v1/research/estimate", json={"kind": "dossier", "investor_ids": ids})
     ).json()
     assert est["count"] == 2 and est["skipped"]["no_identity"] == 1
-    assert est["fits"] == 1  # $0.30 covers one ≈ $0.21 dossier
+    assert est["fits"] == 1  # $0.35 holds one dossier's $0.32 upper bound, not two
+    assert est["needs_identity"] == 2 and est["no_profile"] is False
     body = {"kind": "dossier", "investor_ids": ids, "confirm_usd": est["total_usd"]}
     r = await c.post("/v1/research/batches", json=body)
     assert r.status_code == 422 and r.json()["error"]["code"] == "spend_cap_reached"
@@ -579,6 +618,18 @@ async def test_without_a_company_profile_the_verdict_waits_for_it(
     await run_jobs(db)
     assert "There is no company profile" in script.requests[-1]["messages"][1]["content"]
     d = (await c.get(f"/v1/investors/{w.inv.id}/dossier")).json()["dossier"]
-    assert d["verdict"] == "possible"
+    # verify-ux: the placeholder used to be "possible", which set fit 0 → Maybe and offered
+    # to demote a Hot investor. Without a profile there is no verdict and no fit write.
+    assert d["verdict"] == "unrated" and d["analysis"]["brief"]["verdict"] == "unrated"
     assert d["analysis"]["brief"]["why"] == "Add your company profile for a fit verdict."
     assert d["analysis"]["talking_points"] == [] and d["analysis"]["fit"] == {"conflicts": []}
+    part = await db.scalar(select(RoundParticipant).where(RoundParticipant.investor_id == w.inv.id))
+    assert part is not None and part.fit == 0
+    sugs = (await c.get("/v1/research/suggestions")).json()["data"]
+    assert not [x for x in sugs if x["field"] == "fit"]
+    est = (
+        await c.post(
+            "/v1/research/estimate", json={"kind": "dossier", "investor_ids": [str(w.inv.id)]}
+        )
+    ).json()
+    assert est["no_profile"] is True  # the dialog warns before spending

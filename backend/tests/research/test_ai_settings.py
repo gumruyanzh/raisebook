@@ -100,6 +100,9 @@ async def test_defaults_before_anything_is_saved(
         "reserved_usd": 0.0,
         "remaining_usd": 25.0,
         "calls": 0,
+        "dossiers": 0,
+        "matches": 0,
+        "cap_reached": False,
     }
     est = body["estimates"]
     # Snapshot prices (no network on GET): Best ≈ $0.21, Balanced ≈ $0.09, Budget ≈ $0.05.

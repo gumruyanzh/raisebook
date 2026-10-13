@@ -15,7 +15,8 @@ or every ``RAISEBOOK_WORKER_POLL_S`` seconds.
   recovery hook (e.g. release a dead run's spend reservation).
 - **Graceful shutdown.** SIGTERM/SIGINT: stop claiming, wait up to ``GRACE_S`` for running
   jobs, then cancel them and release their leases (queued again, attempt not counted) so
-  another worker resumes at once. Exit 0.
+  another worker resumes at once; the kind's recovery hook runs for each released job (a
+  research run goes back to ``queued`` and settles what it held). Exit 0.
 
 The worker has its own small engine (never the API's pool). Logs carry job id, kind,
 workspace id, status, attempt and duration, never payloads.
@@ -59,10 +60,29 @@ class JobContext:
     session: SessionFactory
     lease_lost: asyncio.Event = field(default_factory=asyncio.Event)
     now: Callable[[], datetime] = get_now
+    lease_s: int = 120
 
     def check_lease(self) -> None:
         """Call between steps: stop (without writing results) once the lease is gone."""
         if self.lease_lost.is_set():
+            raise LeaseLost()
+
+    async def confirm_lease(self, db: AsyncSession) -> None:
+        """Ask the database (not the heartbeat's last answer) whether this worker still holds
+        the job, extending the lease when it does. Call it after a slow external call and
+        before writing results: a worker paused past its lease must not write over the
+        worker that took the job over. Commits."""
+        self.check_lease()
+        ok = await jobs_svc.heartbeat(
+            db,
+            job_id=self.job.id,
+            worker_id=self.job.locked_by,
+            now=self.now(),
+            lease_s=self.lease_s,
+        )
+        await db.commit()
+        if not ok:
+            self.lease_lost.set()
             raise LeaseLost()
 
 
@@ -194,11 +214,16 @@ class Worker:
                     retry_after_s=kw.get("retry_after_s"),
                 )
             elif outcome == "release":
-                status = (
-                    "queued"
-                    if await jobs_svc.release(s, job_id=job.id, worker_id=job.locked_by, now=now)
-                    else None
+                released = await jobs_svc.release(
+                    s, job_id=job.id, worker_id=job.locked_by, now=now
                 )
+                status = "queued" if released else None
+                hook = self.recovery_hooks.get(job.kind)
+                if released and hook is not None:
+                    # Same bookkeeping as a recovered job: the run goes back to queued and
+                    # gives back (or, for a call in flight, charges) what it held.
+                    rec = RecoveredJob(job.id, job.kind, job.workspace_id, job.payload, False)
+                    await hook(s, rec, now)
             else:
                 ok = await jobs_svc.finish(
                     s, job_id=job.id, worker_id=job.locked_by, status=outcome, now=now, error=error
@@ -211,7 +236,7 @@ class Worker:
         """Run one claimed job to an outcome; returns the job's new status (or ``lost``)."""
         handler = self.handlers.get(job.kind)
         started = time.monotonic()
-        ctx = JobContext(job=job, session=self.session, now=self.now)
+        ctx = JobContext(job=job, session=self.session, now=self.now, lease_s=self.lease_s)
         beat = asyncio.create_task(self._heartbeat(job, ctx.lease_lost))
         status = "lost"
         try:

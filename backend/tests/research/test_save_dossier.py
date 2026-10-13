@@ -30,7 +30,9 @@ async def test_rest_twin_validates_marks_and_costs_nothing(
         "f3": "uncited",  # cites the Instagram page, which is never a source
         "f4": "uncited",
         "f5": "privacy",
+        "f6": "privacy",  # a claim carrying a phone number goes whole
         "ways_in.1": "workspace_basis_not_allowed",
+        "brief.risk": "no_evidence",  # "Slow." has no surviving red flag behind it
     }
     rejected = {s["id"]: s["reason"] for s in out["sources_rejected"]}
     assert rejected == {"a3": "personal_domain", "a4": "anchor_mismatch"}

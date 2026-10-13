@@ -28,9 +28,9 @@ import re
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from pydantic import ValidationError
@@ -40,6 +40,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.auth.principal import WorkspaceContext, worker_context
+from raisebook.config import get_settings
 from raisebook.core.errors import (
     Conflict,
     EstimateChanged,
@@ -86,20 +87,25 @@ from raisebook.services import openrouter, spend
 from raisebook.services import research_identity as identity_svc
 from raisebook.services import research_prompts as prompts
 from raisebook.services import research_removal as removal_svc
+from raisebook.services.normalize import clean_url, linkedin_key, norm_firm
 from raisebook.services.research_cost import (
     IDENTITY_STEP,
     SEARCH_STEP,
     WRITER_STEP,
     RunModels,
     StepBudget,
+    call_reserve_micros,
     estimate_micros,
     price_of,
-    step_micros,
+    run_reserve_micros,
 )
 from raisebook.services.research_validate import (
     Anchor,
     RawSource,
+    Trust,
     check_sources,
+    domain_of,
+    domain_resembles_firm,
     finalize,
     identity_matches,
     parse_date,
@@ -118,12 +124,12 @@ STEP_LABELS: dict[str, str] = {
     "write": "Writing",
     "save": "Checking citations",
 }
-RESERVE_FACTOR = 1.5
 FALLBACK_RESERVE_MICROS = 500_000  # $0.50 for a call whose model has no known price
 MEDIAN_AFTER_RUNS = 20
 FRESH_DOSSIER_DAYS = 30
 MAX_PROMPT_SOURCES = 40
 MAX_WORKSPACE_FIRMS = 50
+KEY_ERRORS = ("openrouter_key_rejected", "openrouter_out_of_credits")
 RESUMABLE = (RunStatus.FAILED.value, RunStatus.PARTIAL.value, RunStatus.CAPPED.value)
 ACTIVE = tuple(s.value for s in ACTIVE_RUN_STATUSES)
 
@@ -180,8 +186,17 @@ async def per_run_micros(
     )
     if len(costs) >= MEDIAN_AFTER_RUNS:
         return int(statistics.median(costs))
-    est = estimate_micros(kind, models_of(row), openrouter.cached_models())
+    est = estimate_micros(kind, models_of(row), ai_svc.known_prices(row))
     return est if est is not None else FALLBACK_RESERVE_MICROS * 5
+
+
+def upper_micros(
+    kind: ResearchKind, row: WorkspaceAiSettings, *, skip_identity: bool = False
+) -> int | None:
+    """What one run holds under the cap while it runs (``run_reserve_micros``)."""
+    return run_reserve_micros(
+        kind, models_of(row), ai_svc.known_prices(row), skip_identity=skip_identity
+    )
 
 
 async def _usage_now(
@@ -193,9 +208,14 @@ async def _usage_now(
 def _cap_error(
     used: spend.Usage, cap: int, needed: int, *, fits: int | None = None, count: int | None = None
 ) -> SpendCapReached:
+    left = used.remaining(cap)
     msg = (
-        f"Monthly AI limit reached (${cap / 1_000_000:,.2f}). An owner can raise it in "
-        "Settings → AI research."
+        f"This month's ${cap / 1_000_000:,.2f} AI research limit is used up. An owner can "
+        "raise it in Settings → AI research."
+        if left <= 0
+        else f"This research can cost up to ${needed / 1_000_000:,.2f}, and only "
+        f"${left / 1_000_000:,.2f} of this month's ${cap / 1_000_000:,.2f} AI research limit "
+        "is left. An owner can raise it in Settings → AI research."
     )
     if fits is not None and count is not None:
         msg = (
@@ -210,6 +230,7 @@ def _cap_error(
             "reserved_usd": _usd(used.reserved_micros),
             "cap_usd": _usd(cap),
             "needed_usd": _usd(needed),
+            "remaining_usd": _usd(left),
             **({"fits": fits, "count": count} if fits is not None else {}),
         },
     )
@@ -296,9 +317,13 @@ async def start_run(
     instant = kind == ResearchKind.IDENTITY and (anchored or bool(investor.linkedin_url))
     estimate = 0 if instant else (per_run or await per_run_micros(db, ws, kind, row))
     if check_cap and not instant:
+        # The run holds its upper bound while it runs (R4), so that is what must fit: a run
+        # accepted here is never stopped half-way for lack of room.
+        upper = upper_micros(kind, row, skip_identity=anchored or bool(investor.linkedin_url))
+        needed = max(estimate, upper if upper is not None else FALLBACK_RESERVE_MICROS * 5)
         used = await _usage_now(db, ws, row, now)
-        if used.spent_micros + used.reserved_micros + estimate > row.monthly_cap_micros:
-            raise _cap_error(used, row.monthly_cap_micros, estimate)
+        if used.spent_micros + used.reserved_micros + needed > row.monthly_cap_micros:
+            raise _cap_error(used, row.monthly_cap_micros, needed)
     steps = steps_for(kind.value, skip_identity=anchored or bool(investor.linkedin_url))
     run = ResearchRun(
         workspace_id=ws.workspace_id,
@@ -393,6 +418,9 @@ class BulkEstimate:
     fits: int
     eligible: list[Investor] = field(default_factory=list)
     free: set[UUID] = field(default_factory=set)  # no model call needed
+    needs_identity: int = 0  # dossier runs that match the identity first
+    no_profile: bool = False  # dossiers would have no fit verdict
+    order: str = "given"  # "fit": best fit first (a round)
 
     def cost_of(self, n: int) -> int:
         paid = [i for i in self.eligible[:n] if i.id not in self.free]
@@ -402,11 +430,16 @@ class BulkEstimate:
         return {
             "kind": self.kind.value,
             "count": self.count,
+            "free": len(self.free),
+            "paid": self.count - len(self.free),
             "skipped": self.skipped,
             "per_run_usd": _usd(self.per_run_micros),
             "total_usd": _usd(self.total_micros),
             "remaining_usd": _usd(self.remaining_micros),
             "fits": self.fits,
+            "needs_identity": self.needs_identity,
+            "no_profile": self.no_profile,
+            "order": self.order,
         }
 
 
@@ -445,7 +478,8 @@ async def _investors_for(
             ),
         )
         .where(Investor.workspace_id == ws.workspace_id, RoundParticipant.round_id == round_id)
-        .order_by(Investor.name, Investor.id)
+        # Best fit first: when the monthly limit covers only some, Hot and Warm go first.
+        .order_by(RoundParticipant.fit.desc(), Investor.name, Investor.id)
         .limit(1000)
     )
     return list(found)
@@ -509,9 +543,12 @@ async def bulk_estimate(
         else set()
     )
     suppressed = await removal_svc.suppressed_ids(db, investors)
-    skipped = {"no_identity": 0, "suppressed": 0, "fresh": 0, "active": 0}
+    # "identified" (identity runs: already has a confirmed identity) and "fresh" (dossiers:
+    # one from the last 30 days) are separate buckets so the dialog can say which.
+    skipped = {"no_identity": 0, "suppressed": 0, "fresh": 0, "identified": 0, "active": 0}
     eligible: list[Investor] = []
     free: set[UUID] = set()
+    needs_identity = 0
     for inv in investors:
         status = idents.get(inv.id, IdentityStatus.NONE.value)
         if inv.id in suppressed:
@@ -519,7 +556,7 @@ async def bulk_estimate(
         elif inv.id in active:
             skipped["active"] += 1
         elif kind == ResearchKind.IDENTITY and status in identity_svc.ANCHORED:
-            skipped["fresh"] += 1
+            skipped["identified"] += 1
         elif kind == ResearchKind.DOSSIER and status in identity_svc.BLOCKING:
             skipped["no_identity"] += 1
         elif kind == ResearchKind.DOSSIER and inv.id in recent:
@@ -528,20 +565,38 @@ async def bulk_estimate(
             eligible.append(inv)
             if kind == ResearchKind.IDENTITY and inv.linkedin_url:
                 free.add(inv.id)
+            if (
+                kind == ResearchKind.DOSSIER
+                and status not in identity_svc.ANCHORED
+                and not inv.linkedin_url
+            ):
+                needs_identity += 1
     per_run = await per_run_micros(db, ws, kind, row)
     used = await _usage_now(db, ws, row, now)
     remaining = used.remaining(row.monthly_cap_micros)
     paid = [i for i in eligible if i.id not in free]
     fits = len(eligible)
-    if per_run > 0 and per_run * len(paid) > remaining:
-        affordable = remaining // per_run
-        fits, counted = 0, 0
-        for inv in eligible:
-            if inv.id not in free:
-                if counted == affordable:
-                    break
-                counted += 1
-            fits += 1
+    if per_run > 0 and paid:
+        # Runs in flight each hold their upper bound (not the estimate) until they settle,
+        # so a batch only counts as fitting when the last runs' holds fit too (as many at
+        # once as the worker runs).
+        extra = max(0, (upper_micros(kind, row) or per_run) - per_run)
+        slots = max(1, get_settings().worker_concurrency)
+
+        def fits_k(k: int) -> bool:
+            return k * per_run + min(k, slots) * extra <= remaining
+
+        affordable = 0
+        while affordable < len(paid) and fits_k(affordable + 1):
+            affordable += 1
+        if affordable < len(paid):
+            fits, counted = 0, 0
+            for inv in eligible:
+                if inv.id not in free:
+                    if counted == affordable:
+                        break
+                    counted += 1
+                fits += 1
     return BulkEstimate(
         kind=kind,
         count=len(eligible),
@@ -552,7 +607,19 @@ async def bulk_estimate(
         fits=fits,
         eligible=eligible,
         free=free,
+        needs_identity=needs_identity,
+        no_profile=kind == ResearchKind.DOSSIER and not await _has_profile(db, ws),
+        order="fit" if investor_ids is None else "given",
     )
+
+
+async def _has_profile(db: AsyncSession, ws: WorkspaceContext) -> bool:
+    from raisebook.services.company_profile import is_empty
+
+    row = await db.scalar(
+        select(CompanyProfile).where(CompanyProfile.workspace_id == ws.workspace_id)
+    )
+    return row is not None and not is_empty(row)
 
 
 async def create_batch(
@@ -650,12 +717,46 @@ async def batch_dict(
     ).all()
     counts = {str(s): int(n) for s, n, _ in rows}
     spent = sum(int(c) for _, _, c in rows)
+    # Who still needs a person after a "Match all": the identity rows of this batch's
+    # investors, as they are now (a pick made since counts as confirmed).
+    ident_rows = (
+        await db.execute(
+            select(InvestorIdentity.status, func.count())
+            .join(
+                ResearchRun,
+                and_(
+                    ResearchRun.workspace_id == InvestorIdentity.workspace_id,
+                    ResearchRun.investor_id == InvestorIdentity.investor_id,
+                ),
+            )
+            .where(
+                ResearchRun.workspace_id == ws.workspace_id,
+                ResearchRun.batch_id == batch.id,
+                ResearchRun.status.not_in(ACTIVE),
+            )
+            .group_by(InvestorIdentity.status)
+        )
+    ).all()
+    error_rows = (
+        await db.execute(
+            select(ResearchRun.error_code, func.count())
+            .where(
+                ResearchRun.workspace_id == ws.workspace_id,
+                ResearchRun.batch_id == batch.id,
+                ResearchRun.error_code.is_not(None),
+                ResearchRun.status.not_in((*ACTIVE, RunStatus.SUCCEEDED.value)),
+            )
+            .group_by(ResearchRun.error_code)
+        )
+    ).all()
     return {
         "id": batch.id,
         "kind": batch.kind,
         "round_id": batch.round_id,
         "total": batch.total,
         "counts": counts,
+        "identity": {str(s): int(n) for s, n in ident_rows if s != IdentityStatus.NONE.value},
+        "errors": {str(c): int(n) for c, n in error_rows},
         "active": sum(counts.get(s, 0) for s in ACTIVE),
         "estimate_usd": _usd(batch.estimate_micros),
         "spent_usd": _usd(spent),
@@ -935,6 +1036,137 @@ class _Capped(Exception):
     pass
 
 
+class _UnknownPrice(Exception):
+    def __init__(self, model: str) -> None:
+        super().__init__(model)
+        self.model = model
+
+
+def _prompt_tokens(messages: Sequence[dict[str, Any]]) -> int:
+    """A rough upper estimate of a prompt's tokens (4 characters a token; files and data
+    URLs are priced by the caller)."""
+    chars = 0
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, str):
+            chars += len(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    chars += len(part["text"])
+    return chars // 4 + 50 * len(messages)
+
+
+async def _usage_put(db: AsyncSession, run_id: UUID, entry: dict[str, Any]) -> None:
+    await db.execute(
+        text(
+            "UPDATE research_runs SET usage = coalesce(usage, '[]'::jsonb) || CAST(:e AS jsonb)"
+            " WHERE id = :run"
+        ),
+        {"e": json.dumps([entry]), "run": run_id},
+    )
+
+
+async def _usage_drop(db: AsyncSession, run_id: UUID, call_id: str) -> None:
+    await db.execute(
+        text(
+            "UPDATE research_runs SET usage = coalesce((SELECT jsonb_agg(e ORDER BY n)"
+            " FROM jsonb_array_elements(usage) WITH ORDINALITY AS t(e, n)"
+            " WHERE e->>'call_id' IS DISTINCT FROM :cid), '[]'::jsonb) WHERE id = :run"
+        ),
+        {"cid": call_id, "run": run_id},
+    )
+
+
+async def _usage_rows(db: AsyncSession, run_id: UUID) -> list[dict[str, Any]] | None:
+    row = (
+        await db.execute(
+            text("SELECT usage FROM research_runs WHERE id = :run FOR UPDATE"), {"run": run_id}
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    raw = row[0]
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    return [dict(e) for e in raw or [] if isinstance(e, dict)]
+
+
+async def _usage_write(db: AsyncSession, run_id: UUID, entries: list[dict[str, Any]]) -> None:
+    await db.execute(
+        text("UPDATE research_runs SET usage = CAST(:u AS jsonb) WHERE id = :run"),
+        {"u": json.dumps(entries), "run": run_id},
+    )
+
+
+async def record_call(
+    db: AsyncSession,
+    run_id: UUID,
+    entry: dict[str, Any],
+    *,
+    need: int,
+    month: date,
+    now: datetime,
+) -> None:
+    """Settle one finished call on the ledger and the run's usage (same transaction).
+
+    A call that recovery already charged at its reservation (``lost``: its worker stopped
+    answering while it was in flight) is corrected to its real cost instead, so a call is
+    never counted twice and never missing."""
+    entries = await _usage_rows(db, run_id)
+    if entries is None:
+        return
+    prev = next((e for e in entries if e.get("call_id") == entry["call_id"]), None)
+    if prev is not None and prev.get("lost"):
+        charged = int(prev.get("cost_micros") or 0)
+        lost_month = date.fromisoformat(str(prev.get("month") or month.isoformat()))
+        await spend.adjust_for_run(
+            db,
+            run_id=run_id,
+            month=lost_month,
+            delta_micros=int(entry["cost_micros"]) - charged,
+            now=now,
+        )
+        entry = {**entry, "late": True}
+    else:
+        await spend.settle_for_run(
+            db,
+            run_id=run_id,
+            actual_micros=int(entry["cost_micros"]),
+            consume_micros=need,
+            month=month,
+            now=now,
+        )
+    out = [e for e in entries if e.get("call_id") != entry["call_id"]]
+    out.append(entry)
+    await _usage_write(db, run_id, out)
+
+
+async def settle_lost_calls(db: AsyncSession, run_id: UUID, *, now: datetime) -> int:
+    """Calls still "in flight" when their worker died or was shut down: OpenRouter may have
+    billed them, but their cost is unknown. Charge each at what it held (an upper bound,
+    marked ``estimated``/``lost``); a late answer from that worker corrects it. Returns the
+    number of calls charged."""
+    entries = await _usage_rows(db, run_id)
+    if not entries:
+        return 0
+    charged = 0
+    for e in entries:
+        if not e.get("pending"):
+            continue
+        amount = int(e.get("reserved_micros") or 0)
+        month = date.fromisoformat(str(e.get("month")))
+        await spend.settle_for_run(
+            db, run_id=run_id, actual_micros=amount, consume_micros=amount, month=month, now=now
+        )
+        e.pop("pending", None)
+        e.update({"lost": True, "estimated": True, "cost_micros": amount})
+        charged += 1
+    if charged:
+        await _usage_write(db, run_id, entries)
+    return charged
+
+
 def _subject(investor: Investor, anchor: Anchor) -> prompts.Subject:
     return prompts.Subject(
         name=investor.name,
@@ -983,6 +1215,8 @@ class Runner:
         self.settings: WorkspaceAiSettings
         self.client: openrouter.OpenRouterClient
         self.anchor: Anchor
+        self.anchor_trusted: Trust = Trust()
+        self.prices: dict[str, openrouter.ModelInfo] = {}
 
     def now(self) -> datetime:
         now: datetime = self.ctx.now()
@@ -1036,6 +1270,12 @@ class Runner:
         run.updated_at = now
         prog = dict(run.progress or {})
         prog["step"] = None
+        if status != RunStatus.SUCCEEDED:
+            # The step that was running when the run stopped shows as failed, not running.
+            prog["steps"] = [
+                {**st, "state": "failed"} if st.get("state") == "running" else st
+                for st in prog.get("steps", [])
+            ]
         run.progress = prog
         if status in (RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.CAPPED, RunStatus.PARTIAL):
             await _reset_pending_identities(self.db, [run], now)
@@ -1050,17 +1290,70 @@ class Runner:
         )
 
     async def _checkpoint(self) -> None:
-        """Between steps: the lease is still ours and nobody cancelled the run."""
-        self.ctx.check_lease()
+        """Before every call and between steps: the lease is still ours (asked of the
+        database), nobody cancelled the run, and the workspace still has its key (R12:
+        "Remove key" stops research at once, not after the run)."""
+        await self._confirm_lease()
         status = await self.db.scalar(
             select(ResearchRun.status).where(ResearchRun.id == self.run_id)
+        )
+        has_key = await self.db.scalar(
+            select(WorkspaceAiSettings.key_ciphertext.is_not(None)).where(
+                WorkspaceAiSettings.workspace_id == self.run.workspace_id
+            )
         )
         if status == RunStatus.CANCELLED.value:
             await spend.release_for_run(self.db, run_id=self.run_id, now=self.now())
             await self.db.commit()
             raise _Ended()
+        if not has_key:
+            await self._end(RunStatus.CANCELLED, ai_svc.NO_KEY_REASON, ai_svc.KEY_REMOVED_MESSAGE)
+            raise _Ended()
+
+    async def _confirm_lease(self) -> None:
+        confirm = getattr(self.ctx, "confirm_lease", None)
+        if confirm is not None:
+            await confirm(self.db)
+        else:
+            self.ctx.check_lease()
 
     # calls -----------------------------------------------------------------------------------
+
+    async def _info(self, model: str) -> openrouter.ModelInfo:
+        """The model's price: stored with the settings, this process's cache, the preset
+        snapshot, else OpenRouter's public models list. Unknown → the run cannot hold money
+        for the call under the cap, so it stops (``model_price_unknown``)."""
+        info = price_of(model, self.prices)
+        if info is None:
+            try:
+                listed = await openrouter.models()
+            except openrouter.OpenRouterError:
+                listed = {}
+            info = listed.get(model)
+            if info is not None:
+                self.prices[model] = info
+        if info is None:
+            raise _UnknownPrice(model)
+        return info
+
+    async def _hold(self, total: int) -> None:
+        """Hold ``total`` for the run's remaining calls before the first of them (R4)."""
+        if total <= 0:
+            return
+        now = self.now()
+        await self.db.flush()
+        ok = await spend.hold_for_run(
+            self.db,
+            run_id=self.run.id,
+            workspace_id=self.ws.workspace_id,
+            month=spend.month_of(now, self.ws.timezone),
+            total_micros=total,
+            cap_micros=self.settings.monthly_cap_micros,
+            now=now,
+        )
+        await self.db.commit()
+        if not ok:
+            raise _Capped()
 
     async def call(
         self,
@@ -1070,59 +1363,75 @@ class Runner:
         *,
         budget: StepBudget,
         max_tokens: int,
+        prompt_tokens: int | None = None,
+        searches: bool | None = None,
         **kw: Any,
     ) -> openrouter.ChatResult:
         await self._checkpoint()
         now = self.now()
-        prices = openrouter.cached_models()
-        info = price_of(model, prices)
-        one = StepBudget(1, budget.prompt_tokens, budget.completion_tokens, budget.searches)
-        amount = (
-            int(step_micros(info, one) * RESERVE_FACTOR)
-            if info is not None
-            else FALLBACK_RESERVE_MICROS
+        info = await self._info(model)
+        need = call_reserve_micros(
+            info,
+            StepBudget(
+                1, budget.prompt_tokens, budget.completion_tokens, budget.searches, max_tokens
+            ),
+            prompt_tokens=prompt_tokens if prompt_tokens is not None else _prompt_tokens(messages),
+            searches=searches,
         )
         month = spend.month_of(now, self.ws.timezone)
         await self.db.flush()
-        ok = await spend.reserve_for_run(
+        ok = await spend.hold_for_run(
             self.db,
             run_id=self.run.id,
             workspace_id=self.ws.workspace_id,
             month=month,
-            amount_micros=amount,
+            total_micros=need,
             cap_micros=self.settings.monthly_cap_micros,
             now=now,
         )
-        await self.db.commit()
         if not ok:
+            await self.db.commit()
             raise _Capped()
+        # The call is "in flight" until it is recorded: if this worker dies or is shut down
+        # meanwhile, recovery charges it at what it held (OpenRouter may have billed it).
+        call_id = uuid4().hex
+        await _usage_put(
+            self.db,
+            self.run.id,
+            {
+                "call_id": call_id,
+                "step": step,
+                "model": model,
+                "pending": True,
+                "reserved_micros": need,
+                "month": month.isoformat(),
+            },
+        )
+        await self.db.commit()
         try:
             result = await self.client.chat(model, messages, max_tokens=max_tokens, **kw)
         except openrouter.OpenRouterError:
-            await spend.release_for_run(self.db, run_id=self.run.id, now=self.now())
+            await _usage_drop(self.db, self.run.id, call_id)  # refused: nothing was billed
             await self.db.commit()
             raise
         cost = result.usage.cost_micros
         estimated = cost is None
         if cost is None:
-            cost = (
-                int(
-                    (
-                        info.prompt * result.usage.prompt_tokens
-                        + info.completion * result.usage.completion_tokens
-                        + info.request
-                        + (info.web_search if budget.searches else 0)
+            cost = int(
+                (
+                    info.prompt * result.usage.prompt_tokens
+                    + info.completion * result.usage.completion_tokens
+                    + info.request
+                    + (
+                        info.web_search
+                        if (budget.searches if searches is None else searches)
+                        else 0
                     )
-                    * 1_000_000
                 )
-                if info is not None
-                else amount
+                * 1_000_000
             )
-        await spend.settle_for_run(self.db, run_id=self.run.id, actual_micros=cost, now=self.now())
-        run = await self._reload()
-        assert run is not None
-        self.run = run
         entry: dict[str, Any] = {
+            "call_id": call_id,
             "step": step,
             "model": result.model,
             "generation_id": result.generation_id,
@@ -1132,9 +1441,13 @@ class Runner:
         }
         if estimated:
             entry["estimated"] = True
-        run.usage = [*(run.usage or []), entry]
-        run.updated_at = self.now()
+        # Recorded even when this worker has lost the lease: the money was spent.
+        await record_call(self.db, self.run.id, entry, need=need, month=month, now=self.now())
         await self.db.commit()
+        await self._confirm_lease()
+        run = await self._reload()
+        assert run is not None
+        self.run = run
         return result
 
     # steps -----------------------------------------------------------------------------------
@@ -1231,6 +1544,10 @@ class Runner:
         )
         stored = await self._store_sources(result.sources, check=False)
         candidates = identity_svc.parse_candidates(result.content)
+        hidden = await removal_svc.suppressed_people(
+            self.db, [(c.linkedin_url, c.name, c.firm) for c in candidates]
+        )
+        candidates = [c for i, c in enumerate(candidates) if i not in hidden]
         decision = identity_svc.decide(candidates, self.investor, list(result.sources))
         row = await identity_svc.record_decision(
             self.db,
@@ -1394,8 +1711,12 @@ class Runner:
             "since": since,
         }
         model = self.run.writer_model or self.settings.writer_model
-        info = (openrouter.cached_models() or {}).get(model)
-        temperature = 0.2 if info is None or "temperature" in info.supported_parameters else None
+        info = await self._info(model)
+        temperature = (
+            0.2
+            if not info.supported_parameters or "temperature" in info.supported_parameters
+            else None
+        )
         errors: list[str] = []
         for attempt in (1, 2):
             result = await self.call(
@@ -1438,7 +1759,6 @@ class Runner:
         result = dict(self.run.result or {})
         doc = WriterDoc.model_validate(result["draft"])
         if result.get("no_profile"):
-            doc.analysis.brief.verdict = "possible"
             doc.analysis.brief.why = prompts.NO_PROFILE_WHY
             doc.analysis.fit = type(doc.analysis.fit)()
             doc.analysis.talking_points = []
@@ -1449,7 +1769,13 @@ class Runner:
             agent=False,
             workspace_facts=result.get("workspace_facts", []),
             anchor=self.anchor,
+            trusted_anchor=self.anchor_trusted,
         )
+        if result.get("no_profile"):
+            # Without a company profile there is no fit verdict: nothing is written to the
+            # round's fit, and the Brief says so instead of showing "Possible".
+            outcome.verdict = "unrated"
+            outcome.analysis["brief"]["verdict"] = "unrated"
         prog_removed = int((self.run.progress or {}).get("privacy_removed", 0))
         if not outcome.facts:
             self._mark("save", "failed", privacy_removed=prog_removed + outcome.privacy_removed)
@@ -1534,13 +1860,14 @@ class Runner:
             raise jobs_svc.PermanentJobError("no_ai_key") from None
         assert settings is not None
         self.settings = settings
+        self.prices = ai_svc.known_prices(settings)
         self.client = openrouter.OpenRouterClient(key)
         del key
         if await removal_svc.is_suppressed(self.db, inv):
             await self._end(RunStatus.FAILED, "research_suppressed", removal_svc.SUPPRESSED_MESSAGE)
             return False
         ident = await identity_svc.get_identity(self.db, ws, inv.id)
-        self.anchor = identity_svc.anchor_of(ident, inv)
+        self._set_anchor(ident)
         if run.status == RunStatus.QUEUED.value:
             run.status = RunStatus.RUNNING.value
             run.started_at = run.started_at or now
@@ -1548,12 +1875,45 @@ class Runner:
         await self.db.commit()
         return True
 
+    def _set_anchor(self, ident: InvestorIdentity | None) -> None:
+        self.anchor = identity_svc.anchor_of(ident, self.investor)
+        self.anchor_trusted = identity_svc.trust_of(ident, self.investor)
+
+    async def _plan_micros(self) -> int:
+        """What the run's remaining calls hold, reserved before the first of them."""
+        ident = await identity_svc.get_identity(self.db, self.ws, self.investor.id)
+        anchored = ident is not None and ident.status in identity_svc.ANCHORED
+        total = 0
+        if not anchored and not self.investor.linkedin_url and not self._done("identity"):
+            model = self.run.identity_model or self.settings.identity_model
+            total += call_reserve_micros(await self._info(model), IDENTITY_STEP)
+        if self.run.kind == ResearchKind.IDENTITY.value:
+            return total
+        search = await self._info(self.run.search_model or self.settings.search_model)
+        for key in SEARCH_KEYS:
+            if not self._done(f"search:{key}"):
+                total += call_reserve_micros(search, SEARCH_STEP)
+        if not (self._done("write") and (self.run.result or {}).get("draft")):
+            writer = await self._info(self.run.writer_model or self.settings.writer_model)
+            total += call_reserve_micros(writer, WRITER_STEP)
+        return total
+
+    async def _stop_if_suppressed(self) -> bool:
+        """The identity research found may be someone who asked not to be researched (R13)."""
+        if await removal_svc.is_suppressed(self.db, self.investor):
+            await self._end(RunStatus.FAILED, "research_suppressed", removal_svc.SUPPRESSED_MESSAGE)
+            return True
+        return False
+
     async def execute(self) -> None:
         if not await self._prepare():
             return
         try:
+            await self._hold(await self._plan_micros())
             if self.run.kind == ResearchKind.IDENTITY.value:
                 await self.identity_step()
+                if await self._stop_if_suppressed():
+                    return
                 await self._end(RunStatus.SUCCEEDED)
                 return
             if not await self.identity_step():
@@ -1568,8 +1928,10 @@ class Runner:
                     "then research again.",
                 )
                 return
+            if await self._stop_if_suppressed():
+                return
             ident = await identity_svc.get_identity(self.db, self.ws, self.investor.id)
-            self.anchor = identity_svc.anchor_of(ident, self.investor)
+            self._set_anchor(ident)
             since = None
             if self.run.kind == ResearchKind.REFRESH.value:
                 prev = await dossiers_svc.latest(self.db, self.ws, self.investor.id)
@@ -1587,11 +1949,29 @@ class Runner:
         except _Ended:
             return
         except _Capped:
+            used = await spend.usage(
+                self.db, self.ws.workspace_id, spend.month_of(self.now(), self.ws.timezone)
+            )
+            cap = self.settings.monthly_cap_micros
+            left = used.remaining(cap)
             await self._end(
                 RunStatus.CAPPED,
                 "spend_cap_reached",
-                f"Monthly AI limit reached (${self.settings.monthly_cap_micros / 1_000_000:,.2f})."
-                " An owner can raise it in Settings → AI research; then resume.",
+                (
+                    f"This month's ${cap / 1_000_000:,.2f} AI research limit is used up."
+                    if left <= 0
+                    else f"Only ${left / 1_000_000:,.2f} of this month's ${cap / 1_000_000:,.2f}"
+                    " AI research limit is left, less than this research can cost."
+                )
+                + " An owner can raise it in Settings → AI research; then resume.",
+            )
+        except _UnknownPrice as exc:
+            await self._end(
+                RunStatus.FAILED,
+                "model_unavailable",
+                f"OpenRouter no longer lists {exc.model}, so its price is unknown and research "
+                "cannot keep it under your monthly limit. Pick another model in Settings → AI "
+                "research, then resume.",
             )
         except openrouter.OpenRouterError as exc:
             await self._failed_call(exc)
@@ -1601,15 +1981,38 @@ class Runner:
         assert run is not None
         self.run = run
         if exc.transient and self.ctx.job.attempts < self.ctx.job.max_attempts:
+            # Still running, retried later: the error shows meanwhile ("OpenRouter is not
+            # answering; retrying"), and nothing stays held while it waits.
             run.error_code = exc.code
             run.error_message = exc.message[:500]
             run.updated_at = self.now()
+            await spend.release_for_run(self.db, run_id=run.id, now=self.now())
             await self.db.commit()
             raise jobs_svc.TransientJobError(exc.code, retry_after_s=exc.retry_after_s)
         gathered = (await source_counts(self.db, self.ws, [run.id]))[run.id]["gathered"]
         status = RunStatus.PARTIAL if gathered else RunStatus.FAILED
         await self._end(status, exc.code, exc.message)
+        if exc.code in KEY_ERRORS:
+            await self._stop_workspace_research(exc)
         raise jobs_svc.PermanentJobError(exc.code)
+
+    async def _stop_workspace_research(self, exc: openrouter.OpenRouterError) -> None:
+        """OpenRouter refused the workspace's key: every other queued run would fail the
+        same way, so they stop now, and Settings shows why (instead of a batch failing one
+        by one)."""
+        now = self.now()
+        await ai_svc.mark_key_error(self.db, self.ws.workspace_id, exc.code, now=now)
+        queued = list(
+            await self.db.scalars(
+                select(ResearchRun).where(
+                    ResearchRun.workspace_id == self.ws.workspace_id,
+                    ResearchRun.status == RunStatus.QUEUED.value,
+                    ResearchRun.kind != ResearchKind.AGENT.value,
+                )
+            )
+        )
+        await _cancel_runs(self.db, queued, now=now, code=exc.code, message=exc.message[:500])
+        await self.db.commit()
 
 
 async def run_job(ctx: Any) -> None:
@@ -1626,8 +2029,9 @@ async def on_recover(db: AsyncSession, rec: jobs_svc.RecoveredJob, now: datetime
     if not raw:
         return
     run_id = UUID(str(raw))
+    await settle_lost_calls(db, run_id, now=now)
     await spend.release_for_run(db, run_id=run_id, now=now)
-    run = await db.get(ResearchRun, run_id)
+    run = await db.get(ResearchRun, run_id, populate_existing=True)
     if run is None or run.status not in ACTIVE:
         return
     if rec.failed:
@@ -1638,6 +2042,15 @@ async def on_recover(db: AsyncSession, rec: jobs_svc.RecoveredJob, now: datetime
         await _reset_pending_identities(db, [run], now)
     else:
         run.status = RunStatus.QUEUED.value
+    prog = dict(run.progress or {})
+    prog["step"] = None
+    prog["steps"] = [
+        {**st, "state": "pending" if not rec.failed else "failed"}
+        if st.get("state") == "running"
+        else st
+        for st in prog.get("steps", [])
+    ]
+    run.progress = prog
     run.updated_at = now
     await db.flush()
 
@@ -1694,8 +2107,12 @@ async def save_agent_dossier(
                 for e in exc.errors(include_url=False)[:50]
             ],
         ) from None
+    _check_agent_identity_urls(doc)
     await removal_svc.require_not_suppressed(
-        db, investor, extra_linkedin=[doc.identity.linkedin_url]
+        db,
+        investor,
+        extra_linkedin=[doc.identity.linkedin_url],
+        extra_names=[(doc.identity.name, doc.identity.firm or investor.firm)],
     )
     ident = await identity_svc.get_identity(db, ws, investor.id)
     anchored = ident is not None and ident.status in identity_svc.ANCHORED
@@ -1710,7 +2127,9 @@ async def save_agent_dossier(
                 "person below.",
                 details={"anchor": anchor.as_dict()},
             )
+        trust = identity_svc.trust_of(ident, investor)
     else:
+        await _require_agent_identity_fits(db, ws, investor, ident, doc)
         anchor = Anchor.of(
             name=doc.identity.name,
             firm=doc.identity.firm or investor.firm,
@@ -1718,6 +2137,7 @@ async def save_agent_dossier(
             linkedin_url=doc.identity.linkedin_url or investor.linkedin_url,
             title=doc.identity.title or investor.title,
         )
+        trust = Trust(domain=domain_resembles_firm(anchor.firm_domain, anchor.firm))
     raw_sources = [RawSource(s.id, s.url, s.title, s.snippet, s.published_at) for s in doc.sources]
     checked, src_removed = check_sources(raw_sources, anchor)
     accepted = {c.local_id for c in checked if c.check.accepted}
@@ -1727,6 +2147,7 @@ async def save_agent_dossier(
         source_dates={c.local_id: c.published_at for c in checked},
         agent=True,
         anchor=anchor,
+        trusted_anchor=trust,
     )
     rejected = [
         {"id": c.local_id, "reason": c.check.reason}
@@ -1833,6 +2254,77 @@ async def save_agent_dossier(
     run.result = {**result, **({"idempotency_key": key} if key else {})}
     await db.flush()
     return AgentSave(stored.dossier, run, result)
+
+
+def _check_agent_identity_urls(doc: DossierDoc) -> None:
+    """The identity's links become the investor's: http(s) only, LinkedIn a profile URL."""
+    bad: list[dict[str, Any]] = []
+    li = doc.identity.linkedin_url
+    if li is not None:
+        try:
+            url = clean_url(li, "linkedin_url")
+        except ValidationFailed:
+            url = None
+        if url is None or domain_of(url) is None or linkedin_key(url) is None:
+            bad.append(
+                {
+                    "loc": ["identity", "linkedin_url"],
+                    "msg": "Use a LinkedIn profile URL like https://www.linkedin.com/in/…",
+                }
+            )
+    site = doc.identity.firm_website
+    if site is not None:
+        try:
+            ok = domain_of(clean_url(site, "firm_website")) is not None
+        except ValidationFailed:
+            ok = False
+        if not ok:
+            bad.append({"loc": ["identity", "firm_website"], "msg": "Use an http(s) website URL."})
+    if bad:
+        raise InvalidDossier("The dossier's identity links are not valid URLs.", details=bad)
+
+
+async def _require_agent_identity_fits(
+    db: AsyncSession,
+    ws: WorkspaceContext,
+    investor: Investor,
+    ident: InvestorIdentity | None,
+    doc: DossierDoc,
+) -> None:
+    """With no confirmed identity yet, an agent's dossier may set it, but only for this
+    investor (R3, R11): the same name (initials and nicknames allowed) and, when both are
+    known, the same firm. While "Is this them?" waits for a person, nothing deeper is saved;
+    a candidate someone rejected cannot come back this way."""
+    status = ident.status if ident is not None else IdentityStatus.NONE.value
+    if status == IdentityStatus.NEEDS_PICK.value:
+        raise IdentityRequired(
+            "Pick who this is first (Is this them?): choose one of the candidates with "
+            + how(ws, "match_identity", f"POST /v1/investors/{investor.id}/identity")
+            + ", then save the dossier.",
+            details={"identity_status": status},
+        )
+    reasons: list[str] = []
+    if identity_svc.name_points(doc.identity.name, investor.name) <= 0:
+        reasons.append(f"the name {doc.identity.name!r} is not {investor.name!r}")
+    if (
+        investor.firm
+        and doc.identity.firm
+        and norm_firm(investor.firm) != norm_firm(doc.identity.firm)
+    ):
+        reasons.append(f"the firm {doc.identity.firm!r} is not {investor.firm!r}")
+    if status == IdentityStatus.REJECTED.value and doc.identity.linkedin_url:
+        rejected = {
+            linkedin_key(c.linkedin_url)
+            for c in await identity_svc.candidates_of(db, ws, investor.id)
+            if c.linkedin_url
+        }
+        if linkedin_key(doc.identity.linkedin_url) in rejected:
+            reasons.append("a person already said this profile is not them")
+    if reasons:
+        raise IdentityMismatch(
+            "This dossier is about someone else: " + "; ".join(reasons) + ".",
+            details={"investor": {"name": investor.name, "firm": investor.firm}},
+        )
 
 
 # --- summaries for lists, the board and Triage ------------------------------------------------

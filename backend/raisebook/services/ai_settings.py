@@ -38,7 +38,7 @@ from raisebook.core.errors import (
 from raisebook.models.ai import WorkspaceAiSettings
 from raisebook.models.enums import AiPreset
 from raisebook.services import jobs as jobs_svc
-from raisebook.services import openrouter
+from raisebook.services import openrouter, spend
 from raisebook.services.research_cost import RunModels
 
 
@@ -199,10 +199,74 @@ def _map_openrouter(exc: openrouter.OpenRouterError) -> Exception:
     return OpenRouterUnavailable()
 
 
-async def verify_models(ids: Mapping[str, str]) -> None:
+def price_json(info: openrouter.ModelInfo) -> dict[str, Any]:
+    return {
+        "prompt": str(info.prompt),
+        "completion": str(info.completion),
+        "web_search": str(info.web_search),
+        "request": str(info.request),
+        "context_length": info.context_length,
+        "supported_parameters": sorted(info.supported_parameters),
+        "input_modalities": sorted(info.input_modalities),
+    }
+
+
+def _price_from_json(model_id: str, raw: Any) -> openrouter.ModelInfo | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return openrouter.ModelInfo(
+            id=model_id,
+            name=model_id,
+            prompt=Decimal(str(raw.get("prompt", "0"))),
+            completion=Decimal(str(raw.get("completion", "0"))),
+            web_search=Decimal(str(raw.get("web_search", "0"))),
+            request=Decimal(str(raw.get("request", "0"))),
+            context_length=raw.get("context_length")
+            if isinstance(raw.get("context_length"), int)
+            else None,
+            supported_parameters=frozenset(
+                p for p in raw.get("supported_parameters") or [] if isinstance(p, str)
+            ),
+            input_modalities=frozenset(
+                m for m in raw.get("input_modalities") or [] if isinstance(m, str)
+            ),
+        )
+    except (ArithmeticError, ValueError):
+        return None
+
+
+def known_prices(row: WorkspaceAiSettings | None) -> dict[str, openrouter.ModelInfo]:
+    """Prices for estimates and reservations: what was stored when the workspace's models
+    were last verified, refreshed by this process's models cache when it has one. The same
+    in the API and the worker, and after a restart (``research_cost.price_of`` falls back to
+    the preset snapshot)."""
+    out: dict[str, openrouter.ModelInfo] = {}
+    for model_id, raw in ((row.model_prices or {}) if row is not None else {}).items():
+        info = _price_from_json(str(model_id), raw)
+        if info is not None:
+            out[str(model_id)] = info
+    cached = openrouter.cached_models() or {}
+    if row is not None:
+        for model_id in (row.identity_model, row.search_model, row.writer_model):
+            if model_id in cached:
+                out[model_id] = cached[model_id]
+    return out
+
+
+def store_prices(
+    row: WorkspaceAiSettings, ids: Mapping[str, str], known: Mapping[str, openrouter.ModelInfo]
+) -> None:
+    row.model_prices = {
+        model_id: price_json(known[model_id]) for model_id in set(ids.values()) if model_id in known
+    }
+
+
+async def verify_models(ids: Mapping[str, str]) -> dict[str, openrouter.ModelInfo]:
     """Every id must exist on OpenRouter's models list; the writer must return structured JSON.
 
-    ``ids`` maps the step (``identity``/``search``/``writer``) to the model id.
+    ``ids`` maps the step (``identity``/``search``/``writer``) to the model id. Returns the
+    models list (the caller stores the chosen models' prices).
     """
     try:
         known = await openrouter.models()
@@ -221,6 +285,7 @@ async def verify_models(ids: Mapping[str, str]) -> None:
                 f"{model_id} cannot return structured JSON; pick another writer.",
                 details={"step": step, "model": model_id},
             )
+    return known
 
 
 def _models_of(row: WorkspaceAiSettings) -> dict[str, str]:
@@ -245,7 +310,8 @@ async def save_key(
     except openrouter.OpenRouterError as exc:
         raise _map_openrouter(exc) from exc
     row = await _locked_row(db, ws.workspace_id, now)
-    await verify_models(_models_of(row))
+    known = await verify_models(_models_of(row))
+    store_prices(row, _models_of(row), known)
     sealed = secrets.seal(key, aad=secrets.openrouter_aad(ws.workspace_id), ring=ring)
     row.key_ciphertext = sealed.ciphertext
     row.key_nonce = sealed.nonce
@@ -257,6 +323,8 @@ async def save_key(
     row.key_set_at = now
     row.key_set_by_user_id = ws.actor.user_id
     row.key_validated_at = now
+    row.key_error = None
+    row.key_error_at = None
     row.models_verified_at = now
     row.updated_at = now
     await db.flush()
@@ -264,7 +332,9 @@ async def save_key(
 
 
 async def remove_key(db: AsyncSession, ws: WorkspaceContext, *, now: datetime) -> int:
-    """Delete the key immediately (R12) and cancel queued research. Returns runs cancelled."""
+    """Delete the key immediately (R12) and cancel the workspace's queued **and running**
+    research: a running run stops before its next OpenRouter call (the worker re-checks the
+    run and the key before every call). Returns runs cancelled."""
     row = await _locked_row(db, ws.workspace_id, now)
     row.key_ciphertext = None
     row.key_nonce = None
@@ -276,16 +346,22 @@ async def remove_key(db: AsyncSession, ws: WorkspaceContext, *, now: datetime) -
     row.key_set_at = None
     row.key_set_by_user_id = None
     row.key_validated_at = None
+    row.key_error = None
+    row.key_error_at = None
     row.updated_at = now
     await db.flush()
     result = await db.execute(
         text(
             "UPDATE research_runs SET status = 'cancelled', error_code = :code,"
             " error_message = :msg, finished_at = :now, updated_at = :now"
-            " WHERE workspace_id = :ws AND status = 'queued' AND kind <> 'agent'"
+            " WHERE workspace_id = :ws AND status IN ('queued', 'running') AND kind <> 'agent'"
+            " RETURNING id"
         ),
         {"code": NO_KEY_REASON, "msg": KEY_REMOVED_MESSAGE, "now": now, "ws": ws.workspace_id},
     )
+    cancelled = [r[0] for r in result.all()]
+    for run_id in cancelled:
+        await spend.release_for_run(db, run_id=run_id, now=now)
     await jobs_svc.cancel_queued(
         db,
         workspace_id=ws.workspace_id,
@@ -301,7 +377,18 @@ async def remove_key(db: AsyncSession, ws: WorkspaceContext, *, now: datetime) -
         ),
         {"now": now, "ws": ws.workspace_id},
     )
-    return int(getattr(result, "rowcount", 0) or 0)
+    return len(cancelled)
+
+
+async def mark_key_error(db: AsyncSession, workspace_id: UUID, code: str, *, now: datetime) -> None:
+    """OpenRouter refused the saved key during a run: remember it for Settings."""
+    await db.execute(
+        text(
+            "UPDATE workspace_ai_settings SET key_error = :code, key_error_at = :now,"
+            " updated_at = :now WHERE workspace_id = :ws"
+        ),
+        {"code": code, "now": now, "ws": workspace_id},
+    )
 
 
 def _model_id(field: str, value: Any) -> str:
@@ -340,8 +427,11 @@ async def update_settings(
             models[step] = _model_id(field, changes[field])
     models_changed = models != _models_of(row)
     if models_changed and row.has_key:
-        await verify_models(models)
+        store_prices(row, models, await verify_models(models))
         row.models_verified_at = now
+    elif models_changed:
+        # No key yet: keep what the public models cache knows (verified when the key is saved).
+        store_prices(row, models, openrouter.cached_models() or {})
     row.identity_model = models["identity"]
     row.search_model = models["search"]
     row.writer_model = models["writer"]

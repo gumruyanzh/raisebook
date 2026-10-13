@@ -40,6 +40,11 @@ class UsageOut(BaseModel):
     reserved_usd: float
     remaining_usd: float
     calls: int
+    dossiers: int = Field(0, description="Dossier and refresh runs that finished this month.")
+    matches: int = Field(0, description="Identity matches that ran a model call this month.")
+    cap_reached: bool = Field(
+        False, description="Nothing is left under the monthly limit (paid research is off)."
+    )
 
 
 class EstimatesOut(BaseModel):
@@ -70,6 +75,12 @@ class AiSettingsOut(BaseModel):
     key_label: str | None
     key_set_at: Timestamp | None
     key_validated_at: Timestamp | None
+    key_error: str | None = Field(
+        None,
+        description="openrouter_key_rejected / openrouter_out_of_credits: OpenRouter refused "
+        "the saved key during research. Saving the key again clears it.",
+    )
+    key_error_at: Timestamp | None = None
     preset: AiPreset
     identity_model: str
     search_model: str

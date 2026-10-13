@@ -120,6 +120,12 @@ AMBIGUOUS = [
 IDENTITY_PAGES = [
     page(f"{SITE}/team/dana", "Dana Whitfield, Partner", "Dana Whitfield is a Partner at Harbor"),
     page("https://news.example/people/dana", "Dana Whitfield joins Harbor Light", "…"),
+    page(LINKEDIN, "Dana Whitfield - Partner - Harbor Light Ventures | LinkedIn", "Partner"),
+    page(
+        "https://www.linkedin.com/in/example-dana-whitfield-2",
+        "Dana Whitfield - Principal - Kelpline Capital | LinkedIn",
+        "Principal",
+    ),
 ]
 
 
@@ -179,8 +185,15 @@ def writer_doc(
             "key": "f2",
             "section": "activity",
             "kind": "deal",
-            "text": "Joined Kelpline's pre-seed; mobile +1 (415) 555-0100.",
+            "text": "Joined Kelpline's pre-seed.",
             "date": "2026-05-02",
+            "source_ids": sid("kelpline-raise"),
+        },
+        {
+            "key": "fx",
+            "section": "profile",
+            "kind": "other",
+            "text": "Her mobile is +1 (415) 555-0100.",
             "source_ids": sid("kelpline-raise"),
         },
         {

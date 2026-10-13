@@ -30,8 +30,15 @@ from raisebook.services import ai_settings, openrouter, spend
 from raisebook.services import jobs as jobs_svc
 from raisebook.services import research_prompts as prompts
 from raisebook.services.normalize import clean_url
-from raisebook.services.research_cost import PREFILL_STEP, estimate_micros
+from raisebook.services.research_cost import (
+    PREFILL_STEP,
+    call_reserve_micros,
+    estimate_micros,
+    price_of,
+)
 from raisebook.services.research_validate import domain_of
+
+DECK_BYTES_PER_TOKEN = 50  # generous: a PDF's text is far smaller than the file
 
 EDITABLE = (
     "pitch",
@@ -162,12 +169,24 @@ async def start_prefill(
     )
     if active is not None:
         return active
+    prices = ai_settings.known_prices(row)
     estimate = (
-        estimate_micros(
-            ResearchKind.PREFILL, research_svc.models_of(row), openrouter.cached_models()
-        )
+        estimate_micros(ResearchKind.PREFILL, research_svc.models_of(row), prices)
         or research_svc.FALLBACK_RESERVE_MICROS
     )
+    writer = price_of(row.writer_model, prices)
+    if writer is not None:
+        # What the call will hold: the deck's size and the website search included.
+        estimate = max(
+            estimate,
+            call_reserve_micros(
+                writer,
+                PREFILL_STEP,
+                prompt_tokens=PREFILL_STEP.prompt_tokens
+                + (len(deck.content) // DECK_BYTES_PER_TOKEN if deck is not None else 0),
+                searches=site is not None,
+            ),
+        )
     used = await spend.usage(db, ws.workspace_id, spend.month_of(now, ws.timezone))
     if used.spent_micros + used.reserved_micros + estimate > row.monthly_cap_micros:
         raise research_svc._cap_error(used, row.monthly_cap_micros, estimate)
@@ -261,6 +280,7 @@ async def prefill_job(ctx: Any) -> None:
             raise jobs_svc.PermanentJobError("no_ai_key") from None
         assert settings is not None
         runner.settings = settings
+        runner.prices = ai_settings.known_prices(settings)
         runner.client = openrouter.OpenRouterClient(key)
         del key
         run.status = RunStatus.RUNNING.value
@@ -289,7 +309,12 @@ async def prefill_job(ctx: Any) -> None:
                     deck_data_url=data_url,
                 ),
                 budget=PREFILL_STEP,
-                max_tokens=2000,
+                max_tokens=PREFILL_STEP.max_tokens,
+                # Held for the deck actually sent (a PDF can be far longer than the budget)
+                # and for the website search when there is one.
+                prompt_tokens=PREFILL_STEP.prompt_tokens
+                + (len(upload.content) // DECK_BYTES_PER_TOKEN if upload is not None else 0),
+                searches=bool(kwargs.get("plugins")),
                 response_format=response_format(PREFILL_FORMAT_NAME, CompanyProfileDraft),
                 **kwargs,
             )
@@ -329,6 +354,9 @@ async def prefill_job(ctx: Any) -> None:
 async def on_prefill_recover(db: AsyncSession, rec: Any, now: datetime) -> None:
     raw = rec.payload.get("run_id")
     if raw:
+        from raisebook.services.research import settle_lost_calls
+
+        await settle_lost_calls(db, UUID(str(raw)), now=now)
         await spend.release_for_run(db, run_id=UUID(str(raw)), now=now)
         if rec.failed:
             await _drop_uploads(db, UUID(str(raw)))

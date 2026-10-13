@@ -178,7 +178,9 @@ class DossierOut(BaseModel):
     investor_id: UUID
     version: int
     schema_version: int
-    verdict: Literal["strong", "possible", "poor"]
+    verdict: Literal["strong", "possible", "poor", "unrated"] = Field(
+        description="unrated: written without a company profile, so there is no fit verdict."
+    )
     analysis: dict[str, Any] = Field(
         description="{brief: {verdict, why, best_way_in, opener, risk, fact_keys}, fit: {stage?, "
         "sector?, check?, deploying?, conflicts}, ways_in: [{text, basis, fact_keys}], "
@@ -284,13 +286,25 @@ class EstimateIn(StrictInput):
 class EstimateOut(BaseModel):
     kind: str
     count: int = Field(description="Investors that would be researched.")
+    free: int = Field(0, description="Of count, need no model call (LinkedIn already known).")
+    paid: int = Field(0, description="Of count, need a model call (priced at per_run_usd).")
     skipped: dict[str, int] = Field(
-        description="{no_identity, suppressed, fresh, active}: left out, and why."
+        description="{no_identity, suppressed, fresh (a dossier from the last 30 days), "
+        "identified (identity runs: already confirmed), active}: left out, and why."
     )
     per_run_usd: float | None
     total_usd: float | None
     remaining_usd: float | None = Field(description="Left under this month's cap.")
-    fits: int = Field(description="How many fit under the remaining cap.")
+    fits: int = Field(description="How many fit under the remaining cap (best fit first).")
+    needs_identity: int = Field(
+        0, description="Dossier runs that match the identity first (and stop if unsure)."
+    )
+    no_profile: bool = Field(
+        False, description="No company profile: dossiers would have no fit verdict."
+    )
+    order: Literal["fit", "given"] = Field(
+        "given", description="fit: a round's investors, best fit first (Hot, Warm…)."
+    )
 
 
 class BatchIn(StrictInput):
@@ -308,6 +322,14 @@ class BatchOut(BaseModel):
     total: int
     counts: dict[str, int] = Field(description="Runs by status.")
     active: int
+    identity: dict[str, int] = Field(
+        default_factory=dict,
+        description="Identity outcomes of finished runs: {matched, confirmed, needs_pick, "
+        "not_found}. needs_pick and not_found need a person.",
+    )
+    errors: dict[str, int] = Field(
+        default_factory=dict, description="Failed, partial, capped or cancelled runs by code."
+    )
     estimate_usd: float | None = None
     spent_usd: float | None = None
     created_at: Timestamp

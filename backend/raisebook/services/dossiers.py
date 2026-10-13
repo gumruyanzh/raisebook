@@ -54,7 +54,12 @@ KEEP_VERSIONS = 5
 STALE_DAYS = 90
 MEETING_REFRESH_DAYS = 30
 MEETING_STAGE_KEY = "meeting"
-VERDICT_LABELS = {"strong": "Strong fit", "possible": "Possible fit", "poor": "Poor fit"}
+VERDICT_LABELS = {
+    "strong": "Strong fit",
+    "possible": "Possible fit",
+    "poor": "Poor fit",
+    "unrated": "no fit verdict yet (no company profile)",
+}
 
 
 def fact_ids(fact: Mapping[str, Any], first_url_key: str) -> tuple[str, str]:
@@ -199,7 +204,9 @@ async def store(
     proposed: dict[str, Any] = dict(anchor_fields or {})
     for name, sug in outcome.suggestions.items():
         proposed[name] = sug["value"]
-    wb = await apply_investor_fields(db, ws, investor, proposed, now=now, dossier_id=dossier.id)
+    wb = await apply_investor_fields(
+        db, ws, investor, proposed, now=now, dossier_id=dossier.id, review=outcome.review
+    )
     fit = await apply_fit(
         db, ws, investor, outcome.verdict, round_id=round_id, dossier_id=dossier.id, now=now
     )

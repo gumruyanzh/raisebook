@@ -12,9 +12,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request, Response
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.api.deps import (
@@ -50,12 +51,33 @@ def _usd(micros: int) -> float:
     return round(micros / 1_000_000, 6)
 
 
+async def _run_counts(db: AsyncSession, ws: WorkspaceContext, month: date) -> dict[str, int]:
+    """Finished paid runs this month, in founder words (dossiers, matches) instead of calls."""
+    nxt = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
+    rows = (
+        await db.execute(
+            text(
+                "SELECT kind, count(*) FROM research_runs WHERE workspace_id = :ws"
+                " AND cost_micros > 0 AND kind IN ('dossier', 'refresh', 'identity')"
+                " AND (created_at AT TIME ZONE :tz)::date >= :a"
+                " AND (created_at AT TIME ZONE :tz)::date < :b GROUP BY kind"
+            ),
+            {"ws": ws.workspace_id, "tz": ws.timezone, "a": month, "b": nxt},
+        )
+    ).all()
+    by = {str(k): int(n) for k, n in rows}
+    return {
+        "dossiers": by.get("dossier", 0) + by.get("refresh", 0),
+        "matches": by.get("identity", 0),
+    }
+
+
 async def settings_out(
     db: AsyncSession, ws: WorkspaceContext, row: WorkspaceAiSettings, now: datetime
 ) -> AiSettingsOut:
     month = spend.month_of(now, ws.timezone)
     used = await spend.usage(db, ws.workspace_id, month)
-    prices = openrouter.cached_models()  # never a network call on GET
+    prices = ai_svc.known_prices(row)  # never a network call on GET
     current = RunModels(row.identity_model, row.search_model, row.writer_model)
     presets = [
         PresetOut(
@@ -79,6 +101,8 @@ async def settings_out(
         key_label=row.key_label,
         key_set_at=row.key_set_at,
         key_validated_at=row.key_validated_at,
+        key_error=row.key_error,
+        key_error_at=row.key_error_at,
         preset=AiPreset(row.preset),
         identity_model=row.identity_model,
         search_model=row.search_model,
@@ -91,6 +115,8 @@ async def settings_out(
             reserved_usd=_usd(used.reserved_micros),
             remaining_usd=_usd(used.remaining(row.monthly_cap_micros)),
             calls=used.calls,
+            **(await _run_counts(db, ws, month)),
+            cap_reached=used.remaining(row.monthly_cap_micros) <= 0,
         ),
         estimates=EstimatesOut(
             best=by_id.get("best"),

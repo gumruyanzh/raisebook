@@ -155,6 +155,7 @@ class Verdict(StrEnum):
     STRONG = "strong"
     POSSIBLE = "possible"
     POOR = "poor"
+    UNRATED = "unrated"  # written without a company profile: no fit verdict
 
 
 class SuggestionStatus(StrEnum):

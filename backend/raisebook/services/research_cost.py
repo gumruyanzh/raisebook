@@ -26,13 +26,18 @@ class StepBudget:
     prompt_tokens: int
     completion_tokens: int
     searches: bool  # per-call web_search price applies
+    max_tokens: int = 0  # the completion cap sent with each call (the reservation's bound)
 
 
 # Fixed token budgets per step (RESEARCH-PLAN §5.2).
-IDENTITY_STEP = StepBudget(1, 1_500, 500, True)
-SEARCH_STEP = StepBudget(3, 1_000, 1_200, True)
-WRITER_STEP = StepBudget(1, 14_000, 3_500, False)
-PREFILL_STEP = StepBudget(1, 20_000, 1_500, False)
+IDENTITY_STEP = StepBudget(1, 1_500, 500, True, max_tokens=900)
+SEARCH_STEP = StepBudget(3, 1_000, 1_200, True, max_tokens=1_200)
+WRITER_STEP = StepBudget(1, 14_000, 3_500, False, max_tokens=6_000)
+PREFILL_STEP = StepBudget(1, 20_000, 1_500, False, max_tokens=2_000)
+
+# Each call holds this much more than its typical cost while it is in flight (R4).
+RESERVE_FACTOR = Decimal("1.5")
+PROMPT_MARGIN = Decimal("1.2")
 
 
 @dataclass(frozen=True)
@@ -76,6 +81,58 @@ def step_micros(model: ModelInfo, step: StepBudget) -> int:
     )
     total = per_call * step.calls * _MICROS
     return int(total.to_integral_value(rounding=ROUND_CEILING))
+
+
+def call_reserve_micros(
+    model: ModelInfo,
+    step: StepBudget,
+    *,
+    prompt_tokens: int | None = None,
+    searches: bool | None = None,
+) -> int:
+    """What one call of ``step`` holds under the cap while it runs: the larger of 1.5 x its
+    typical cost and its hard bound (the prompt actually sent, plus ``max_tokens`` of
+    completion). ``prompt_tokens`` overrides the budget when the caller knows the prompt is
+    larger (a deck, a long source list)."""
+    search = step.searches if searches is None else searches
+    one = StepBudget(1, step.prompt_tokens, step.completion_tokens, search)
+    typical = Decimal(step_micros(model, one)) * RESERVE_FACTOR
+    prompt = max(step.prompt_tokens, prompt_tokens or 0)
+    bound = (
+        model.prompt * prompt * PROMPT_MARGIN
+        + model.completion * max(step.max_tokens, step.completion_tokens)
+        + model.request
+        + (model.web_search if search else Decimal(0))
+    ) * _MICROS
+    return int(max(typical, bound).to_integral_value(rounding=ROUND_CEILING))
+
+
+def run_reserve_micros(
+    kind: ResearchKind,
+    models: RunModels,
+    prices: Mapping[str, ModelInfo] | None = None,
+    *,
+    skip_identity: bool = False,
+) -> int | None:
+    """What a whole run holds before its first call (the worker reserves this up front, and
+    starting a run checks it fits under the cap). None when a model's price is unknown."""
+    identity = price_of(models.identity, prices)
+    if kind == ResearchKind.IDENTITY:
+        return None if identity is None else call_reserve_micros(identity, IDENTITY_STEP)
+    if kind == ResearchKind.PREFILL:
+        writer = price_of(models.writer, prices)
+        return None if writer is None else call_reserve_micros(writer, PREFILL_STEP)
+    if kind in (ResearchKind.DOSSIER, ResearchKind.REFRESH):
+        search = price_of(models.search, prices)
+        writer = price_of(models.writer, prices)
+        if search is None or writer is None or (identity is None and not skip_identity):
+            return None
+        total = SEARCH_STEP.calls * call_reserve_micros(search, SEARCH_STEP)
+        total += call_reserve_micros(writer, WRITER_STEP)
+        if not skip_identity and identity is not None:
+            total += call_reserve_micros(identity, IDENTITY_STEP)
+        return total
+    return 0
 
 
 def price_of(model_id: str, prices: Mapping[str, ModelInfo] | None) -> ModelInfo | None:

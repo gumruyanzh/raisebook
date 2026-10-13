@@ -121,6 +121,35 @@ def _is_subdomain(host: str, domain: str) -> bool:
     return host == domain or host.endswith("." + domain)
 
 
+def _compact(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def domain_resembles_firm(domain: str | None, firm: str | None) -> bool:
+    """Does the domain carry the firm's name (``harborlight.example`` for Harbor Light
+    Ventures)? Used before research writes a website or email into an investor unasked: a
+    page a search found can name any domain."""
+    if not domain or not firm:
+        return False
+    name = _compact(norm_firm(firm)) or _compact(norm(firm))
+    if len(name) < 3:
+        return False
+    labels = [_compact(lbl) for lbl in domain.lower().split(".")[:-1]]
+    return any(
+        lbl == name or (len(name) >= 4 and name in lbl) or (len(lbl) >= 4 and lbl in name)
+        for lbl in labels
+        if lbl
+    )
+
+
+@dataclass(frozen=True)
+class Trust:
+    """Which anchor fields research may write into an investor without a person's click."""
+
+    linkedin: bool = False
+    domain: bool = False
+
+
 # --- the anchor (R3) -------------------------------------------------------------------------
 
 
@@ -321,6 +350,9 @@ class Outcome:
     dropped: list[Dropped] = field(default_factory=list)
     moved_to_unverified: int = 0
     privacy_removed: int = 0
+    # Suggestions that become "accept / ignore" even for an empty field (contact details
+    # research cannot vouch for: another domain or profile than the confirmed identity's).
+    review: set[str] = field(default_factory=set)
 
     @property
     def fact_keys(self) -> set[str]:
@@ -361,6 +393,7 @@ def finalize(
     agent: bool,
     workspace_facts: Sequence[str] = (),
     anchor: Anchor | None = None,
+    trusted_anchor: Trust | None = None,
 ) -> Outcome:
     """Privacy, citations and caps over a schema-valid document (steps 4 to 6)."""
     dates = source_dates or {}
@@ -414,7 +447,7 @@ def finalize(
 
     # Analysis (private): prune evidence, never keep an unsupported path in.
     a = doc.analysis
-    brief = {
+    brief: dict[str, Any] = {
         "verdict": a.brief.verdict,
         "why": _clean(a.brief.why, counter) or "",
         "best_way_in": _clean(a.brief.best_way_in, counter) or "" if a.brief.best_way_in else "",
@@ -481,7 +514,24 @@ def finalize(
         dropped.append(Dropped(f"talking_points.{i}", "cap"))
     talking = talking[:MAX_TALKING_POINTS]
 
-    # Suggestions: evidence required; a work email only on the firm's own domain.
+    # The Brief's way in and risk are claims too (R2, R5.5): the way in must be one of the
+    # evidenced ways in that survived (never a guess at who knows whom), the risk needs a
+    # surviving red flag or conflict behind it.
+    if brief["best_way_in"]:
+        brief["best_way_in"] = _brief_way_in(brief["best_way_in"], ways_in)
+        if not brief["best_way_in"]:
+            dropped.append(Dropped("brief.best_way_in", "no_evidence"))
+    elif ways_in:
+        brief["best_way_in"] = ways_in[0]["text"][:160]
+    has_flags = any(f["section"] == "red_flags" for f in facts) or bool(fit["conflicts"])
+    if brief["risk"] and not has_flags:
+        brief["risk"] = ""
+        dropped.append(Dropped("brief.risk", "no_evidence"))
+
+    # Suggestions: evidence required; a work email only on the firm's own domain; contact
+    # details the confirmed identity does not vouch for wait for a person (``review``).
+    trust = trusted_anchor or Trust()
+    review: set[str] = set()
     suggestions: dict[str, Any] = {}
     for name, sug in doc.suggestions:
         if sug is None:
@@ -498,6 +548,23 @@ def finalize(
                 if not firm_domain or not _is_subdomain(at, firm_domain):
                     dropped.append(Dropped("suggestions.email", "not_a_work_email"))
                     continue
+                if not trust.domain:
+                    review.add("email")
+            elif name == "website_url":
+                host = domain_of(value)
+                firm_domain = anchor.firm_domain if anchor else None
+                if host is None:
+                    dropped.append(Dropped("suggestions.website_url", "invalid"))
+                    continue
+                if not (trust.domain and firm_domain and _is_subdomain(host, firm_domain)):
+                    review.add("website_url")
+            elif name == "linkedin_url":
+                key = linkedin_key(value)
+                if key is None:
+                    dropped.append(Dropped("suggestions.linkedin_url", "invalid"))
+                    continue
+                if not (trust.linkedin and anchor and anchor.linkedin_key == key):
+                    review.add("linkedin_url")
             else:
                 cleaned = _clean(value, counter)
                 if cleaned is None or cleaned != value:
@@ -526,7 +593,18 @@ def finalize(
         dropped=dropped,
         moved_to_unverified=moved,
         privacy_removed=counter[0],
+        review=review,
     )
+
+
+def _brief_way_in(text: str, ways_in: Sequence[Mapping[str, Any]]) -> str:
+    """The Brief's way in, only when it is (or plainly restates) an evidenced way in."""
+    t = norm(text)
+    for way in ways_in:
+        w = norm(str(way["text"]))
+        if t and w and (t == w or t in w or w in t):
+            return text
+    return ways_in[0]["text"][:160] if ways_in else ""
 
 
 def identity_matches(

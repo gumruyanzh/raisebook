@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from typing import Any
 
 from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, LargeBinary, Text, text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from raisebook.core.database import Base
@@ -45,6 +46,12 @@ class WorkspaceAiSettings(TimestampMixin, Base):
     )
     key_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     models_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Prices/parameters of the chosen models as OpenRouter listed them when last verified.
+    model_prices: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    key_error: Mapped[str | None] = mapped_column(Text)  # OpenRouter refused the key in a run
+    key_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     @property
     def has_key(self) -> bool:

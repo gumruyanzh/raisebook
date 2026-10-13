@@ -346,7 +346,7 @@ def removals_list(
 
     async def go(s: AsyncSession) -> list[dict[str, Any]]:
         return [
-            research_removal.request_dict(r)
+            research_removal.request_dict(r, await research_removal.proof_of(s, r))
             for r in await research_removal.list_requests(s, status=status)
         ]
 
@@ -360,6 +360,14 @@ def removals_apply(
     now_: Annotated[
         bool, typer.Option("--now", help="Apply here instead of queueing a worker job")
     ] = False,
+    proof_checked: Annotated[
+        bool,
+        typer.Option(
+            "--proof-checked",
+            help="The email is not on the person's firm domain (proof: weak) and you checked "
+            "other proof that the requester is that person",
+        ),
+    ] = False,
 ) -> None:
     """Delete research about the requester in every workspace and stop researching them.
     Queues a ``research.removal`` job (``--now`` applies it in this process). Counts only."""
@@ -368,13 +376,16 @@ def removals_apply(
 
     async def go(s: AsyncSession) -> dict[str, Any]:
         rid = UUID(request_id)
+        await research_removal.require_proof(s, rid, proof_checked=proof_checked)
         if now_:
             counts = await research_removal.apply_request(
                 s, rid, now=get_now(), sender=build_email_sender()
             )
             await s.commit()
             return {"request_id": request_id, "applied": counts}
-        job_id = await research_removal.enqueue_apply(s, rid, now=get_now())
+        job_id = await research_removal.enqueue_apply(
+            s, rid, now=get_now(), proof_checked=proof_checked
+        )
         await s.commit()
         return {"request_id": request_id, "queued_job": str(job_id)}
 

@@ -20,6 +20,9 @@ SOURCES = [
     WebSource("https://harborlight.example/team"),
     WebSource("https://news.example/a"),
     WebSource("https://news.example/b"),
+    # The search cited both profiles (a LinkedIn URL nobody cited earns nothing).
+    WebSource("https://www.linkedin.com/in/example-dana-whitfield"),
+    WebSource("https://www.linkedin.com/in/example-dana-2"),
 ]
 
 
@@ -81,6 +84,29 @@ def test_decide_matched_needs_pick_and_not_found() -> None:
     )
     assert nothing.status == IdentityStatus.NOT_FOUND and nothing.candidates == []
     assert decide([], inv(), SOURCES).status == IdentityStatus.NOT_FOUND
+
+
+def test_model_links_must_be_backed_by_the_citations() -> None:
+    """A page the identity model read can inject a LinkedIn profile and a firm website: an
+    uncited profile earns no points, an uncited firm site is dropped, and a candidate with no
+    evidence never matches without a person's pick (verify-security finding)."""
+    injected = cand(
+        linkedin_url="https://www.linkedin.com/in/attacker-controlled",
+        firm="Harbor Light Ventures",
+        firm_website="https://evil-harbor.example",
+        model_confidence=1.0,
+        evidence=[],
+    )
+    out = decide([injected], inv(), SOURCES)
+    assert out.status == IdentityStatus.NEEDS_PICK
+    assert out.candidates[0].firm_website is None
+    assert out.candidates[0].score == pytest.approx(0.75)  # name + firm + confidence only
+    # Cited LinkedIn but no evidence numbers: still a person's call.
+    assert decide([cand(evidence=[])], inv(), SOURCES).status == IdentityStatus.NEEDS_PICK
+    # A firm site on a cited domain stays.
+    kept = decide([cand(firm_website="https://harborlight.example")], inv(), SOURCES)
+    assert kept.status == IdentityStatus.MATCHED
+    assert kept.candidates[0].firm_website == "https://harborlight.example"
 
 
 def test_parse_is_lenient() -> None:

@@ -10,7 +10,10 @@
 - Equal values write nothing. List fields (stage focus, industries) are suggested as the
   union, only when it adds values. Check size is suggested as a pair.
 - **Fit** per round participant: verdict Strong 4, Possible 3, Poor 1 (5 = Hot stays a human
-  call). Fit 0 (unset) is set; another value becomes a pending ``fit`` suggestion.
+  call: a Strong verdict never suggests lowering Hot to 4). Fit 0 (unset) is set; another
+  value becomes a pending ``fit`` suggestion. ``unrated`` (no company profile) writes nothing.
+- ``review`` fields (contact details research cannot vouch for) become pending suggestions
+  even when the investor's field is empty.
 
 Accept applies through the same services as a person's edit (validation, activities,
 ``updated_at``); "Accept all" shares one ``bulk_id`` so feeds collapse it.
@@ -179,6 +182,7 @@ async def apply_investor_fields(
     actor: Actor | None = None,
     dossier_id: UUID | None = None,
     run_id: UUID | None = None,
+    review: set[str] | frozenset[str] = frozenset(),
 ) -> WritebackResult:
     """Fill empty fields, suggest the rest (never overwrite). Flushes; the caller commits."""
     result = WritebackResult()
@@ -202,7 +206,7 @@ async def apply_investor_fields(
             elif len(union) > len(have):
                 pending.append((name, have, union))
             continue
-        if _empty(current, name):
+        if _empty(current, name) and name not in review:
             fills[name] = value
         elif not _same(name, current, value):
             pending.append((name, current, value))
@@ -304,8 +308,8 @@ async def apply_fit(
     )
     stmt = stmt.where(Round.id == round_id) if round_id else stmt.where(Round.status == "open")
     for part, rnd in (await db.execute(stmt)).tuples():
-        if part.fit == fit:
-            continue
+        if part.fit == fit or (verdict == Verdict.STRONG and part.fit > fit):
+            continue  # Hot (5) is the founder's call: "Strong" agrees with it
         if part.fit == 0:
             stages = await stages_for(db, ws, rnd.id)
             await parts_svc.apply_changes(

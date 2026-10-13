@@ -622,8 +622,16 @@ Budget, $0.007 per identity match** ("Match all 411 ≈ $2.90"). Shown per prese
 workspace's median real cost per kind+preset instead (still shown as "≈").
 
 ### 5.3 Atomic, race-safe cap
-Before **each** OpenRouter call the worker reserves that call's upper-bound estimate (×1.5)
-in one statement:
+Every call's **hold** is the larger of 1.5 x its typical cost and its hard bound (the prompt
+actually sent x 1.2, plus `max_tokens` of completion, plus the per-call search price)
+(`research_cost.call_reserve_micros`). Prices come from `workspace_ai_settings.model_prices`
+(stored whenever the chosen models are verified), this process's models cache, the preset
+snapshot, or OpenRouter's public models list; a model with no known price stops the run
+(`model_unavailable`) before any call.
+
+**A run holds its remaining calls up front** (`spend.hold_for_run`, before the first call),
+so a run that starts never stops half-way after paying for its searches. Holding uses one
+conditional statement:
 ```sql
 INSERT INTO ai_usage_months (workspace_id, month) VALUES (:ws, :m) ON CONFLICT DO NOTHING;
 UPDATE ai_usage_months
@@ -633,19 +641,27 @@ UPDATE ai_usage_months
 RETURNING spent_micros, reserved_micros;
 ```
 Row-level locking makes concurrent workers serialize on this row; 0 rows → the run stops
-`capped` ("Monthly AI limit reached ($25.00). An owner can raise it in Settings → AI
-research."), keeping everything gathered so far, and is resumable next month or after a raise.
-After the call (success or failure with usage): `spent += actual, reserved -= r, calls += 1`
-and the run's `cost_micros += actual`, `reserved_micros -= r`, in one transaction. The
-reservation is also recorded on the run so `recover_stuck` and the shutdown path release it
-(`reserved -= run.reserved_micros`) and a re-run job never double-reserves. A call that
-succeeded at OpenRouter but whose settle failed is settled on resume from the run's `usage`
-list (keyed by `generation_id`, idempotent).
-- Start-time check: `POST …/research` and bulk endpoints refuse up front (422
-  `spend_cap_reached`) when `spent + reserved + estimate > cap`; bulk requires
-  `confirm_micros` ≥ the server's current estimate (else 409 `estimate_changed` with the new
-  number) and fits as many runs as the remaining cap allows only if the client sent
-  `allow_partial: true`; otherwise 422 with "N of M fit under your cap".
+`capped` ("Only $0.22 of this month's $25.00 AI research limit is left, less than this research
+can cost…"), having spent nothing more, and is resumable after a raise or next month.
+After each call: `spent += actual, reserved -= that call's hold, calls += 1` and the run's
+`cost_micros += actual`, in one transaction (`research.record_call`); the rest stays held for
+the next calls. Settling never refuses (the money was spent): a worker that lost its lease
+still records its call, then stops without writing results (`JobContext.confirm_lease` asks
+the database after every call and before every step).
+
+A call is written to the run's `usage` as **in flight** (`pending`, with its hold) before it is
+sent. If the worker dies (lease expiry) or is shut down (SIGTERM after the grace period)
+meanwhile, recovery charges that call at its hold (`lost`, `estimated`: OpenRouter may have
+billed it), releases the rest and requeues the run; a late answer from the old worker
+corrects the charge to the real cost. "Remove key" cancels running runs too; the worker
+re-checks the run and the key before every call.
+- Start-time check: `POST …/research` refuses up front (422 `spend_cap_reached`) when
+  `spent + reserved + the run's hold > cap`. Bulk `fits` counts the runs whose estimates
+  **plus the holds of the runs in flight at once** (`RAISEBOOK_WORKER_CONCURRENCY`) fit, best
+  fit first for a round; bulk requires `confirm_micros` ≥ the server's current estimate (else
+  409 `estimate_changed` with the new number) and fits as many runs as the remaining cap
+  allows only if the client sent `allow_partial: true`; otherwise 422 with "N of M fit under
+  your cap".
 - Cap edits apply immediately; lowering below `spent` just stops new calls.
 - Agent `save_dossier` costs Raisebook nothing and does not touch the ledger.
 
@@ -723,7 +739,7 @@ viewer: all GETs; editor / write key: research, identity pick, suggestions, prof
 prefill, save dossier; owner session only: key PUT/DELETE; admin: PATCH ai-settings.
 
 ### 6.8 Operator CLI (`rbctl research …`)
-`removals list [--status verified]`, `removals apply <id>` (enqueues `research.removal`),
+`removals list [--status verified]` (with `proof`), `removals apply <id> [--proof-checked]` (enqueues `research.removal`),
 `removals reject <id> --note`, `usage --workspace` (counts only). The removal job deletes, in
 every workspace, research rows whose anchor matches the request (`linkedin_key`, or
 `name_key` + firm when no LinkedIn was given): identities, candidates, dossiers + facts,
@@ -1028,7 +1044,8 @@ meeting offer; policy pages + docs; screenshots)
 1. **Removal scope**: removal deletes research-derived data everywhere and suppresses future
    research, but keeps founders' own contact rows (their address book). If the owner wants
    contacts deleted too, it is a one-function change in `research_removal.py`.
-2. **Verdict → fit mapping** Strong 4 / Possible 3 / Poor 1 (Hot stays human).
+2. **Verdict → fit mapping** Strong 4 / Possible 3 / Poor 1 (Hot stays human: Strong never
+   suggests lowering 5). Without a company profile the dossier is `unrated` and writes no fit.
 3. **Identity threshold** 0.80 with a 0.15 margin; tunable constant.
 4. **Workspace data sent to the writer** is limited to the investor's identity fields, its
    `warm_intro_by`/`source`, firm names of up to 50 committed/active investors (co-investor
@@ -1038,3 +1055,15 @@ meeting offer; policy pages + docs; screenshots)
    Claude Sonnet 5.5, Sonar + Gemini 3.8 Flash); verified on every key save, editable under
    Advanced.
 6. Deck PDFs are never stored beyond the prefill job (≤24 h worst case).
+7. **Contact details research writes unasked** (after the verification pass): an identity is
+   auto-matched only when its LinkedIn profile is among the search's citations and it cites
+   evidence; a firm website no citation backs is dropped. LinkedIn, website and email fill an
+   empty field automatically only when the confirmed identity vouches for them (a person's
+   pick or LinkedIn; an automatic match for its cited LinkedIn and a firm domain that carries
+   the firm's name); otherwise they are suggestions to accept. Agent identities must be the
+   same person (name, firm) and are never saved while "Is this them?" waits.
+8. **Removal proof**: confirming the emailed link proves only the mailbox. `rbctl research
+   removals list` shows `proof: strong|weak` (strong = the email is on the person's firm
+   domain); `apply` refuses weak proof without `--proof-checked`. The done email carries no
+   counts. Suppressions keep every LinkedIn and name+firm key the deleted research knew, and
+   are checked after the identity step, on identity candidates and on picks.

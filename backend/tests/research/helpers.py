@@ -207,8 +207,15 @@ def agent_doc(**over: Any) -> dict[str, Any]:
                 "key": "f2",
                 "section": "activity",
                 "kind": "deal",
-                "text": "Joined Kelpline's pre-seed; cell (415) 555-0142.",
+                "text": "Joined Kelpline's pre-seed.",
                 "date": "2026-05-02",
+                "source_ids": ["a2"],
+            },
+            {
+                "key": "f6",
+                "section": "profile",
+                "kind": "other",
+                "text": "Reach her cell (415) 555-0142.",
                 "source_ids": ["a2"],
             },
             {

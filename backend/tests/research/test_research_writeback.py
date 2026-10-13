@@ -67,7 +67,12 @@ async def test_fill_empty_suggest_conflicts_never_overwrite(
             await c.get("/v1/research/suggestions", params={"investor_id": str(w.inv.id)})
         ).json()["data"]
     }
-    assert set(pending) == {"title", "check_min", "check_max", "industries"}
+    # The agent's LinkedIn waits for a person even though the field was empty (an agent's
+    # identity is not trusted to write contact details unasked); its firm site matches the
+    # firm's name, so it was filled.
+    assert set(pending) == {"title", "check_min", "check_max", "industries", "linkedin_url"}
+    assert pending["linkedin_url"]["current_value"] is None
+    assert inv["website_url"] == "https://harborlight.example"
     assert pending["check_min"]["current_value"] == 50_000
     assert pending["industries"]["suggested_value"] == ["fintech", "robotics"]
     # A human edit removes the "from research" mark silently.
@@ -177,7 +182,8 @@ async def test_accept_all_shares_one_bulk_id(
     r = await c.post("/v1/research/suggestions/accept-all", json={"round": "seed"})
     assert r.status_code == 200, r.text
     out = r.json()
-    assert out["accepted"] == 2 and out["skipped"] == []  # check_max rode along with check_min
+    # title, check size (check_max rode along with check_min) and the agent's LinkedIn
+    assert out["accepted"] == 3 and out["skipped"] == []
     inv = (await c.get(f"/v1/investors/{w.inv.id}")).json()
     assert inv["title"] == "General Partner" and inv["check_max"] == 1_000_000
     acts = list(
@@ -189,5 +195,5 @@ async def test_accept_all_shares_one_bulk_id(
             )
         )
     )
-    assert len(acts) == 2
+    assert len(acts) == 3
     assert (await c.post("/v1/research/suggestions/accept-all", json={})).status_code == 422

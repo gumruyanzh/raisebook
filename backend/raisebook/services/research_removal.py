@@ -69,17 +69,27 @@ async def is_suppressed(
     investor: Investor,
     *,
     extra_linkedin: Sequence[str | None] = (),
+    extra_names: Sequence[tuple[str, str | None]] = (),
 ) -> bool:
+    """Did this person ask not to be researched? Checked against the investor row, its
+    identity (the anchor research found, which may differ from what the founder typed), and
+    any LinkedIn / name+firm about to become the identity."""
     keys = {k for k in (investor.linkedin_key, *(linkedin_key(u) for u in extra_linkedin)) if k}
-    ident_key = await db.scalar(
-        select(InvestorIdentity.linkedin_key).where(
-            InvestorIdentity.workspace_id == investor.workspace_id,
-            InvestorIdentity.investor_id == investor.id,
+    ident = (
+        await db.execute(
+            select(InvestorIdentity.linkedin_key, InvestorIdentity.firm).where(
+                InvestorIdentity.workspace_id == investor.workspace_id,
+                InvestorIdentity.investor_id == investor.id,
+            )
         )
-    )
-    if ident_key:
-        keys.add(ident_key)
-    conds: list[Any] = [ResearchSuppression.name_key == investor.name_key]
+    ).one_or_none()
+    names = {investor.name_key, *(name_key(n, f) for n, f in extra_names if n and f)}
+    if ident is not None:
+        if ident[0]:
+            keys.add(ident[0])
+        if ident[1]:
+            names.add(name_key(investor.name, ident[1]))
+    conds: list[Any] = [ResearchSuppression.name_key.in_(sorted(n for n in names if n))]
     if keys:
         conds.append(ResearchSuppression.linkedin_key.in_(sorted(keys)))
     h = email_hash(str(investor.email) if investor.email else None)
@@ -90,10 +100,44 @@ async def is_suppressed(
 
 
 async def require_not_suppressed(
-    db: AsyncSession, investor: Investor, *, extra_linkedin: Sequence[str | None] = ()
+    db: AsyncSession,
+    investor: Investor,
+    *,
+    extra_linkedin: Sequence[str | None] = (),
+    extra_names: Sequence[tuple[str, str | None]] = (),
 ) -> None:
-    if await is_suppressed(db, investor, extra_linkedin=extra_linkedin):
+    if await is_suppressed(db, investor, extra_linkedin=extra_linkedin, extra_names=extra_names):
         raise ResearchSuppressed(SUPPRESSED_MESSAGE)
+
+
+async def suppressed_people(
+    db: AsyncSession, people: Sequence[tuple[str | None, str | None, str | None]]
+) -> set[int]:
+    """Indexes of ``(linkedin_url, name, firm)`` that match a suppression (identity
+    candidates are dropped before anyone sees or picks them)."""
+    keys = {linkedin_key(u) for u, _, _ in people} - {None}
+    names = {name_key(n, f) for _, n, f in people if n and f}
+    conds: list[Any] = []
+    if keys:
+        conds.append(ResearchSuppression.linkedin_key.in_(sorted(k for k in keys if k)))
+    if names:
+        conds.append(ResearchSuppression.name_key.in_(sorted(names)))
+    if not conds:
+        return set()
+    rows = (
+        await db.execute(
+            select(ResearchSuppression.linkedin_key, ResearchSuppression.name_key).where(
+                or_(*conds)
+            )
+        )
+    ).all()
+    hit_keys = {r[0] for r in rows if r[0]}
+    hit_names = {r[1] for r in rows if r[1]}
+    return {
+        i
+        for i, (u, n, f) in enumerate(people)
+        if (linkedin_key(u) in hit_keys) or (n and f and name_key(n, f) in hit_names)
+    }
 
 
 async def suppressed_ids(db: AsyncSession, investors: Sequence[Investor]) -> set[UUID]:
@@ -123,14 +167,15 @@ def verification_email(to: str, link: str) -> OutboundEmail:
     )
 
 
-def done_email(to: str, counts: dict[str, int]) -> OutboundEmail:
-    total = sum(counts.values())
+def done_email(to: str) -> OutboundEmail:
+    # No counts: they would tell the requester whether (and how much) anyone researched
+    # the person named, which is exactly what a false requester would want to learn.
     return OutboundEmail(
         to=to,
         subject="Your Raisebook research removal is done",
         text=(
-            "We deleted the research Raisebook stored about you "
-            f"({total} records across all workspaces) and turned research about you off.\n\n"
+            "Any research Raisebook stored about you is deleted, and research about you is "
+            "turned off.\n\n"
             "Founders' own address-book entries (what they typed or imported themselves) are "
             "theirs and were not changed.\n\nhttps://raisebook.org/research-policy\n"
         ),
@@ -220,6 +265,16 @@ async def _get(db: AsyncSession, request_id: UUID) -> ResearchRemovalRequest:
     return row
 
 
+async def require_proof(db: AsyncSession, request_id: UUID, *, proof_checked: bool) -> None:
+    """Refuse to apply a request with ``weak`` proof unless the operator checked it."""
+    row = await db.get(ResearchRemovalRequest, request_id)
+    if row is None:
+        raise NotFound("Removal request not found.")
+    proof = await proof_of(db, row)
+    if proof["strength"] != "strong" and not proof_checked:
+        raise Conflict(str(proof["warning"]), details={"proof": proof})
+
+
 async def reject(db: AsyncSession, request_id: UUID, *, note: str, now: datetime) -> None:
     row = await _get(db, request_id)
     if row.status == RemovalStatus.APPLIED.value:
@@ -230,10 +285,62 @@ async def reject(db: AsyncSession, request_id: UUID, *, note: str, now: datetime
     await db.flush()
 
 
-async def enqueue_apply(db: AsyncSession, request_id: UUID, *, now: datetime) -> UUID:
+async def proof_of(db: AsyncSession, row: ResearchRemovalRequest) -> dict[str, Any]:
+    """How well the confirmed email ties the requester to the person named (for the operator).
+
+    Confirming the link proves only that the requester reads that mailbox. It is ``strong``
+    when the email is on the person's firm's domain (the firm given, or the firm domain of an
+    identity research found for that LinkedIn) or the request names nothing but that email;
+    otherwise ``weak``: anyone could have asked about someone else, so the operator checks
+    proof (for example, a reply from the person's work email) before applying."""
+    from raisebook.services.privacy_filter import CONSUMER_MAIL_DOMAINS
+    from raisebook.services.research_validate import domain_of, domain_resembles_firm
+
+    email = str(row.email).lower()
+    email_domain = email.rsplit("@", 1)[-1] if "@" in email else ""
+    consumer = email_domain in CONSUMER_MAIL_DOMAINS
+    lk = linkedin_key(row.linkedin_url)
+    matches: list[str] = []
+    if row.firm and not consumer and domain_resembles_firm(email_domain, row.firm):
+        matches.append("firm_name")
+    if lk and not consumer:
+        domains = (
+            await db.execute(
+                text(
+                    "SELECT DISTINCT ii.firm_domain, i.website_url FROM investors i"
+                    " LEFT JOIN investor_identities ii"
+                    "   ON ii.workspace_id = i.workspace_id AND ii.investor_id = i.id"
+                    " WHERE i.linkedin_key = :lk OR ii.linkedin_key = :lk LIMIT 50"
+                ),
+                {"lk": lk},
+            )
+        ).all()
+        for firm_domain, site in domains:
+            for d in (firm_domain, domain_of(site)):
+                if d and (email_domain == d or email_domain.endswith("." + d)):
+                    matches.append("firm_domain")
+    only_email = not lk and not row.firm
+    strength = "strong" if matches or only_email else "weak"
+    return {
+        "strength": strength,
+        "email_domain": email_domain,
+        "consumer_email": consumer,
+        "matches": sorted(set(matches)),
+        "warning": None
+        if strength == "strong"
+        else "The confirmed email is not on this person's firm domain, so it does not prove "
+        "the requester is the person named (it would delete research about them in every "
+        "workspace). Ask for proof, then apply with --proof-checked, or reject.",
+    }
+
+
+async def enqueue_apply(
+    db: AsyncSession, request_id: UUID, *, now: datetime, proof_checked: bool = False
+) -> UUID:
     row = await _get(db, request_id)
     if row.status != RemovalStatus.VERIFIED.value:
         raise Conflict(f"Only verified requests can be applied (this one is {row.status}).")
+    await require_proof(db, request_id, proof_checked=proof_checked)
     job_id, _ = await jobs_svc.enqueue(
         db,
         kind=jobs_svc.KIND_RESEARCH_REMOVAL,
@@ -300,6 +407,30 @@ async def apply_request(
         "activities": 0,
         "values_reset": 0,
     }
+    # Every key the targets were known by, collected before anything is reset or deleted:
+    # the reset below strips "from research" LinkedIn values and the identity rows go, so
+    # the suppression must carry the keys itself or research would find them again.
+    lk_all: set[str] = {lk} if lk else set()
+    nk_all: set[str] = {nk} if nk else set()
+    for ws_id, inv_id in targets:
+        known = (
+            await db.execute(
+                text(
+                    "SELECT i.linkedin_key, i.name_key, ii.linkedin_key, i.name, ii.firm"
+                    " FROM investors i LEFT JOIN investor_identities ii"
+                    "   ON ii.workspace_id = i.workspace_id AND ii.investor_id = i.id"
+                    " WHERE i.workspace_id = :ws AND i.id = :inv"
+                ),
+                {"ws": ws_id, "inv": inv_id},
+            )
+        ).one_or_none()
+        if known is None:
+            continue
+        lk_all.update(k for k in (known[0], known[2]) if k)
+        if known[1] and not known[1].endswith("|"):
+            nk_all.add(known[1])
+        if known[3] and known[4]:
+            nk_all.add(name_key(known[3], known[4]))
     for ws_id, inv_id in targets:
         p = {"ws": ws_id, "inv": inv_id}
         # Reset "from research" values nobody changed since (direct; no activity is written).
@@ -361,13 +492,17 @@ async def apply_request(
             created_at=now,
         )
     )
+    for extra_lk in sorted(lk_all - {lk}):
+        db.add(ResearchSuppression(linkedin_key=extra_lk, request_id=row.id, created_at=now))
+    for extra_nk in sorted(nk_all - {nk}):
+        db.add(ResearchSuppression(name_key=extra_nk, request_id=row.id, created_at=now))
     row.status = RemovalStatus.APPLIED.value
     row.decided_at = now
     row.applied_counts = counts
     await db.flush()
     log.warning("research_removal_applied", request_id=str(row.id), investors=counts["investors"])
     if sender is not None:
-        await sender.send(done_email(str(row.email), counts))
+        await sender.send(done_email(str(row.email)))
     return counts
 
 
@@ -384,9 +519,12 @@ async def purge(db: AsyncSession, *, now: datetime) -> int:
     return int(getattr(result, "rowcount", 0) or 0)
 
 
-def request_dict(row: ResearchRemovalRequest) -> dict[str, Any]:
+def request_dict(
+    row: ResearchRemovalRequest, proof: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """For the operator CLI (who asked, what they gave; never shown to workspaces)."""
     return {
+        **({"proof": proof} if proof is not None else {}),
         "id": str(row.id),
         "status": row.status,
         "name": row.name,

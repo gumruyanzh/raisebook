@@ -5,18 +5,23 @@ confidence is **recomputed here** from evidence, the model's own number being on
 
 | signal | points |
 |---|---|
-| a ``linkedin.com/in/…`` profile URL | +0.25 |
+| a ``linkedin.com/in/…`` profile URL **that the search cited** | +0.25 |
 | the name matches exactly (after normalization) / by initial or nickname | +0.35 / +0.2 |
 | the firm matches, or the firm site's domain equals the investor's website | +0.25 |
 | two or more independent citing domains | +0.1 |
 | the model's confidence | x 0.15 |
 
-Above :data:`IDENTITY_AUTO_THRESHOLD` (0.80) **and** at least 0.15 ahead of the runner-up →
-``matched`` (research proceeds and empty fields are filled). Otherwise ``needs_pick`` with the
-top 2-3 candidates ("Is this them?"); nothing scores 0.3 → ``not_found``. A person's pick is
-``confirmed`` (source ``user``); "None of these" is ``rejected`` until they enter a LinkedIn
-URL. An investor whose LinkedIn URL a person already entered is ``confirmed`` (source
-``existing``) without any model call.
+The model's ``linkedin_url`` and ``firm_website`` are free text (a page it read can inject
+them), so they are checked against the call's citations: a LinkedIn profile nobody cited earns
+nothing, and a firm website whose domain no citation is on is dropped from the candidate.
+
+Above :data:`IDENTITY_AUTO_THRESHOLD` (0.80) **and** at least 0.15 ahead of the runner-up
+**and** citing evidence → ``matched`` (research proceeds and empty fields are filled; contact
+fields only when :func:`trust_of` trusts them, else they become suggestions). Otherwise
+``needs_pick`` with the top 2-3 candidates ("Is this them?"); nothing scores 0.3 →
+``not_found``. A person's pick is ``confirmed`` (source ``user``); "None of these" is
+``rejected`` until they enter a LinkedIn URL. An investor whose LinkedIn URL a person
+already entered is ``confirmed`` (source ``existing``) without any model call.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ from raisebook.models.research import InvestorIdentity, InvestorIdentityCandidat
 from raisebook.services import activities
 from raisebook.services.normalize import clean_url, linkedin_key, norm, norm_firm
 from raisebook.services.openrouter import WebSource
-from raisebook.services.research_validate import Anchor, domain_of
+from raisebook.services.research_validate import Anchor, Trust, domain_of, domain_resembles_firm
 from raisebook.services.research_writeback import WritebackResult, apply_investor_fields
 
 IDENTITY_AUTO_THRESHOLD = 0.80
@@ -164,7 +169,7 @@ def parse_candidates(content: str) -> list[Candidate]:
     return out
 
 
-def _name_points(candidate: str, investor: str) -> float:
+def name_points(candidate: str, investor: str) -> float:
     a, b = norm(candidate).split(), norm(investor).split()
     if not a or not b:
         return 0.0
@@ -185,11 +190,27 @@ def _name_points(candidate: str, investor: str) -> float:
     return 0.0
 
 
+def _cited_linkedin(c: Candidate, sources: list[WebSource]) -> bool:
+    key = linkedin_key(c.linkedin_url)
+    return bool(key) and any(linkedin_key(s.url) == key for s in sources)
+
+
+def verify_against_sources(c: Candidate, investor: Investor, sources: list[WebSource]) -> None:
+    """Drop a firm website no citation backs (a page the model read may have injected it)."""
+    site = domain_of(c.firm_website)
+    if site is None:
+        return
+    own = domain_of(investor.website_url)
+    cited = {domain_of(s.url) for s in sources}
+    if site != own and not any(d and (d == site or d.endswith("." + site)) for d in cited):
+        c.firm_website = None
+
+
 def score(c: Candidate, investor: Investor, sources: list[WebSource]) -> float:
     points = 0.0
-    if linkedin_key(c.linkedin_url):
+    if _cited_linkedin(c, sources):
         points += 0.25
-    points += _name_points(c.name, investor.name)
+    points += name_points(c.name, investor.name)
     firm_ok = bool(investor.firm and c.firm and norm_firm(investor.firm) == norm_firm(c.firm))
     if not firm_ok and investor.website_url and c.firm_website:
         firm_ok = domain_of(investor.website_url) == domain_of(c.firm_website)
@@ -215,6 +236,7 @@ class Decision:
 
 def decide(candidates: list[Candidate], investor: Investor, sources: list[WebSource]) -> Decision:
     for c in candidates:
+        verify_against_sources(c, investor, sources)
         c.score = score(c, investor, sources)
     ranked = sorted(candidates, key=lambda c: c.score, reverse=True)
     shown = [c for c in ranked if c.score >= IDENTITY_MIN_SCORE][:3]
@@ -222,9 +244,28 @@ def decide(candidates: list[Candidate], investor: Investor, sources: list[WebSou
         return Decision(IdentityStatus.NOT_FOUND, [])
     top = shown[0]
     second = shown[1].score if len(shown) > 1 else 0.0
-    if top.score >= IDENTITY_AUTO_THRESHOLD and top.score - second >= IDENTITY_MARGIN:
+    evidenced = any(1 <= i <= len(sources) for i in top.evidence) and _cited_linkedin(top, sources)
+    if evidenced and top.score >= IDENTITY_AUTO_THRESHOLD and top.score - second >= IDENTITY_MARGIN:
         return Decision(IdentityStatus.MATCHED, shown, top)
     return Decision(IdentityStatus.NEEDS_PICK, shown)
+
+
+def trust_of(identity: InvestorIdentity | None, investor: Investor) -> Trust:
+    """Which identity fields research may write into the investor without a person's click.
+
+    A person's pick or LinkedIn (sources ``user`` / ``existing``) is trusted. An automatic
+    match is trusted for its LinkedIn (it must be cited to match) and for a firm domain that
+    looks like the firm's name; an agent's identity only for that firm domain. Anything else
+    becomes a suggestion to accept, even into an empty field."""
+    if identity is None or identity.status not in ANCHORED:
+        return Trust()
+    if identity.source in (IdentitySource.USER.value, IdentitySource.EXISTING.value):
+        return Trust(linkedin=True, domain=True)
+    firm = identity.firm or investor.firm
+    domain_ok = domain_resembles_firm(identity.firm_domain, firm)
+    if identity.source == IdentitySource.AUTO.value:
+        return Trust(linkedin=True, domain=domain_ok)
+    return Trust(linkedin=False, domain=domain_ok)
 
 
 # --- storage -------------------------------------------------------------------------------------
@@ -324,7 +365,13 @@ async def write_back_identity(
     log_activity: bool = True,
 ) -> WritebackResult:
     """Fill the investor's empty LinkedIn / website / title / firm from the anchor (R3, R7)
-    and log one ``research`` activity ("Identity confirmed: <title>, <firm>")."""
+    and log one ``research`` activity ("Identity confirmed: <title>, <firm>"). A LinkedIn or
+    website :func:`trust_of` does not trust becomes a suggestion instead."""
+    trust = trust_of(row, investor)
+    review = {
+        *(() if trust.linkedin else ("linkedin_url",)),
+        *(() if trust.domain else ("website_url",)),
+    }
     result = await apply_investor_fields(
         db,
         ws,
@@ -337,6 +384,7 @@ async def write_back_identity(
         },
         now=now,
         run_id=run_id,
+        review=review,
     )
     if log_activity:
         what = ", ".join(p for p in (row.title, row.firm) if p) or "identity confirmed"
@@ -481,7 +529,10 @@ async def pick(
     firm_website: str | None = None,
     title: str | None = None,
 ) -> InvestorIdentity:
-    """A person (or agent) decides: a candidate, "none of these", or a LinkedIn URL."""
+    """A person (or agent) decides: a candidate, "none of these", or a LinkedIn URL. Someone
+    who asked not to be researched (R13) cannot be picked (409 ``research_suppressed``)."""
+    from raisebook.services import research_removal as removal_svc
+
     row = await ensure_identity(db, ws, investor.id, now)
     if none:
         row.status = IdentityStatus.REJECTED.value
@@ -499,6 +550,7 @@ async def pick(
                 "linkedin_url", "Use a LinkedIn profile URL like https://www.linkedin.com/in/…"
             )
         site = clean_url(firm_website, "firm_website") if firm_website else None
+        await removal_svc.require_not_suppressed(db, investor, extra_linkedin=[url])
         _set_anchor(
             row,
             status=IdentityStatus.CONFIRMED,
@@ -525,6 +577,12 @@ async def pick(
         )
         if chosen is None:
             raise not_found("Identity candidate")
+        await removal_svc.require_not_suppressed(
+            db,
+            investor,
+            extra_linkedin=[chosen.linkedin_url],
+            extra_names=[(chosen.name, chosen.firm)],
+        )
         for c in cands:
             c.picked = c.id == chosen.id
         _set_anchor(
