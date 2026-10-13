@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.core.ratelimit import LIMITS, Limit
-from raisebook.mcp.server import SERVER_INSTRUCTIONS
+from raisebook.mcp.server import server_instructions
 from raisebook.mcp.tools import TOOL_MODULES
 from tests.factories import make_api_key, make_investor, make_workspace
 
@@ -57,7 +57,7 @@ async def test_initialize_and_instructions(db: AsyncSession, mcp_rpc: Any) -> No
     assert r.status_code == 200, r.text
     result = r.json()["result"]
     assert result["serverInfo"]["name"] == "raisebook"
-    assert result["instructions"] == SERVER_INSTRUCTIONS
+    assert result["instructions"] == server_instructions()
     assert result["instructions"].startswith("Raisebook is the founder's fundraising CRM")
     assert "import_investors_csv defaults to dry_run=true" in result["instructions"]
 

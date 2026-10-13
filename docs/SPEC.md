@@ -70,7 +70,8 @@ check the promise in the code.
   and keyboard), Table (sort, filter), Investor sheet. Round overview page. Investors directory
   and investor page.
 - Workspace API keys with scopes, a REST API under `/v1` with OpenAPI, and an MCP server at
-  `/mcp` with the 22 tools in §6 (17 + the 5 research tools of §6.7). Rate limits per key.
+  `/mcp` with the 17 tools in §6 (plus the 5 research tools of §6.7, unreleased and served
+  only with `RAISEBOOK_RESEARCH_ENABLED`). Rate limits per key.
 - CSV import (mapping, preview, dedupe), CSV and JSON export, prototype JSON import (should
   have, built after CSV).
 - Sample (sandbox) workspace with fictional data.
@@ -285,7 +286,7 @@ CREATE INDEX ix_api_keys_workspace ON api_keys (workspace_id);
 
 Rules enforced in services:
 - Workspace slug: `slugify(name)[:43] + "-" + 4 random lowercase base32 chars` (for example
-  `qenzo-k7p2`), generated once and never changed. The random suffix means a slug never reveals
+  `tallow-k7p2`), generated once and never changed. The random suffix means a slug never reveals
   that another workspace with the same name exists.
 - `api_keys.mode` must match the workspace: `test` keys only for `is_sandbox` workspaces,
   `live` keys only for real ones. `raisebook:admin` requires `raisebook:write`.

@@ -24,6 +24,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RAISEBOOK_ENVIRONMENT", "RAISEBOOK_ENV", "environment"),
     )
     log_level: str = "INFO"
+    # The commit the image was built from (build arg GIT_SHA); /healthz reports it.
+    git_sha: str | None = None
     log_json: bool = True
 
     # Database (asyncpg URL; plain postgresql:// is normalised in core.database).
@@ -73,8 +75,17 @@ class Settings(BaseSettings):
 
     # Rate limits (SPEC §7).
     rate_limit_backend: Literal["postgres", "memory", "off"] = "postgres"
+    # Operator overrides (unset = the defaults in core/ratelimit.LIMITS): sign-in links per
+    # client IP per hour (raise it for an event on shared Wi-Fi), and all outbound email per
+    # hour across the server (keep it under the email provider's plan).
+    magic_links_per_ip_hour: int | None = Field(None, ge=1)
+    email_global_per_hour: int | None = Field(None, ge=1)
 
-    # Investor research (docs/RESEARCH-PLAN.md). The KEK seals each workspace's OpenRouter
+    # Investor research (docs/RESEARCH-PLAN.md) is unfinished and off by default: with
+    # ``RAISEBOOK_RESEARCH_ENABLED`` unset, its REST routes, MCP tools and the research line of
+    # the MCP instructions are not served at all (the public surface is the 17 core tools).
+    research_enabled: bool = False
+    # The KEK seals each workspace's OpenRouter
     # key: ``<kek_id>:<base64url of 32 bytes>`` (or bare base64url, id ``k1``). Unset = research
     # is unavailable; the rest of the app works. ``_PREVIOUS`` opens keys sealed before a
     # rotation (``rbctl secrets rotate`` re-wraps them under the current KEK).

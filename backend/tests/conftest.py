@@ -47,6 +47,9 @@ os.environ.update(
         "RAISEBOOK_SESSION_COOKIE_SECURE": "false",
         "RAISEBOOK_PUBLIC_BASE_URL": "http://localhost:8000",
         "RAISEBOOK_APP_URL": "http://localhost:3000",
+        # The research suites need the (off-by-default) feature on; test_research_flag.py
+        # builds an app with it off.
+        "RAISEBOOK_RESEARCH_ENABLED": "true",
         # A throwaway KEK per test run (never a real one): seals OpenRouter keys in tests.
         "RAISEBOOK_SECRETS_KEK": "k1:" + base64.urlsafe_b64encode(os.urandom(32)).decode(),
         "RAISEBOOK_OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",

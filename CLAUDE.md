@@ -4,9 +4,10 @@ Raisebook (raisebook.org) is a free-forever, open-source (AGPL-3.0) fundraising 
 founders, with a first-class MCP server. Spec: `docs/SPEC.md`. Its **§0 decisions block
 overrides the rest**: the package is `raisebook`, the env prefix is `RAISEBOOK_*`, the CLI is
 `rbctl`, keys are `rb_live_` / `rb_test_`, and the scopes are `raisebook:read|write|admin`.
-Design rules: `design/SYSTEM.md` (binding). Who edits what: `docs/OWNERSHIP.md`. Hosting is
-undecided, so never deploy and never touch DNS. The repo is private until launch, and you do
-not push unless asked.
+Design rules: `design/SYSTEM.md` (binding). Who edits what: `docs/OWNERSHIP.md`. raisebook.org
+is live on one DigitalOcean droplet (`docs/DEPLOY.md`); only the owner deploys, so never deploy
+and never touch DNS. The repo is public (github.com/gumruyanzh/raisebook); you do not push
+unless asked.
 
 ## Layout
 - `backend/` is the Python 3.12 project, managed by uv. The package is `backend/raisebook/`
@@ -35,7 +36,7 @@ RAISEBOOK_ENV=dev uv run uvicorn --factory raisebook.main:create_app --reload   
 uv run rbctl worker    # background jobs (research), beside uvicorn; --once drains and exits
 uv run rbctl --help    # workspace | apikey | seed-demo --email | housekeeping | worker | secrets
 ```
-Research needs `RAISEBOOK_SECRETS_KEK` (`uv run rbctl secrets gen-kek`); without it the app
+Research needs `RAISEBOOK_RESEARCH_ENABLED=true` and `RAISEBOOK_SECRETS_KEK` (`uv run rbctl secrets gen-kek`); without it the app
 works and research reports `research_unavailable`. Never point dev at real OpenRouter money:
 run `uv run python scripts/mock_openrouter.py --port 8787` and set
 `RAISEBOOK_OPENROUTER_BASE_URL=http://localhost:8787/api/v1` for both uvicorn and the worker
@@ -200,6 +201,11 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   amount, recency by stage kind). Drag a card onto a column to move it; §5.5 keys still work.
 
 ## Investor research, Part 1 foundation (spec `docs/RESEARCH-SPEC.md`, plan `docs/RESEARCH-PLAN.md`)
+- **Unreleased and off by default.** Only `RAISEBOOK_RESEARCH_ENABLED=true` serves its REST
+  modules (`api/router.RESEARCH_API_MODULES`), its MCP tools (`mcp/tools.RESEARCH_TOOL_MODULES`)
+  and the research line of the MCP instructions. With it off the MCP surface is the 17 tools
+  every public page promises (`tests/test_research_flag.py`). Never mention research on a
+  public page, the README or the changelog until it ships. Tests run with the flag on.
 - Migration `0003_research` holds every research table. Public facts (`research_sources`,
   `investor_identities`, `investor_identity_candidates`, `dossier_facts`) stay apart from
   private analysis (`dossiers`, `research_runs`, `field_suggestions`). Composite

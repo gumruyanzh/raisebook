@@ -22,12 +22,6 @@ API_MODULES: list[str] = [
     "raisebook.api.members",
     "raisebook.api.invites",
     "raisebook.api.api_keys",
-    # Investor research (docs/RESEARCH-PLAN.md): settings and company profile (Part 1).
-    "raisebook.api.ai_settings",
-    "raisebook.api.company_profile",
-    # Investor research, Part 2: runs, identities, dossiers, suggestions; the Research Policy.
-    "raisebook.api.research",
-    "raisebook.api.research_policy",
     # Import-Export+Ops (IE)
     "raisebook.api.imports",
     "raisebook.api.exports",
@@ -39,9 +33,28 @@ API_MODULES: list[str] = [
     "raisebook.api.follow_ups",
 ]
 
+# Investor research (docs/RESEARCH-PLAN.md), served only with ``RAISEBOOK_RESEARCH_ENABLED``:
+# settings and company profile (Part 1); runs, identities, dossiers, suggestions and the
+# Research Policy (Part 2).
+RESEARCH_API_MODULES: list[str] = [
+    "raisebook.api.ai_settings",
+    "raisebook.api.company_profile",
+    "raisebook.api.research",
+    "raisebook.api.research_policy",
+]
+
+
+def enabled_api_modules() -> list[str]:
+    from raisebook.config import get_settings
+
+    if get_settings().research_enabled:
+        # Before imports/investors, as before: literal paths win over ``{investor_id}``.
+        return API_MODULES[:7] + RESEARCH_API_MODULES + API_MODULES[7:]
+    return list(API_MODULES)
+
 
 def include_api_routers(app: FastAPI, modules: list[str] | None = None) -> None:
-    for name in modules if modules is not None else API_MODULES:
+    for name in modules if modules is not None else enabled_api_modules():
         module = importlib.import_module(name)
         router = getattr(module, "router", None)
         if not isinstance(router, APIRouter):

@@ -1,5 +1,10 @@
 # Investor Research — agreed spec (owner-approved 2026-10-13)
 
+> **Not shipped.** Investor research is an unreleased design in progress. It is off by default
+> (`RAISEBOOK_RESEARCH_ENABLED`), raisebook.org does not run it, and nothing here describes how
+> the live service handles your data today; the [privacy page](https://raisebook.org/privacy)
+> does. If research ships, the privacy page changes first.
+
 Owner decisions from the grilling session. Binding; deviations need the owner.
 
 1. **Output = full dossier** per investor.

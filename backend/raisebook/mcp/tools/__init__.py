@@ -16,14 +16,23 @@ TOOL_MODULES: list[str] = [
     "raisebook.mcp.tools.investors",  # AM: search_investors, get_investor, add/update_investor
     "raisebook.mcp.tools.pipeline",  # AM: add_to_round, move_stage, log_activity, …
     "raisebook.mcp.tools.data",  # IE: import_investors_csv, export_round
-    # Investor research (RESEARCH-PLAN §7): get_dossier, list_research_runs,
-    # research_investor, match_identity, save_dossier
-    "raisebook.mcp.tools.research",
 ]
+
+# Investor research (RESEARCH-PLAN §7): get_dossier, list_research_runs, research_investor,
+# match_identity, save_dossier. Registered only with ``RAISEBOOK_RESEARCH_ENABLED``.
+RESEARCH_TOOL_MODULES: list[str] = ["raisebook.mcp.tools.research"]
+
+
+def enabled_tool_modules() -> list[str]:
+    from raisebook.config import get_settings
+
+    if get_settings().research_enabled:
+        return TOOL_MODULES + RESEARCH_TOOL_MODULES
+    return list(TOOL_MODULES)
 
 
 def register_tools(server: FastMCP) -> None:
-    for name in TOOL_MODULES:
+    for name in enabled_tool_modules():
         module = importlib.import_module(name)
         register = getattr(module, "register", None)
         if not callable(register):

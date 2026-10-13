@@ -1,5 +1,10 @@
 # Investor Research: build plan
 
+> **Not shipped.** Investor research is an unreleased design in progress. It is off by default
+> (`RAISEBOOK_RESEARCH_ENABLED`), raisebook.org does not run it, and nothing here describes how
+> the live service handles your data today; the [privacy page](https://raisebook.org/privacy)
+> does. If research ships, the privacy page changes first.
+
 Implements `docs/RESEARCH-SPEC.md` (owner-approved 2026-10-13, 13 decisions, binding). Where
 this plan and the spec disagree, the spec wins. Spec decisions are cited as **R1..R13**; the
 "engineering defaults" paragraph as **RE**. Repo rules (`CLAUDE.md`, `docs/SPEC.md` §0,
