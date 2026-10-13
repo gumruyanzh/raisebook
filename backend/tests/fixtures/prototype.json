@@ -25,7 +25,7 @@
       "qFit": 5,
       "eFit": 2,
       "p": {
-        "qenzo": {"stage": "dd", "followUp": "2026-10-15", "amount": 0, "notes": "Wants the data room.",
+        "tallow": {"stage": "dd", "followUp": "2026-10-15", "amount": 0, "notes": "Wants the data room.",
                   "log": [{"d": "2026-10-01", "t": "Intro call went well."}, {"d": "2026-10-05", "t": "Sent the deck."}]},
         "elixion": {"stage": "passed"}
       }
@@ -37,13 +37,13 @@
       "tags": "operator",
       "linkedin": "https://www.linkedin.com/search/results/all/?keywords=marcus",
       "qFit": 4,
-      "p": {"qenzo": {"stage": "committed", "amount": 50000}}
+      "p": {"tallow": {"stage": "committed", "amount": 50000}}
     },
     {
       "name": "Ines Calloway",
       "type": "Syndicate",
       "qFit": 3,
-      "p": {"qenzo": {"stage": "Meeting"}}
+      "p": {"tallow": {"stage": "Meeting"}}
     },
     "not an object"
   ]

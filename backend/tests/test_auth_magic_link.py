@@ -159,7 +159,7 @@ async def test_no_dev_link_outside_local_dev(
 
 
 async def test_verify_accepts_attached_invite(client: httpx.AsyncClient, db: AsyncSession) -> None:
-    ws = await make_workspace(db, name="Qenzo")
+    ws = await make_workspace(db, name="Tallow")
     inv, raw = await make_invite(db, ws, email="cofounder@example.com", role="editor")
     link = (await request_link(client, "cofounder@example.com", invite_token=raw)).json()[
         "dev_link"

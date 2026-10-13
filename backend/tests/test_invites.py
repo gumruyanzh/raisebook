@@ -23,7 +23,7 @@ from tests.factories import (
 
 
 async def owner_client(db: AsyncSession, session_client: Any) -> tuple[Any, Any, Any]:
-    ws = await make_workspace(db, name="Qenzo")
+    ws = await make_workspace(db, name="Tallow")
     owner = await owner_of(db, ws)
     return ws, owner, await session_client(owner, ws)
 
@@ -40,7 +40,7 @@ async def test_owner_invites_and_email_is_sent(
     assert body["dev_link"].startswith("http://localhost:3000/invite/")
     assert len(outbox) == 1 and outbox[0].to == "cofounder@example.com"
     assert outbox[0].subject == "You're invited to a workspace on Raisebook"
-    assert '"Qenzo"' in outbox[0].text and body["dev_link"] in outbox[0].text
+    assert '"Tallow"' in outbox[0].text and body["dev_link"] in outbox[0].text
     listed = (await c.get("/v1/invites")).json()["data"]
     assert [i["id"] for i in listed] == [body["id"]] and "dev_link" not in listed[0]
 
@@ -95,13 +95,13 @@ async def test_only_owner_session_invites(
 
 
 async def test_lookup(db: AsyncSession, client: httpx.AsyncClient, frozen_now: Any) -> None:
-    ws = await make_workspace(db, name="Qenzo")
+    ws = await make_workspace(db, name="Tallow")
     owner = await owner_of(db, ws)
     _, raw = await make_invite(db, ws, email="dana@example.com", invited_by=owner, role="viewer")
     r = await client.get("/v1/invites/lookup", params={"token": raw})
     assert r.status_code == 200
     assert r.json() == {
-        "workspace_name": "Qenzo",
+        "workspace_name": "Tallow",
         "inviter_name": owner.name,
         "email_hint": "d***@example.com",
         "role": "viewer",

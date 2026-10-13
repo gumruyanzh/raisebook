@@ -457,7 +457,7 @@ async def test_prototype_json(db: AsyncSession, frozen_now: Any) -> None:
     req = ImportRequest(
         format="prototype_json",
         content=content,
-        round_map=[RoundMapEntry(source_key="qenzo", round="Seed", fit_field="qFit")],
+        round_map=[RoundMapEntry(source_key="tallow", round="Seed", fit_field="qFit")],
     )
     pv = await imports.preview(db, ctx, req)
     assert [r.action for r in pv.rows] == ["create", "create", "create", "error"]
@@ -520,7 +520,7 @@ async def test_prototype_json(db: AsyncSession, frozen_now: Any) -> None:
 async def test_prototype_round_shortcut_and_ambiguity(db: AsyncSession, frozen_now: Any) -> None:
     ws, _, ctx = await setup_ws(db)
     await make_round(db, ws, name="Seed")
-    one = json.dumps([{"name": "Dana Whitfield", "p": {"qenzo": {"stage": "meeting"}}}])
+    one = json.dumps([{"name": "Dana Whitfield", "p": {"tallow": {"stage": "meeting"}}}])
     pv = await imports.preview(
         db, ctx, ImportRequest(format="prototype_json", content=one, round="Seed")
     )

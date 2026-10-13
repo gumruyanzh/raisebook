@@ -130,7 +130,7 @@ async def test_session_expiry_slides(
 
 async def test_workspace_selection(db: AsyncSession, session_client: Any) -> None:
     user = await make_user(db)
-    ws1 = await make_workspace(db, owner=user, name="Qenzo")
+    ws1 = await make_workspace(db, owner=user, name="Tallow")
     # Exactly one workspace: no header needed.
     c = await session_client(user)
     r = await c.get("/v1/workspace")

@@ -29,7 +29,7 @@ class World:
 async def world(
     db: AsyncSession,
     *,
-    name: str = "Qenzo Test",
+    name: str = "Tallow Test",
     timezone: str = "UTC",
     round_name: str = "Seed",
     agent_name: str | None = None,

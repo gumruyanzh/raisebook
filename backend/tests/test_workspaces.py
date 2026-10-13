@@ -25,14 +25,14 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$")
 
 
 def test_slugify_and_slug_shape() -> None:
-    assert slugify("Qenzo, Inc.") == "qenzo-inc"
+    assert slugify("Tallow, Inc.") == "tallow-inc"
     assert slugify("Café & Co") == "cafe-and-co"
-    for name in ("Qenzo", "x", "", "!!!", "A" * 200, "Ünïcödé Robotics"):
+    for name in ("Tallow", "x", "", "!!!", "A" * 200, "Ünïcödé Robotics"):
         slug = new_workspace_slug(name)
         assert SLUG_RE.match(slug), slug
         assert re.search(r"-[a-z2-7]{4}$", slug)
-    assert new_workspace_slug("Qenzo").startswith("qenzo-")
-    assert new_workspace_slug("Qenzo") != new_workspace_slug("Qenzo")
+    assert new_workspace_slug("Tallow").startswith("tallow-")
+    assert new_workspace_slug("Tallow") != new_workspace_slug("Tallow")
 
 
 async def test_create_and_list(db: AsyncSession, session_client: Any, frozen_now: Any) -> None:
@@ -40,12 +40,12 @@ async def test_create_and_list(db: AsyncSession, session_client: Any, frozen_now
     c = await session_client(user)
     r = await c.post(
         "/v1/workspaces",
-        json={"name": "  Qenzo  ", "timezone": "America/Los_Angeles", "default_currency": "eur"},
+        json={"name": "  Tallow  ", "timezone": "America/Los_Angeles", "default_currency": "eur"},
     )
     assert r.status_code == 201, r.text
     ws = r.json()
-    assert ws["name"] == "Qenzo" and ws["role"] == "owner" and ws["is_sandbox"] is False
-    assert ws["slug"].startswith("qenzo-") and SLUG_RE.match(ws["slug"])
+    assert ws["name"] == "Tallow" and ws["role"] == "owner" and ws["is_sandbox"] is False
+    assert ws["slug"].startswith("tallow-") and SLUG_RE.match(ws["slug"])
     assert ws["timezone"] == "America/Los_Angeles" and ws["default_currency"] == "EUR"
     assert ws["created_at"] == "2026-10-12T17:00:00Z"
     m = await db.get(Membership, (ws["id"], user.id))
@@ -77,7 +77,7 @@ async def test_create_validation(db: AsyncSession, session_client: Any) -> None:
 async def test_get_workspace_for_session_and_key(
     db: AsyncSession, session_client: Any, key_client: Any
 ) -> None:
-    ws = await make_workspace(db, name="Qenzo")
+    ws = await make_workspace(db, name="Tallow")
     owner = await owner_of(db, ws)
     body = (await (await session_client(owner, ws)).get("/v1/workspace")).json()
     assert body["you"] == {
