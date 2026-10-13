@@ -70,7 +70,14 @@ async def test_import_dry_run_then_commit(db: AsyncSession, mcp_call: Any, froze
     r = await mcp_call(raw, "import_investors_csv", {"csv": CSV, "round": "Seed"}, AGENT)
     assert r.ok, r.text
     assert r.data["dry_run"] is True
-    assert r.data["counts"] == {"create": 2, "update": 0, "skip": 0, "error": 1, "add_to_round": 2}
+    assert r.data["counts"] == {
+        "create": 2,
+        "update": 0,
+        "skip": 0,
+        "error": 1,
+        "add_to_round": 2,
+        "cells_left_empty": 0,
+    }
     assert "dry_run=false" in r.data["next"]
     assert await n_investors(db, ws) == 0
     assert await db.scalar(select(func.count()).select_from(ImportRun)) == 0
@@ -161,3 +168,25 @@ async def test_export_round_errors(
     r = await mcp_call(raw, "export_round", {"round": "seed", "format": "csv"})
     assert not r.ok and r.code == "payload_too_large"
     assert "/v1/rounds/seed/export?format=csv" in r.message
+
+
+async def test_import_reports_left_empty_cells_like_rest(
+    db: AsyncSession, mcp_call: Any, key_client: Any, frozen_now: Any
+) -> None:
+    """P0-6 over MCP: the same rows import, with the same counts and warning kinds as REST."""
+    from tests.services.test_imports import MESSY
+
+    ws = await make_workspace(db)
+    await make_round(db, ws, name="Seed")
+    _, raw = await make_api_key(db, ws, scopes="read,write", agent_name="research-bot")
+    r = await mcp_call(raw, "import_investors_csv", {"csv": MESSY, "round": "Seed"}, AGENT)
+    assert r.ok, r.text
+    rest = await key_client(raw).post(
+        "/v1/imports/preview", json={"content": MESSY, "round": "Seed"}
+    )
+    assert rest.status_code == 200, rest.text
+    assert r.data["counts"] == rest.json()["counts"]
+    assert r.data["warning_kinds"] == rest.json()["warning_kinds"]
+    assert r.data["counts"]["error"] == 1 and r.data["counts"]["cells_left_empty"] == 6
+    flagged = {row["row"] for row in r.data["rows"] if row.get("warnings")}
+    assert flagged == {2, 3, 4}

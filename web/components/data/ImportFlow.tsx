@@ -34,6 +34,7 @@ import {
   previewImport,
   prototypeRoundKeys,
   runImport,
+  WARNING_KIND_LABEL,
   type ImportField,
   type ImportPreview,
   type ImportRequest,
@@ -363,14 +364,21 @@ function importable(p: ImportPreview): number {
   return p.counts.create + p.counts.update + p.counts.add_to_round;
 }
 
-/** "Import 2 new investors, update 1" — says what the click writes, never counts skipped rows. */
+/**
+ * "Import 390 · 20 duplicates skipped · 74 cells left empty": what the click writes, then
+ * what it will not (UX-PASS-1 P0-6), so the label matches the counts above it.
+ */
 function importLabel(p: ImportPreview): string {
   const c = p.counts;
-  const parts: string[] = [];
-  if (c.create) parts.push(plural(c.create, "new investor"));
-  if (c.update) parts.push(`update ${num(c.update)}`);
-  if (!parts.length) return c.add_to_round ? `Add ${plural(c.add_to_round, "investor")} to the round` : "Nothing to import";
-  return `Import ${parts.join(", ")}`;
+  const n = c.create + c.update;
+  const extra: string[] = [];
+  if (c.skip) extra.push(`${num(c.skip)} ${c.skip === 1 ? "duplicate" : "duplicates"} skipped`);
+  if (c.cells_left_empty) extra.push(`${num(c.cells_left_empty)} ${c.cells_left_empty === 1 ? "cell" : "cells"} left empty`);
+  if (!n) {
+    if (!c.add_to_round) return "Nothing to import";
+    return [`Add ${plural(c.add_to_round, "investor")} to the round`, ...extra].join(" · ");
+  }
+  return [`Import ${num(n)}`, ...extra].join(" · ");
 }
 
 function roundNameFromMap(m: Record<string, { round: string }>, rounds: Round[]): string | undefined {
@@ -546,16 +554,30 @@ function CountsStrip({ preview, roundName }: { preview: ImportPreview; roundName
     ["Errors", c.error, c.error ? "text-bad" : "text-fg"],
   ];
   if (roundName) items.push([`Add to ${roundName}`, c.add_to_round, "text-fg"]);
+  const kinds = Object.entries(preview.warning_kinds ?? {}).filter(([, n]) => n > 0);
   return (
-    <p className="t-data flex flex-wrap gap-x-10 gap-y-4 rounded-md border border-line bg-surface px-14 py-10">
-      {items.map(([label, n, tone], i) => (
-        <span key={label} className="whitespace-nowrap">
-          {i > 0 ? <span aria-hidden className="mr-10 text-muted">·</span> : null}
-          <span className="text-muted">{label} </span>
-          <b className={cn("font-medium", tone)}>{num(n)}</b>
-        </span>
-      ))}
-    </p>
+    <div className="flex flex-col gap-6">
+      <p className="t-data flex flex-wrap gap-x-10 gap-y-4 rounded-md border border-line bg-surface px-14 py-10">
+        {items.map(([label, n, tone], i) => (
+          <span key={label} className="whitespace-nowrap">
+            {i > 0 ? <span aria-hidden className="mr-10 text-muted">·</span> : null}
+            <span className="text-muted">{label} </span>
+            <b className={cn("font-medium", tone)}>{num(n)}</b>
+          </span>
+        ))}
+      </p>
+      {kinds.length ? (
+        <p className="t-body-s text-warm-ink">
+          {kinds
+            .map(([k, n]) => {
+              const [one, many] = WARNING_KIND_LABEL[k] ?? WARNING_KIND_LABEL.value_invalid!;
+              return `${num(n)} ${n === 1 ? one : many}`;
+            })
+            .join(" · ")}
+          . Those cells stay empty; the rows still import.
+        </p>
+      ) : null}
+    </div>
   );
 }
 

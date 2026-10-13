@@ -100,29 +100,38 @@ async def test_preview_auto_maps_and_writes_nothing(db: AsyncSession, frozen_now
     assert pv.row_count == 8
     actions = {r.row: r.action for r in pv.rows}
     # rows: 2 Dana, 3 Marcus, 4 Ines, 5 DANA (dup of row 2), 6 no name, 7 bad email,
-    # 8 fit 9, 9 Helena
+    # 8 fit 9, 9 Helena. Only the nameless row is an error (P0-6): a bad optional cell is
+    # left empty with a warning and the row imports.
     assert actions == {
         2: "create",
         3: "create",
         4: "create",
         5: "skip",
         6: "error",
-        7: "error",
-        8: "error",
+        7: "create",
+        8: "create",
         9: "create",
     }
     assert pv.counts.model_dump() == {
-        "create": 4,
+        "create": 6,
         "update": 0,
         "skip": 1,
-        "error": 3,
-        "add_to_round": 4,
+        "error": 1,
+        "add_to_round": 6,
+        "cells_left_empty": 2,
     }
+    assert pv.warning_kinds == {"email_invalid": 1, "fit_invalid": 1}
+    priya = next(r for r in pv.rows if r.row == 7)
+    assert "email" not in priya.investor
+    assert any(w.startswith("email left empty: 'not-an-email'") for w in priya.warnings)
+    tomas = next(r for r in pv.rows if r.row == 8)
+    assert tomas.participant is not None and tomas.participant.fit is None
+    assert any(w.startswith("fit left empty: '9'") for w in tomas.warnings)
     dup = next(r for r in pv.rows if r.row == 5)
     assert dup.match is not None
     assert dup.match.row == 2 and dup.match.matched_on == "email" and dup.match.investor_id is None
     errs = {r.row: [e.field for e in r.errors] for r in pv.rows if r.errors}
-    assert errs == {6: ["name"], 7: ["email"], 8: ["fit"]}
+    assert errs == {6: ["name"]}
     dana = next(r for r in pv.rows if r.row == 2)
     assert dana.participant is not None
     assert dana.participant.stage == "meeting" and dana.participant.fit == 5
@@ -147,15 +156,17 @@ async def test_commit_creates_with_activities_and_run(db: AsyncSession, frozen_n
     )
     assert res.counts.model_dump() == {
         "rows": 8,
-        "created": 4,
+        "created": 6,
         "updated": 0,
         "skipped": 1,
-        "errors": 3,
-        "added_to_round": 4,
+        "errors": 1,
+        "added_to_round": 6,
+        "cells_left_empty": 2,
     }
-    assert {(e.row, e.field) for e in res.errors} == {(6, "name"), (7, "email"), (8, "fit")}
+    assert {(e.row, e.field) for e in res.errors} == {(6, "name")}
+    assert res.warning_kinds == {"email_invalid": 1, "fit_invalid": 1}
     assert res.round == {"id": str(rnd.id), "slug": "seed", "name": "Seed"}
-    assert await n_investors(db, ws) == 4
+    assert await n_investors(db, ws) == 6
 
     dana = await investor_by_email(db, ws, "dana@example.com")
     assert dana.firm == "Harbor Light Ventures" and dana.type == "vc"
@@ -173,7 +184,7 @@ async def test_commit_creates_with_activities_and_run(db: AsyncSession, frozen_n
     assert run is not None
     assert run.workspace_id == ws.id and run.round_id == rnd.id and run.filename == "list.csv"
     assert run.actor_type == "user" and run.actor_user_id == owner.id
-    assert run.counts["created"] == 4 and run.options["on_duplicate"] == "skip"
+    assert run.counts["created"] == 6 and run.options["on_duplicate"] == "skip"
     acts = list(await db.scalars(select(Activity).where(Activity.investor_id == dana.id)))
     kinds = {a.kind for a in acts}
     assert {"investor_created", "added_to_round", "follow_up_set"} <= kinds
@@ -182,7 +193,7 @@ async def test_commit_creates_with_activities_and_run(db: AsyncSession, frozen_n
 
     runs = await imports.list_runs(db, ctx)
     assert [r.id for r in runs] == [run.id]
-    assert runs[0].round_name == "Seed" and runs[0].counts["created"] == 4
+    assert runs[0].round_name == "Seed" and runs[0].counts["created"] == 6
 
 
 async def test_semicolon_bom_contacts_only(db: AsyncSession, frozen_now: Any) -> None:
@@ -600,3 +611,50 @@ async def test_csv_round_trip_into_empty_workspace(db: AsyncSession, frozen_now:
     assert b2 is not None
     p2, stage = await part_of(db, rnd_b, b2)
     assert stage == "committed" and p2.amount_committed == 50_000
+
+
+MESSY = (
+    "Name,Firm,Email,LinkedIn,Check min,Check max,Stage,Fit,Next Follow Up,Soft\n"
+    "Ada Brightwater,Kestrel Fund,ada@example.com,,100k,50k,Contacted,4,next week,250k\n"
+    "Ben Fallowfield,Copperline Partners,not an email,linkedin.com/in/example-ben,,,Meeting,7,"
+    "2026-10-20,lots\n"
+    "Cleo Marchetti,Saltmarsh Capital,cleo@example.com,,,,Replied,3,soon-ish,\n"
+    ",Nameless Ventures,nameless@example.com,,,,New,2,,\n"
+)
+
+
+async def test_bad_optional_cells_never_drop_the_row(db: AsyncSession, frozen_now: Any) -> None:
+    """P0-6: only a missing name is an error. An unreadable date, an invalid email, an
+    out-of-range fit, a bad amount and min > max are left empty, with a warning per cell."""
+    ws, _, ctx = await setup_ws(db)
+    rnd = await make_round(db, ws, name="Seed")
+    pv = await imports.preview(db, ctx, csv_req(MESSY, round="seed"))
+    assert {r.row: r.action for r in pv.rows} == {2: "create", 3: "create", 4: "create", 5: "error"}
+    assert pv.counts.error == 1 and pv.counts.cells_left_empty == 6
+    assert pv.warning_kinds == {
+        "follow_up_unreadable": 2,
+        "amount_unreadable": 1,
+        "check_size_invalid": 1,
+        "email_invalid": 1,
+        "fit_invalid": 1,
+    }
+    ada = next(r for r in pv.rows if r.row == 2)
+    assert "follow-up left empty: 'next week' is not a date" in ada.warnings
+    assert "check_min" not in ada.investor and "check_max" not in ada.investor
+
+    res = await imports.commit(db, ctx, csv_req(MESSY, round="seed"), now=frozen_now)
+    assert res.counts.created == 3 and res.counts.errors == 1
+    assert res.counts.cells_left_empty == 6
+    ada_inv = await investor_by_email(db, ws, "ada@example.com")
+    part, stage = await part_of(db, rnd, ada_inv)
+    assert part.follow_up_on is None and part.amount_soft == 250_000 and stage == "contacted"
+
+    # The row without an email still dedupes, by LinkedIn and then by name + firm.
+    again = (
+        "Name,Firm,Email,LinkedIn\n"
+        "Ben Fallowfield,Copperline Partners,still not an email,linkedin.com/in/example-ben\n"
+        "Ben Fallowfield,Copperline Partners,,\n"
+    )
+    pv2 = await imports.preview(db, ctx, csv_req(again))
+    assert [r.action for r in pv2.rows] == ["skip", "skip"]
+    assert [r.match.matched_on for r in pv2.rows if r.match] == ["linkedin", "name_firm"]

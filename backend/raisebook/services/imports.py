@@ -110,6 +110,65 @@ class RecordIn:
     participations: list[ParticipationIn] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[RowError] = field(default_factory=list)
+    # One machine-readable kind per dropped optional cell ("follow_up_unreadable").
+    kinds: list[str] = field(default_factory=list)
+
+
+# Labels for dropped-cell warnings: "follow-up left empty: 'next week' is not a date".
+CELL_LABEL: dict[str, str] = {
+    "email": "email",
+    "linkedin_url": "LinkedIn",
+    "website_url": "website",
+    "x_url": "X",
+    "check_min": "min check",
+    "check_max": "max check",
+    "check_note": "check size",
+    "stage_focus": "stage focus",
+    "industries": "industries",
+    "tags": "tags",
+    "location": "location",
+    "title": "title",
+    "firm": "firm",
+    "type": "type",
+    "source": "source",
+    "warm_intro_by": "warm intro",
+    "notes": "notes",
+    "fit": "fit",
+    "probability": "probability",
+    "follow_up_on": "follow-up",
+    "follow_up_note": "follow-up note",
+    "next_step": "next step",
+    "amount_soft": "soft amount",
+    "amount_committed": "committed amount",
+    "amount": "amount",
+}
+
+# warning_kinds keys per field (SPEC §8.2 row actions, UX-PASS-1 P0-6).
+CELL_KIND: dict[str, str] = {
+    "email": "email_invalid",
+    "linkedin_url": "url_invalid",
+    "website_url": "url_invalid",
+    "x_url": "url_invalid",
+    "check_min": "check_size_invalid",
+    "check_max": "check_size_invalid",
+    "fit": "fit_invalid",
+    "probability": "probability_invalid",
+    "follow_up_on": "follow_up_unreadable",
+    "amount_soft": "amount_unreadable",
+    "amount_committed": "amount_unreadable",
+    "amount": "amount_unreadable",
+}
+
+
+def drop_cell(rec: RecordIn, fld: str, raw: Any, reason: str) -> None:
+    """A bad optional cell never costs the row: the value is left empty and the row carries
+    a warning that says which cell and why."""
+    label = CELL_LABEL.get(fld, fld.replace("_", " "))
+    shown = str(raw)
+    if len(shown) > 60:
+        shown = shown[:57] + "…"
+    rec.warnings.append(f"{label} left empty: {shown!r} {reason}")
+    rec.kinds.append(CELL_KIND.get(fld, "value_invalid"))
 
 
 @dataclass
@@ -486,7 +545,18 @@ class Plan:
             setattr(c, r.action, getattr(c, r.action) + 1)
             if r.action != "error":
                 c.add_to_round += sum(1 for p in r.participations if p.add)
+                if r.action != "skip":
+                    c.cells_left_empty += len(r.rec.kinds)
         return c
+
+    def warning_kinds(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for r in self.rows:
+            if r.action in ("error", "skip"):
+                continue
+            for k in r.rec.kinds:
+                out[k] = out.get(k, 0) + 1
+        return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
 def _empty(value: Any) -> bool:
@@ -502,6 +572,8 @@ def _field_of(exc: ValidationFailed, default: str) -> str:
 
 
 def _normalize_contact(rec: RecordIn, source: str | None) -> dict[str, Any] | None:
+    """Only a missing name is a row error. A bad optional value (an email, a URL, a check
+    size, check_min above check_max) is dropped with a warning and the row still imports."""
     raw = dict(rec.contact)
     if source and not raw.get("source"):
         raw["source"] = source
@@ -520,13 +592,31 @@ def _normalize_contact(rec: RecordIn, source: str | None) -> dict[str, Any] | No
             normalize_investor_input({f: raw[f]}, partial=True)
             good[f] = raw[f]
         except ValidationFailed as exc:
-            rec.errors.append(RowError(field=_field_of(exc, f), message=exc.message))
-    if not rec.errors:  # a cross-field problem (check_min > check_max)
+            fld = _field_of(exc, f)
+            if f == "name":
+                rec.errors.append(RowError(field=fld, message=exc.message))
+                return None
+            drop_cell(rec, f, raw[f], _reason(exc.message))
+    try:
+        return normalize_investor_input(good, partial=False)
+    except ValidationFailed as first:
+        err = first
+    # A cross-field problem (check_min > check_max): drop both bounds and keep the row.
+    if any(k in good for k in ("check_min", "check_max")):
+        lo, hi = good.pop("check_min", None), good.pop("check_max", None)
+        drop_cell(rec, "check_min", f"{lo} to {hi}", "is not a valid range (min above max)")
         try:
             return normalize_investor_input(good, partial=False)
-        except ValidationFailed as exc:
-            rec.errors.append(RowError(field=_field_of(exc, "row"), message=exc.message))
+        except ValidationFailed as second:
+            err = second
+    rec.errors.append(RowError(field=_field_of(err, "row"), message=err.message))
     return None
+
+
+def _reason(message: str) -> str:
+    """'Enter a valid email.' → 'is not valid: enter a valid email'."""
+    m = message.strip().rstrip(".")
+    return f"was not accepted ({m[:1].lower()}{m[1:]})" if m else "was not accepted"
 
 
 def _parse_participation(
@@ -553,22 +643,17 @@ def _parse_participation(
             values["fit"] = csv_io.parse_fit(str(cells["fit"]))
             pv.fit = values["fit"]
         except ValueError as exc:
-            rec.errors.append(RowError(field="fit", message=str(exc)))
+            drop_cell(rec, "fit", cells["fit"], _reason(str(exc)))
     if "probability" in cells:
         try:
             values["probability"] = csv_io.parse_probability(str(cells["probability"]))
             pv.probability = values["probability"]
         except ValueError as exc:
-            rec.errors.append(RowError(field="probability", message=str(exc)))
+            drop_cell(rec, "probability", cells["probability"], _reason(str(exc)))
     if "follow_up_on" in cells:
         d, ambiguous = parse_date_loose(cells["follow_up_on"])
         if d is None:
-            rec.errors.append(
-                RowError(
-                    field="follow_up_on",
-                    message=f"{cells['follow_up_on']!r} is not a date (use YYYY-MM-DD).",
-                )
-            )
+            drop_cell(rec, "follow_up_on", cells["follow_up_on"], "is not a date")
         else:
             values["follow_up_on"] = d
             pv.follow_up_on = d.isoformat()
@@ -583,12 +668,7 @@ def _parse_participation(
         raw = cells[fld]
         amount = parse_money(raw)
         if amount is None:
-            rec.errors.append(
-                RowError(
-                    field=fld if fld != "amount" else "amount",
-                    message=f"{raw!r} is not an amount (use 250000 or 250k).",
-                )
-            )
+            drop_cell(rec, fld, raw, "is not an amount")
             continue
         cur = csv_io.currency_symbol_of(str(raw))
         if cur and cur != rnd.currency:
@@ -608,7 +688,7 @@ def _parse_participation(
                 values[fld] = clean_text(cells[fld], fld, max_len=limit)
                 setattr(pv, fld, values[fld])
             except ValidationFailed as exc:
-                rec.errors.append(RowError(field=fld, message=exc.message))
+                drop_cell(rec, fld, cells[fld], _reason(exc.message))
     if "owner_email" in cells:
         email = str(cells["owner_email"]).strip().lower()
         uid = ctx.members.get(email)
@@ -921,6 +1001,7 @@ async def preview(
         rows=[_row_out(r) for r in p.rows[:max_rows]],
         counts=counts,
         warnings=warnings,
+        warning_kinds=p.warning_kinds(),
         samples=p.built.samples,
     )
 
@@ -1043,6 +1124,8 @@ async def commit(
             fld = _field_of(exc, "row") if isinstance(exc, ValidationFailed) else "row"
             errors.append(ResultError(row=r.rec.row, field=fld, message=exc.message))
             continue
+        if r.action != "skip":
+            result.cells_left_empty += len(r.rec.kinds)
         if new_id is not None:
             created_ids[id(t)] = new_id
             result.created += 1
@@ -1059,6 +1142,7 @@ async def commit(
         import_run_id=run.id,
         counts=result,
         errors=errors,
+        warning_kinds=p.warning_kinds(),
         created=created_rows,
         round={"id": str(rnd.id), "slug": str(rnd.slug), "name": rnd.name} if rnd else None,
     )

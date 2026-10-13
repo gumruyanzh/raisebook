@@ -66,16 +66,24 @@ async def test_preview_then_commit_over_rest(
     r = await c.post("/v1/imports/preview", json=body)
     assert r.status_code == 200, r.text
     pv = r.json()
-    assert pv["counts"] == {"create": 4, "update": 0, "skip": 1, "error": 3, "add_to_round": 4}
+    assert pv["counts"] == {
+        "create": 6,
+        "update": 0,
+        "skip": 1,
+        "error": 1,
+        "add_to_round": 6,
+        "cells_left_empty": 2,
+    }
+    assert pv["warning_kinds"] == {"email_invalid": 1, "fit_invalid": 1}
     assert pv["columns"][0] == "Full Name" and pv["mapping"]["Full Name"] == "name"
     assert await count_investors(db, ws) == 0
 
     r = await c.post("/v1/imports", json=body)
     assert r.status_code == 200, r.text
     res = r.json()
-    assert res["counts"]["created"] == 4 and res["counts"]["errors"] == 3
+    assert res["counts"]["created"] == 6 and res["counts"]["errors"] == 1
     assert res["round"]["slug"] == "seed"
-    assert await count_investors(db, ws) == 4
+    assert await count_investors(db, ws) == 6
 
     r = await c.get("/v1/imports")
     assert r.status_code == 200

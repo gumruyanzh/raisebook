@@ -128,8 +128,18 @@ export interface ImportPreview {
   mapping: Record<string, ImportField | null>;
   row_count: number;
   rows: ImportRow[];
-  counts: { create: number; update: number; skip: number; error: number; add_to_round: number };
+  counts: {
+    create: number;
+    update: number;
+    skip: number;
+    error: number;
+    add_to_round: number;
+    /** Unreadable optional cells left empty; their rows still import (P0-6). */
+    cells_left_empty?: number;
+  };
   warnings: string[];
+  /** Dropped cells by kind: {"follow_up_unreadable": 74, "email_invalid": 3}. */
+  warning_kinds?: Record<string, number>;
   samples: Record<string, string[]>;
 }
 
@@ -142,8 +152,10 @@ export interface ImportResult {
     skipped: number;
     errors: number;
     added_to_round: number;
+    cells_left_empty?: number;
   };
   errors: { row: number; field: string; message: string }[];
+  warning_kinds?: Record<string, number>;
   /** Investors this import created. */
   created?: { row: number; id: UUID; name: string }[];
   round?: { id: UUID; slug: string; name: string } | null;
@@ -253,3 +265,15 @@ export function prototypeRoundKeys(text: string): string[] {
     return [];
   }
 }
+
+/** Plain words for a dropped-cell kind, singular and plural. */
+export const WARNING_KIND_LABEL: Record<string, [string, string]> = {
+  follow_up_unreadable: ["follow-up date was unreadable", "follow-up dates were unreadable"],
+  email_invalid: ["email was invalid", "emails were invalid"],
+  url_invalid: ["link was invalid", "links were invalid"],
+  check_size_invalid: ["check size range was invalid", "check size ranges were invalid"],
+  fit_invalid: ["fit was out of range", "fits were out of range"],
+  probability_invalid: ["probability was out of range", "probabilities were out of range"],
+  amount_unreadable: ["amount was unreadable", "amounts were unreadable"],
+  value_invalid: ["value was not accepted", "values were not accepted"],
+};

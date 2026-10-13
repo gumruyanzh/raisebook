@@ -90,6 +90,8 @@ class PreviewCounts(BaseModel):
     skip: int = 0
     error: int = 0
     add_to_round: int = 0
+    # Optional cells that were unreadable and left empty (their rows still import).
+    cells_left_empty: int = 0
 
 
 class ImportPreview(BaseModel):
@@ -100,6 +102,10 @@ class ImportPreview(BaseModel):
     rows: list[ImportRow]
     counts: PreviewCounts
     warnings: list[str]
+    warning_kinds: dict[str, int] = Field(
+        default_factory=dict,
+        description='Dropped optional cells by kind, e.g. {"follow_up_unreadable": 74}.',
+    )
     samples: dict[str, list[str]] = Field(
         default_factory=dict, description="Up to three sample values per column (CSV)."
     )
@@ -112,6 +118,7 @@ class ResultCounts(BaseModel):
     skipped: int = 0
     errors: int = 0
     added_to_round: int = 0
+    cells_left_empty: int = 0
 
 
 class ResultError(BaseModel):
@@ -130,6 +137,7 @@ class ImportResult(BaseModel):
     import_run_id: UUID
     counts: ResultCounts
     errors: list[ResultError]
+    warning_kinds: dict[str, int] = Field(default_factory=dict)
     created: list[CreatedRow] = Field(
         default_factory=list, description="Investors this import created (row number, id, name)."
     )
