@@ -6,13 +6,12 @@ import {
   Checkbox,
   ConfirmDialog,
   Field,
-  FitMeter,
   Input,
-  Textarea,
   SaveState,
   SectionLabel,
   Select,
 } from "@/components/ui";
+import { DateField } from "@/components/ui/DateField";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
 import { recordCommitment, updateParticipant, type ParticipantUpdate } from "@/lib/api/rounds";
 import type { Member, Participant, Round } from "@/lib/api/types";
@@ -130,8 +129,11 @@ export function CommitmentDialog({
 }
 
 /**
- * The round fields of one participant (SYSTEM §4.4 item 3): follow-up date and note, soft and
- * committed amounts, probability, fit, owner and next step. Saves on change or blur.
+ * The round fields of one participant (SYSTEM §4.4, UX pass 1 P1-5b), in two sections so
+ * the sheet can put the work first:
+ * - `work`: follow-up date (DateField with quick picks) and note, and the next step;
+ * - `money`: soft and committed amounts, probability and owner, on one row.
+ * Saves on change or blur, with "Saving…" → "Saved" beside the section label.
  */
 export function ParticipantFields({
   client,
@@ -143,6 +145,9 @@ export function ParticipantFields({
   onSaved,
   title,
   className,
+  section = "work",
+  timeZone,
+  followUpId,
 }: {
   client: ApiClient;
   round: Round;
@@ -153,6 +158,11 @@ export function ParticipantFields({
   onSaved: (p: Participant) => void;
   title?: string;
   className?: string;
+  section?: "work" | "money";
+  /** The workspace timezone (quick picks are computed in it). */
+  timeZone: string;
+  /** id for the follow-up trigger (the sheet's F key opens it). */
+  followUpId?: string;
 }) {
   const p = participant;
   const investorId = p.investor.id;
@@ -188,6 +198,9 @@ export function ParticipantFields({
 
   const ro = !canWrite;
   const roTitle = ro ? "View only" : undefined;
+  const enterBlurs = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") e.currentTarget.blur();
+  };
 
   const blurSoft = () => {
     const v = parseMoney(soft);
@@ -230,21 +243,106 @@ export function ParticipantFields({
     else setCommitErr("The commitment was not saved. Check the amount and try again.");
   };
 
-  const owners = members;
+  if (section === "work") {
+    return (
+      <section className={className} aria-label={title ?? "Follow-up and next step"}>
+        <SectionLabel aside={<SaveState state={state} />}>{title ?? "Follow-up and next step"}</SectionLabel>
+        <div className="flex flex-col gap-8">
+          <div className="grid grid-cols-1 gap-8 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)]">
+            <Field label="Follow up on">
+              <DateField
+                id={followUpId}
+                value={p.follow_up_on ?? null}
+                timeZone={timeZone}
+                quickPicks="followup"
+                placeholder={ro ? "No follow-up" : "Set follow-up"}
+                disabled={ro}
+                aria-label={`Follow up with ${investorName}`}
+                onChange={(iso) => void save({ follow_up_on: iso })}
+              />
+            </Field>
+            <Field label="What it’s for">
+              <Input
+                value={fuNote}
+                maxLength={500}
+                placeholder={ro ? "" : "e.g. Send the updated deck"}
+                disabled={ro}
+                title={roTitle}
+                onChange={(e) => setFuNote(e.target.value)}
+                onKeyDown={enterBlurs}
+                onBlur={() => {
+                  const v = fuNote.trim() || null;
+                  if (v !== (p.follow_up_note ?? null)) void save({ follow_up_note: v });
+                }}
+              />
+            </Field>
+          </div>
+          <Field label="Next step">
+            <Input
+              value={next}
+              maxLength={500}
+              placeholder={ro ? "" : "What happens next"}
+              disabled={ro}
+              title={roTitle}
+              onChange={(e) => setNext(e.target.value)}
+              onKeyDown={enterBlurs}
+              onBlur={() => {
+                const v = next.trim() || null;
+                if (v !== (p.next_step ?? null)) void save({ next_step: v });
+              }}
+            />
+          </Field>
+        </div>
+        {error ? <p className={cn("t-body-s mt-8 text-bad")}>{error}</p> : null}
+      </section>
+    );
+  }
 
   return (
-    <section className={className} aria-label={title ?? "Round fields"}>
-      <SectionLabel aside={<SaveState state={state} />}>{title ?? `In ${round.name}`}</SectionLabel>
-      <div className="grid grid-cols-1 gap-10 sm:grid-cols-2">
-        <Field label="Follow up on">
+    <section className={className} aria-label={title ?? "Money and owner"}>
+      <SectionLabel aside={<SaveState state={state} />}>{title ?? "Money and owner"}</SectionLabel>
+      <div className="grid grid-cols-2 gap-8 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,72px)_minmax(0,1.2fr)]">
+        <Field label={`Soft (${round.currency})`} error={fieldErr.soft}>
           <Input
-            type="date"
+            inputMode="decimal"
             mono
-            max="9999-12-31"
-            value={p.follow_up_on ?? ""}
+            value={soft}
+            placeholder="e.g. 250k"
             disabled={ro}
             title={roTitle}
-            onChange={(e) => void save({ follow_up_on: e.target.value || null })}
+            onChange={(e) => setSoft(e.target.value)}
+            onKeyDown={enterBlurs}
+            onBlur={blurSoft}
+          />
+        </Field>
+        <Field
+          label={`Committed (${round.currency})`}
+          error={fieldErr.committed}
+          hint={won && p.amount_committed && p.stage.kind !== "won" ? `Counts once in ${won.label}.` : undefined}
+        >
+          <Input
+            inputMode="decimal"
+            mono
+            value={committed}
+            placeholder="0"
+            disabled={ro}
+            title={roTitle ?? (won ? `Counts toward the round once they are in ${won.label}.` : undefined)}
+            onChange={(e) => setCommitted(e.target.value)}
+            onBlur={blurCommitted}
+            onKeyDown={enterBlurs}
+          />
+        </Field>
+        <Field label="Prob. %" error={fieldErr.prob}>
+          <Input
+            inputMode="numeric"
+            mono
+            value={prob}
+            placeholder="0–100"
+            disabled={ro}
+            title={roTitle ?? "Probability, 0–100"}
+            onChange={(e) => setProb(e.target.value)}
+            onKeyDown={enterBlurs}
+            onBlur={blurProb}
           />
         </Field>
         <Field label="Owner">
@@ -255,100 +353,13 @@ export function ParticipantFields({
             onChange={(e) => void save({ owner_user_id: e.target.value || null })}
           >
             <option value="">No owner</option>
-            {owners.map((m) => (
+            {members.map((m) => (
               <option key={m.user_id} value={m.user_id}>
                 {personName(m)}
                 {m.is_you ? " (you)" : ""}
               </option>
             ))}
           </Select>
-        </Field>
-        <Field label="Follow-up note" className="sm:col-span-2">
-          <Textarea
-            value={fuNote}
-            rows={2}
-            maxLength={500}
-            placeholder="What it’s for"
-            disabled={ro}
-            title={roTitle}
-            className="min-h-[52px] resize-none [field-sizing:content]"
-            onChange={(e) => setFuNote(e.target.value)}
-            onBlur={() => {
-              const v = fuNote.trim() || null;
-              if (v !== (p.follow_up_note ?? null)) void save({ follow_up_note: v });
-            }}
-          />
-        </Field>
-        <Field label={`Soft amount (${round.currency})`} error={fieldErr.soft}>
-          <Input
-            inputMode="decimal"
-            mono
-            value={soft}
-            placeholder="e.g. 250k"
-            disabled={ro}
-            title={roTitle}
-            onChange={(e) => setSoft(e.target.value)}
-            onBlur={blurSoft}
-          />
-        </Field>
-        <Field
-          label={`Committed (${round.currency})`}
-          error={fieldErr.committed}
-          hint={won ? `Counts once they are in ${won.label}.` : undefined}
-        >
-          <Input
-            inputMode="decimal"
-            mono
-            value={committed}
-            placeholder="0"
-            disabled={ro}
-            title={roTitle}
-            onChange={(e) => setCommitted(e.target.value)}
-            onBlur={blurCommitted}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
-            }}
-          />
-        </Field>
-        <Field label="Probability %" error={fieldErr.prob}>
-          <Input
-            inputMode="numeric"
-            mono
-            value={prob}
-            placeholder="0–100"
-            disabled={ro}
-            title={roTitle}
-            onChange={(e) => setProb(e.target.value)}
-            onBlur={blurProb}
-          />
-        </Field>
-        <div className="flex min-w-0 flex-col gap-4">
-          <span className="text-[12px] text-muted" id={`fit-${investorId}`}>
-            Fit
-          </span>
-          <div className="flex h-32 items-center">
-            <FitMeter
-              editable
-              value={p.fit}
-              disabled={ro}
-              label="Fit"
-              onChange={(fit) => void save({ fit })}
-            />
-          </div>
-        </div>
-        <Field label="Next step" className="sm:col-span-2">
-          <Input
-            value={next}
-            maxLength={500}
-            placeholder="What happens next"
-            disabled={ro}
-            title={roTitle}
-            onChange={(e) => setNext(e.target.value)}
-            onBlur={() => {
-              const v = next.trim() || null;
-              if (v !== (p.next_step ?? null)) void save({ next_step: v });
-            }}
-          />
         </Field>
       </div>
       {error ? <p className={cn("t-body-s mt-8 text-bad")}>{error}</p> : null}

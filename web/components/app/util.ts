@@ -3,6 +3,9 @@
  * `lib/format.ts`; these are input parsing, local-time math and client-side CSV.
  */
 
+import { useEffect, useState } from "react";
+
+import type { PipelineExtra } from "@/lib/api/rounds";
 import type { Investor, Participant } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { daysBetween } from "@/lib/format";
@@ -82,9 +85,14 @@ export function byFit(a: Participant, b: Participant): number {
   return a.investor.name.localeCompare(b.investor.name);
 }
 
-/** Lowercased text a participant is searched by (all words must match). */
-export function participantSearchText(p: Participant, inv?: Investor): string {
+/**
+ * Lowercased text a participant is searched by (all words must match). `extra` is either the
+ * full investor (directory) or the pipeline's trimmed extras (industries + a search blob).
+ */
+export function participantSearchText(p: Participant, extra?: Investor | PipelineExtra): string {
   const i = p.investor;
+  const inv = extra && "id" in extra ? extra : undefined;
+  const brief = extra && !("id" in extra) ? extra : undefined;
   return [
     i.name,
     i.firm,
@@ -92,8 +100,9 @@ export function participantSearchText(p: Participant, inv?: Investor): string {
     i.email,
     INVESTOR_TYPE_LABEL[i.type],
     ...(i.tags ?? []),
+    ...(extra?.industries ?? []),
+    brief?.search,
     inv?.location,
-    ...(inv?.industries ?? []),
     ...(inv?.stage_focus ?? []),
     inv?.source,
     inv?.warm_intro_by,
@@ -105,6 +114,48 @@ export function participantSearchText(p: Participant, inv?: Investor): string {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+}
+
+/* ---------- per-viewer preferences and media queries (client only) ---------- */
+
+export function readStore(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function writeStore(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function readJson<T>(key: string, fallback: T): T {
+  const raw = readStore(key);
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** `null` until mounted (the server cannot know), then whether `query` matches. */
+export function useMediaQuery(query: string): boolean | null {
+  const [m, setM] = useState<boolean | null>(null);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const on = () => setM(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [query]);
+  return m;
 }
 
 export function matchesQuery(text: string, q: string): boolean {

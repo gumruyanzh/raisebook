@@ -1,39 +1,32 @@
 "use client";
 
-import { useMemo } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 
-import {
-  AgentMarker,
-  FitMeter,
-  FollowUpChip,
-  PriorityChip,
-  StagePill,
-  Table,
-  TableScroll,
-  TBody,
-  Td,
-  Th,
-  THead,
-  Tr,
-} from "@/components/ui";
-import type { Investor, Participant, Round } from "@/lib/api/types";
-import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
+import { AgentMarker, FitMeter, FollowUpChip, StagePill, Table, TableScroll, TBody, Td, Th, THead, Tr } from "@/components/ui";
+import { Avatar, shortPersonName } from "@/components/ui/Avatar";
+import { useVirtualRows } from "@/components/ui/useVirtualRows";
+import type { PipelineExtra } from "@/lib/api/rounds";
+import type { Member, Participant, Round } from "@/lib/api/types";
+import { INVESTOR_TYPE_LABEL, PRIORITY_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
-import {
-  firmText,
-  followUpCellText,
-  formatDate,
-  isoDate,
-  money,
-  moneyCompact,
-  relativeTime,
-} from "@/lib/format";
+import { followUpCellText, formatDate, isoDate, money, moneyCompact, priorityFromFit, relativeTime } from "@/lib/format";
+import { isApple } from "@/lib/hotkeys";
 
 import type { AgentMark } from "./PipelineBoard";
-import { personName } from "./util";
+import { personName, useMediaQuery } from "./util";
 
 export type TableCol =
   | "investor"
+  | "title"
   | "firm"
   | "stage"
   | "fit"
@@ -45,18 +38,22 @@ export type TableCol =
   | "last_activity"
   | "next_step";
 
-export const TABLE_COLS: { key: TableCol; label: string; required?: boolean; num?: boolean }[] = [
-  { key: "investor", label: "Investor", required: true },
-  { key: "firm", label: "Firm" },
-  { key: "stage", label: "Stage" },
-  { key: "fit", label: "Fit" },
-  { key: "type", label: "Type" },
-  { key: "follow_up", label: "Follow-up" },
-  { key: "soft", label: "Soft", num: true },
-  { key: "committed", label: "Committed", num: true },
-  { key: "owner", label: "Owner" },
-  { key: "last_activity", label: "Last activity" },
-  { key: "next_step", label: "Next step" },
+export type Density = "compact" | "comfortable";
+
+/** Column widths are fixed so windowed rows never change the layout while scrolling. */
+export const TABLE_COLS: { key: TableCol; label: string; width: number; required?: boolean; num?: boolean }[] = [
+  { key: "investor", label: "Investor", width: 240, required: true },
+  { key: "title", label: "Title", width: 160 },
+  { key: "firm", label: "Firm", width: 180 },
+  { key: "stage", label: "Stage", width: 140 },
+  { key: "fit", label: "Fit", width: 76 },
+  { key: "type", label: "Type", width: 104 },
+  { key: "follow_up", label: "Follow-up", width: 150 },
+  { key: "soft", label: "Soft", width: 88, num: true },
+  { key: "committed", label: "Committed", width: 100, num: true },
+  { key: "owner", label: "Owner", width: 128 },
+  { key: "last_activity", label: "Last activity", width: 112 },
+  { key: "next_step", label: "Next step", width: 240 },
 ];
 
 export type SortDir = "asc" | "desc";
@@ -64,6 +61,7 @@ export type SortDir = "asc" | "desc";
 /** Default direction when a column is first clicked: numbers and fit high-first. */
 export const DEFAULT_DIR: Record<TableCol, SortDir> = {
   investor: "asc",
+  title: "asc",
   firm: "asc",
   stage: "asc",
   fit: "desc",
@@ -76,10 +74,16 @@ export const DEFAULT_DIR: Record<TableCol, SortDir> = {
   next_step: "asc",
 };
 
+const ROW_H: Record<Density, number> = { compact: 32, comfortable: 44 };
+const PHONE_ROW_H = 62;
+const SELECT_W = 36;
+
 function sortValue(p: Participant, col: TableCol): string | number | null {
   switch (col) {
     case "investor":
       return p.investor.name.toLowerCase();
+    case "title":
+      return p.investor.title?.toLowerCase() ?? null;
     case "firm":
       return p.investor.firm?.toLowerCase() ?? null;
     case "stage":
@@ -87,7 +91,7 @@ function sortValue(p: Participant, col: TableCol): string | number | null {
     case "fit":
       return p.fit;
     case "type":
-      return INVESTOR_TYPE_LABEL[p.investor.type];
+      return p.investor.type === "other" ? null : INVESTOR_TYPE_LABEL[p.investor.type];
     case "follow_up":
       return p.follow_up_on ?? null;
     case "soft":
@@ -119,59 +123,493 @@ export function sortParticipants(rows: Participant[], col: TableCol, dir: SortDi
 }
 
 /**
- * The pipeline table (SYSTEM §4.2): every column sortable, rows open the sheet, numbers in
- * mono and right-aligned, compact money with the exact value in the title. Rows an agent
- * touched in the last 24 hours carry the orchid rule.
+ * The pipeline table (SYSTEM §4.2, UX pass 1 P1-2): fixed column widths, one-line cells with
+ * the full value in `title`, a sticky header and a sticky Investor column, windowed rows
+ * (only what is on screen is in the DOM), and roving focus: the body is one tab stop, ↑/↓ or
+ * j/k move, Enter opens, Space or x selects, Shift extends, ⌘A selects every filtered row,
+ * Home/End jump. Phones get a stacked list instead of a sideways grid.
  */
 export function PipelineTable({
   round,
   rows,
-  investors: _investors,
   agentMarks,
+  members,
   visible,
+  density,
   sort,
   dir,
   onSort,
   onOpen,
-  selectedId,
+  openId,
+  selected,
+  onSelectedChange,
+  height,
+  focusReq,
   today,
   timeZone,
 }: {
   round: Round;
+  /** Already filtered and sorted. */
   rows: Participant[];
-  investors: Record<string, Investor>;
+  extras: Record<string, PipelineExtra>;
   agentMarks: Record<string, AgentMark>;
+  members: Member[];
   visible: Set<TableCol>;
+  density: Density;
   sort: TableCol;
   dir: SortDir;
   onSort: (col: TableCol) => void;
   onOpen: (investorId: string) => void;
-  selectedId?: string | null;
+  openId?: string | null;
+  /** `null` hides the selection column (viewers). */
+  selected: Set<string> | null;
+  onSelectedChange: (next: Set<string>) => void;
+  /** Fill height in px (the page stops; rows scroll). */
+  height: number | null;
+  /** Focus this investor's row (after the sheet closes). */
+  focusReq: { id: string; n: number } | null;
   today: string;
   timeZone: string;
 }) {
-  const sorted = useMemo(() => sortParticipants(rows, sort, dir), [rows, sort, dir]);
+  const isPhone = useMediaQuery("(max-width: 639px)");
   const cols = TABLE_COLS.filter((c) => c.required || visible.has(c.key));
+  const titleCol = visible.has("title");
   const cur = round.currency;
-  const now = new Date();
-  const minWidth = Math.max(640, cols.length * 108);
+  const now = useMemo(() => new Date(), []);
+  const me = useMemo(() => new Set(members.filter((m) => m.is_you).map((m) => m.user_id)), [members]);
+  const selectable = selected !== null;
+  const tableWidth = cols.reduce((s, c) => s + c.width, 0) + (selectable ? SELECT_W : 0);
+  const rowH = ROW_H[density];
+
+  const scroll = useRef<HTMLDivElement>(null);
+  const thead = useRef<HTMLTableSectionElement>(null);
+  const [headH, setHeadH] = useState(33);
+  useLayoutEffect(() => {
+    if (thead.current) setHeadH(thead.current.offsetHeight);
+  }, [density]);
+  const v = useVirtualRows({ scrollRef: scroll, count: rows.length, height: rowH, offset: headH, initial: 40 });
+
+  /* ---------- roving focus ---------- */
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const indexOf = useMemo(() => new Map(rows.map((p, i) => [p.investor.id, i])), [rows]);
+  const activeIdx = activeId !== null ? (indexOf.get(activeId) ?? -1) : -1;
+  const pendingFocus = useRef<string | null>(null);
+  const anchor = useRef<number | null>(null);
+  /** The row the keyboard is on, updated synchronously (keys can repeat faster than focus). */
+  const cursor = useRef<string | null>(null);
+
+  const focusRow = useCallback((id: string) => {
+    const el = scroll.current?.querySelector<HTMLElement>(`tr[data-investor="${CSS.escape(id)}"]`);
+    if (el) {
+      el.focus({ preventScroll: true });
+      pendingFocus.current = null;
+    } else pendingFocus.current = id;
+  }, []);
+  // A row scrolled in after a jump gets the focus it was waiting for.
+  useEffect(() => {
+    if (pendingFocus.current) focusRow(pendingFocus.current);
+  });
+
+  const goTo = useCallback(
+    (i: number) => {
+      const p = rows[Math.max(0, Math.min(rows.length - 1, i))];
+      if (!p) return;
+      cursor.current = p.investor.id;
+      setActiveId(p.investor.id);
+      v.scrollToIndex(indexOf.get(p.investor.id) ?? 0);
+      requestAnimationFrame(() => focusRow(p.investor.id));
+    },
+    [rows, v, indexOf, focusRow],
+  );
+
+  useEffect(() => {
+    if (!focusReq) return;
+    const i = indexOf.get(focusReq.id);
+    if (i === undefined) return;
+    // After the sheet's own focus restore.
+    requestAnimationFrame(() => goTo(i));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusReq]);
+
+  /* ---------- selection ---------- */
+  const setSel = (next: Set<string>) => onSelectedChange(next);
+  const toggle = (id: string) => {
+    if (!selected) return;
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSel(next);
+  };
+  const selectRange = (from: number, to: number, on = true) => {
+    if (!selected) return;
+    const next = new Set(selected);
+    const [a, b] = from < to ? [from, to] : [to, from];
+    for (let i = a; i <= b; i++) {
+      const id = rows[i]?.investor.id;
+      if (!id) continue;
+      if (on) next.add(id);
+      else next.delete(id);
+    }
+    setSel(next);
+  };
+  const allSelected = selectable && rows.length > 0 && rows.every((p) => selected!.has(p.investor.id));
+  const someSelected = selectable && !allSelected && rows.some((p) => selected!.has(p.investor.id));
+  const headerBox = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (headerBox.current) headerBox.current.indeterminate = someSelected;
+  }, [someSelected]);
+
+  const onBodyKey = (e: KeyboardEvent<HTMLTableSectionElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName !== "TR") return;
+    const id = cursor.current && indexOf.has(cursor.current) ? cursor.current : target.dataset.investor;
+    const i = id ? (indexOf.get(id) ?? 0) : 0;
+    const mod = isApple() ? e.metaKey : e.ctrlKey;
+    const page = Math.max(1, Math.floor((scroll.current?.clientHeight ?? 400) / rowH) - 2);
+    const step = (d: number) => {
+      e.preventDefault();
+      const j = Math.max(0, Math.min(rows.length - 1, i + d));
+      if (e.shiftKey && selectable) {
+        if (anchor.current === null) anchor.current = i;
+        selectRange(anchor.current, j);
+      } else anchor.current = null;
+      goTo(j);
+    };
+    if (e.altKey) return;
+    switch (e.key) {
+      case "ArrowDown":
+      case "j":
+      case "J":
+        if (mod) return;
+        return step(1);
+      case "ArrowUp":
+      case "k":
+      case "K":
+        if (mod) return;
+        return step(-1);
+      case "PageDown":
+        return step(page);
+      case "PageUp":
+        return step(-page);
+      case "Home":
+        e.preventDefault();
+        return goTo(0);
+      case "End":
+        e.preventDefault();
+        return goTo(rows.length - 1);
+      case "Enter":
+        e.preventDefault();
+        if (id) onOpen(id);
+        return;
+      case " ":
+      case "x":
+      case "X":
+        if (!selectable || !id || mod) return;
+        e.preventDefault();
+        anchor.current = i;
+        toggle(id);
+        return;
+      case "a":
+      case "A":
+        if (!selectable || !mod) return;
+        e.preventDefault();
+        setSel(new Set([...(selected ?? []), ...rows.map((p) => p.investor.id)]));
+        return;
+    }
+  };
+
+  const lastClicked = useRef<number | null>(null);
+  const onBox = (e: MouseEvent<HTMLInputElement>, i: number, id: string) => {
+    e.stopPropagation();
+    if (e.shiftKey && lastClicked.current !== null) {
+      selectRange(lastClicked.current, i, !selected?.has(id));
+    } else toggle(id);
+    lastClicked.current = i;
+    setActiveId(id);
+  };
+
+  // The active row, or the first row on screen, is the body's one tab stop.
+  const tabStop = activeIdx >= v.start && activeIdx < v.end ? activeId : (rows[v.start]?.investor.id ?? null);
+
+  const ownerCell = (p: Participant) => {
+    if (!p.owner) return null;
+    const name = personName(p.owner);
+    return (
+      <span className="flex min-w-0 items-center gap-6" title={p.owner.email}>
+        <Avatar name={name} />
+        <span className="truncate">{shortPersonName(p.owner, me.has(p.owner.user_id))}</span>
+      </span>
+    );
+  };
+
+  const cell = (p: Participant, key: TableCol, mark: AgentMark | undefined) => {
+    const one = "truncate whitespace-nowrap";
+    switch (key) {
+      case "investor":
+        return (
+          <span className="flex min-w-0 items-center gap-6">
+            <span className={cn(one, "font-semibold")} title={p.investor.name}>
+              {p.investor.name}
+            </span>
+            {!titleCol && p.investor.title ? (
+              <span className={cn(one, "t-body-s min-w-0 shrink text-muted")} title={p.investor.title}>
+                {p.investor.title}
+              </span>
+            ) : null}
+            {mark ? <AgentMarker label={mark.tip} /> : null}
+          </span>
+        );
+      case "title":
+        return (
+          <span className={cn(one, "block text-muted")} title={p.investor.title ?? undefined}>
+            {p.investor.title ?? ""}
+          </span>
+        );
+      case "firm":
+        return p.investor.firm ? (
+          <span className={cn(one, "block")} title={p.investor.firm}>
+            {p.investor.firm}
+          </span>
+        ) : (
+          <span className="text-muted" aria-label="No firm">
+            —
+          </span>
+        );
+      case "stage":
+        return (
+          <span className="block truncate">
+            <StagePill color={p.stage.color} label={p.stage.label} />
+          </span>
+        );
+      case "fit":
+        return (
+          <span title={`${PRIORITY_LABEL[priorityFromFit(p.fit)]} · fit ${p.fit}/5`}>
+            <FitMeter value={p.fit} />
+          </span>
+        );
+      case "type":
+        return p.investor.type === "other" ? (
+          <span className="text-muted" aria-label="Type not set">
+            —
+          </span>
+        ) : (
+          <span className={cn(one, "block text-muted")}>{INVESTOR_TYPE_LABEL[p.investor.type]}</span>
+        );
+      case "follow_up": {
+        const st = p.follow_up_state;
+        return p.follow_up_on ? (
+          <span
+            className={cn(
+              one,
+              "t-data block",
+              st === "overdue" || st === "today" ? "text-bad" : st === "soon" ? "text-warm-ink" : "text-muted",
+            )}
+            title={[formatDate(p.follow_up_on, today), p.follow_up_note].filter(Boolean).join(" · ")}
+          >
+            {followUpCellText(p.follow_up_on, today)}
+          </span>
+        ) : null;
+      }
+      case "soft":
+        return p.amount_soft ? <span title={money(p.amount_soft, cur)}>{moneyCompact(p.amount_soft, cur)}</span> : null;
+      case "committed":
+        return p.amount_committed ? (
+          <span className="text-good-ink" title={money(p.amount_committed, cur)}>
+            {moneyCompact(p.amount_committed, cur)}
+          </span>
+        ) : null;
+      case "owner":
+        return ownerCell(p);
+      case "last_activity":
+        return p.last_activity_at ? (
+          <span className="t-data text-muted" title={relativeTime(p.last_activity_at, now, timeZone)}>
+            {formatDate(isoDate(p.last_activity_at, timeZone), today)}
+          </span>
+        ) : null;
+      case "next_step":
+        return (
+          <span className={cn(one, "block text-muted")} title={p.next_step ?? undefined}>
+            {p.next_step ?? ""}
+          </span>
+        );
+    }
+  };
+
+  const fillStyle = height ? height : "70vh";
+
+  if (isPhone) return <PhoneList rows={rows} agentMarks={agentMarks} openId={openId} onOpen={onOpen} today={today} height={height} focusReq={focusReq} />;
+
+  const stickyLeft = (k: TableCol) => (k === "investor" ? (selectable ? SELECT_W : 0) : null);
 
   return (
-    <>
-    {/* Phones: a stacked list (who on the left; stage and follow-up on the right), never a
-        sideways-scrolling grid. */}
-    <ul className="m-0 flex list-none flex-col rounded-md border border-line bg-surface p-0 sm:hidden">
-      {sorted.map((p) => {
+    <TableScroll ref={scroll} height={fillStyle} className={cn("overscroll-contain scrollbar-thin", isPhone === null && "max-sm:hidden")}>
+      <Table className="table-fixed" style={{ width: "100%", minWidth: tableWidth }} aria-rowcount={rows.length + 1}>
+        <colgroup>
+          {selectable ? <col style={{ width: SELECT_W }} /> : null}
+          {cols.map((c) => (
+            <col key={c.key} style={{ width: c.width }} />
+          ))}
+        </colgroup>
+        <THead ref={thead}>
+          <Tr>
+            {selectable ? (
+              <Th className="left-0 z-[3]! px-0! text-center!" aria-label="Select">
+                <input
+                  ref={headerBox}
+                  type="checkbox"
+                  aria-label={allSelected ? "Clear selection" : `Select all ${rows.length} shown`}
+                  checked={allSelected}
+                  onChange={() => {
+                    const next = new Set(selected);
+                    if (allSelected) for (const p of rows) next.delete(p.investor.id);
+                    else for (const p of rows) next.add(p.investor.id);
+                    setSel(next);
+                  }}
+                  className="size-16 align-middle accent-[var(--accent)]"
+                />
+              </Th>
+            ) : null}
+            {cols.map((c) => {
+              const left = stickyLeft(c.key);
+              return (
+                <Th
+                  key={c.key}
+                  align={c.num ? "right" : "left"}
+                  sort={sort === c.key ? dir : null}
+                  onSort={() => onSort(c.key)}
+                  className={cn(left !== null && "z-[3]! shadow-[inset_-1px_0_0_var(--line)]")}
+                  style={left !== null ? { left } : undefined}
+                >
+                  {c.label}
+                </Th>
+              );
+            })}
+          </Tr>
+        </THead>
+        <TBody onKeyDown={onBodyKey}>
+          {v.padTop > 0 ? (
+            <tr aria-hidden style={{ height: v.padTop }}>
+              <td colSpan={cols.length + (selectable ? 1 : 0)} className="p-0" />
+            </tr>
+          ) : null}
+          {rows.slice(v.start, v.end).map((p, k) => {
+            const i = v.start + k;
+            const id = p.investor.id;
+            const mark = agentMarks[id];
+            const isSel = selected?.has(id) ?? false;
+            return (
+              <Tr
+                key={id}
+                data-investor={id}
+                tabIndex={tabStop === id ? 0 : -1}
+                aria-rowindex={i + 2}
+                aria-selected={selectable ? isSel : undefined}
+                aria-current={openId === id ? "true" : undefined}
+                aria-label={p.investor.name}
+                onActivate={() => onOpen(id)}
+                onFocus={() => {
+                  cursor.current = id;
+                  setActiveId(id);
+                }}
+                selected={isSel || openId === id}
+                agent={Boolean(mark)}
+                style={{ height: rowH }}
+              >
+                {selectable ? (
+                  <Td className="sticky left-0 z-[1] bg-surface px-0! py-0! text-center align-middle!">
+                    <input
+                      type="checkbox"
+                      tabIndex={-1}
+                      aria-label={`Select ${p.investor.name}`}
+                      checked={isSel}
+                      onChange={() => {}}
+                      onClick={(e) => onBox(e, i, id)}
+                      className="size-16 align-middle accent-[var(--accent)]"
+                    />
+                  </Td>
+                ) : null}
+                {cols.map((c) => {
+                  const left = stickyLeft(c.key);
+                  return (
+                    <Td
+                      key={c.key}
+                      variant={c.num ? "num" : "default"}
+                      className={cn(
+                        "overflow-hidden py-0! align-middle!",
+                        left !== null && "sticky z-[1] bg-surface shadow-[inset_-1px_0_0_var(--line)]",
+                      )}
+                      style={left !== null ? { left } : undefined}
+                    >
+                      {cell(p, c.key, mark)}
+                    </Td>
+                  );
+                })}
+              </Tr>
+            );
+          })}
+          {v.padBottom > 0 ? (
+            <tr aria-hidden style={{ height: v.padBottom }}>
+              <td colSpan={cols.length + (selectable ? 1 : 0)} className="p-0" />
+            </tr>
+          ) : null}
+        </TBody>
+      </Table>
+    </TableScroll>
+  );
+}
+
+/** Phones: a stacked, windowed list (who on the left; stage and follow-up on the right). */
+function PhoneList({
+  rows,
+  agentMarks,
+  openId,
+  onOpen,
+  today,
+  height,
+  focusReq,
+}: {
+  rows: Participant[];
+  agentMarks: Record<string, AgentMark>;
+  openId?: string | null;
+  onOpen: (id: string) => void;
+  today: string;
+  height: number | null;
+  focusReq: { id: string; n: number } | null;
+}) {
+  const scroll = useRef<HTMLUListElement>(null);
+  const v = useVirtualRows({ scrollRef: scroll, count: rows.length, height: PHONE_ROW_H, initial: 14 });
+  useEffect(() => {
+    if (!focusReq) return;
+    const i = rows.findIndex((p) => p.investor.id === focusReq.id);
+    if (i < 0) return;
+    v.scrollToIndex(i);
+    requestAnimationFrame(() =>
+      scroll.current?.querySelector<HTMLElement>(`[data-investor="${CSS.escape(focusReq.id)}"]`)?.focus(),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusReq]);
+  return (
+    <ul
+      ref={scroll}
+      className="m-0 list-none overflow-y-auto overscroll-contain rounded-md border border-line bg-surface p-0"
+      style={{ height: height ?? "70vh" }}
+    >
+      {v.padTop > 0 ? <li aria-hidden style={{ height: v.padTop }} /> : null}
+      {rows.slice(v.start, v.end).map((p) => {
         const id = p.investor.id;
         const mark = agentMarks[id];
-        const who = [p.investor.title, firmText(p.investor.firm, p.investor.type)].filter((x) => x && x !== "—").join(" · ");
+        const who = [p.investor.firm, p.investor.title].filter(Boolean).join(" · ");
         return (
-          <li key={id} className={cn("border-b border-line last:border-b-0", mark && "border-l-2 border-l-agent")}>
+          <li key={id} className={cn("border-b border-line", mark && "shadow-[inset_2px_0_0_var(--agent)]")} style={{ height: PHONE_ROW_H }}>
             <button
               type="button"
+              data-investor={id}
               onClick={() => onOpen(id)}
-              aria-current={selectedId === id || undefined}
-              className="flex w-full items-start gap-10 border-0 bg-transparent px-12 py-10 text-left hover:bg-sunk"
+              aria-current={openId === id || undefined}
+              className={cn(
+                "flex h-full w-full items-center gap-10 border-0 bg-transparent px-12 text-left focus-visible:-outline-offset-2",
+                openId === id ? "bg-accent-soft" : "active:bg-sunk",
+              )}
             >
               <span className="flex min-w-0 flex-1 flex-col gap-2">
                 <span className="flex items-center gap-6 font-semibold">
@@ -188,138 +626,7 @@ export function PipelineTable({
           </li>
         );
       })}
+      {v.padBottom > 0 ? <li aria-hidden style={{ height: v.padBottom }} /> : null}
     </ul>
-    <TableScroll maxHeight="78vh" className="max-sm:hidden">
-      <Table minWidth={minWidth}>
-        <THead>
-          <Tr>
-            {cols.map((c) => (
-              <Th
-                key={c.key}
-                align={c.num ? "right" : "left"}
-                sort={sort === c.key ? dir : null}
-                onSort={() => onSort(c.key)}
-              >
-                {c.label}
-              </Th>
-            ))}
-          </Tr>
-        </THead>
-        <TBody>
-          {sorted.map((p) => {
-            const id = p.investor.id;
-            const mark = agentMarks[id];
-            return (
-              <Tr
-                key={id}
-                onActivate={() => onOpen(id)}
-                selected={selectedId === id}
-                agent={Boolean(mark)}
-                aria-label={p.investor.name}
-              >
-                {cols.map((c) => {
-                  switch (c.key) {
-                    case "investor":
-                      return (
-                        <Td key={c.key} className="min-w-[180px]">
-                          <span className="flex items-center gap-6 font-semibold">
-                            {p.investor.name}
-                            {mark ? <AgentMarker label={mark.tip} /> : null}
-                          </span>
-                          {p.investor.title ? (
-                            <span className="t-body-s block text-muted">{p.investor.title}</span>
-                          ) : null}
-                        </Td>
-                      );
-                    case "firm":
-                      return (
-                        <Td key={c.key} className={p.investor.firm ? undefined : "text-muted"}>
-                          {firmText(p.investor.firm, p.investor.type)}
-                        </Td>
-                      );
-                    case "stage":
-                      return (
-                        <Td key={c.key}>
-                          <StagePill color={p.stage.color} label={p.stage.label} />
-                        </Td>
-                      );
-                    case "fit":
-                      return (
-                        <Td key={c.key} className="whitespace-nowrap">
-                          <span className="inline-flex items-center gap-6">
-                            <PriorityChip fit={p.fit} />
-                            <FitMeter value={p.fit} />
-                          </span>
-                        </Td>
-                      );
-                    case "type":
-                      return (
-                        <Td key={c.key} variant="muted" className="whitespace-nowrap">
-                          {INVESTOR_TYPE_LABEL[p.investor.type]}
-                        </Td>
-                      );
-                    case "follow_up": {
-                      const st = p.follow_up_state;
-                      return (
-                        <Td
-                          key={c.key}
-                          className={cn(
-                            "t-data whitespace-nowrap",
-                            st === "overdue" || st === "today" ? "text-bad" : st === "soon" ? "text-warm-ink" : "text-muted",
-                          )}
-                          title={p.follow_up_note ?? undefined}
-                        >
-                          {p.follow_up_on ? followUpCellText(p.follow_up_on, today) : ""}
-                        </Td>
-                      );
-                    }
-                    case "soft":
-                      return (
-                        <Td key={c.key} variant="num" title={p.amount_soft ? money(p.amount_soft, cur) : undefined}>
-                          {p.amount_soft ? moneyCompact(p.amount_soft, cur) : ""}
-                        </Td>
-                      );
-                    case "committed":
-                      return (
-                        <Td
-                          key={c.key}
-                          variant="num"
-                          className={p.amount_committed ? "text-good-ink" : undefined}
-                          title={p.amount_committed ? money(p.amount_committed, cur) : undefined}
-                        >
-                          {p.amount_committed ? moneyCompact(p.amount_committed, cur) : ""}
-                        </Td>
-                      );
-                    case "owner":
-                      return (
-                        <Td key={c.key} className="whitespace-nowrap">
-                          {p.owner ? personName(p.owner) : ""}
-                        </Td>
-                      );
-                    case "last_activity":
-                      return (
-                        <Td
-                          key={c.key}
-                          className="t-data whitespace-nowrap text-muted"
-                          title={p.last_activity_at ? relativeTime(p.last_activity_at, now, timeZone) : undefined}
-                        >
-                          {p.last_activity_at ? formatDate(isoDate(p.last_activity_at, timeZone), today) : ""}
-                        </Td>
-                      );
-                    case "next_step":
-                      return (
-                        <Td key={c.key} variant="muted" className="max-w-[280px] min-w-[160px]">
-                          <span className="line-clamp-2">{p.next_step ?? ""}</span>
-                        </Td>
-                      );
-                  }
-                })}
-              </Tr>
-            );
-          })}
-        </TBody>
-      </Table>
-    </TableScroll>
-    </>
   );
 }

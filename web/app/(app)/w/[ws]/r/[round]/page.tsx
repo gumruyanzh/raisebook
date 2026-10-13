@@ -7,7 +7,7 @@ import { Pipeline } from "@/components/app/Pipeline";
 import { Loading } from "@/components/ui";
 import { listActivities } from "@/lib/api/activities";
 import { listAllInvestors } from "@/lib/api/investors";
-import { getRoundSummary, listAllParticipants } from "@/lib/api/rounds";
+import { getRoundSummary, listAllParticipants, toPipelineItems } from "@/lib/api/rounds";
 import { listMembers } from "@/lib/api/settings";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,23 @@ export default async function PipelinePage({ params }: { params: Promise<Params>
         [],
       ),
     ]);
-    return { round, summary, participants, investors, members, agentActivity };
+    // Only what the cards, rows and filters use travels to the browser (UX pass 1, P1-1);
+    // the sheet fetches the full investor when it opens.
+    return {
+      round,
+      summary,
+      items: toPipelineItems(participants, investors),
+      members,
+      agentMarks: agentActivity.map((a) => ({
+        investor_id: a.investor_id,
+        kind: a.kind,
+        label: a.actor.label,
+        type: a.actor.type,
+        at: a.occurred_at,
+        imported: a.actor.via === "import" || Boolean(a.data?.import_run_id),
+      })),
+      loadedAt: new Date().toISOString(),
+    };
   });
   if (!res.ok) return <ApiErrorState error={res.error} title="The pipeline could not load" retryHref={`/w/${ws}/r/${ref}`} />;
   return (

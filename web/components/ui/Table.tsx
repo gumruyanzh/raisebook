@@ -1,4 +1,4 @@
-import type { ComponentProps, KeyboardEvent, ReactNode } from "react";
+import type { ComponentProps, CSSProperties, KeyboardEvent, ReactNode, Ref } from "react";
 
 import { cn } from "@/lib/cn";
 
@@ -11,17 +11,21 @@ export function TableScroll({
   children,
   className,
   maxHeight,
+  height,
+  ref,
 }: {
   children: ReactNode;
   className?: string;
   /** Lets sticky headers stick inside the wrapper (e.g. "70vh"). */
   maxHeight?: string;
+  /** A fixed height (the pipeline table fills the viewport); rows scroll inside. */
+  height?: number | string;
+  ref?: Ref<HTMLDivElement>;
 }) {
+  const style: CSSProperties | undefined =
+    maxHeight || height !== undefined ? { maxHeight, height, overflowY: "auto" } : undefined;
   return (
-    <div
-      className={cn("overflow-x-auto rounded-md border border-line bg-surface", className)}
-      style={maxHeight ? { maxHeight, overflowY: "auto" } : undefined}
-    >
+    <div ref={ref} className={cn("overflow-x-auto rounded-md border border-line bg-surface", className)} style={style}>
       {children}
     </div>
   );
@@ -53,10 +57,24 @@ export function TBody(props: ComponentProps<"tbody">) {
 export interface TrProps extends ComponentProps<"tr"> {
   /** Makes the row clickable: pointer, hover tint, Enter/Space activates (SYSTEM 3.11). */
   onActivate?: () => void;
+  /** Selected or open: accent-soft plus a 2px inset accent rule on the left. */
   selected?: boolean;
   /** Agent-made row: 2px orchid left rule (SYSTEM §1.2). */
   agent?: boolean;
 }
+
+/** Row hover is a neutral tint, distinct from the selected accent-soft (UX pass 1, P1-2). */
+export const ROW_HOVER = "hover:[&>td]:bg-[color-mix(in_oklab,var(--sunk)_55%,var(--surface))]";
+
+/**
+ * Keyboard focus on a row: a 2px inset ring drawn with cell shadows (outlines on <tr> are
+ * unreliable), so sticky cells and the scroller never clip it.
+ */
+export const ROW_FOCUS =
+  "focus-visible:outline-none " +
+  "focus-visible:[&>td]:shadow-[inset_0_2px_0_var(--accent),inset_0_-2px_0_var(--accent)] " +
+  "focus-visible:[&>td:first-child]:shadow-[inset_2px_0_0_var(--accent),inset_0_2px_0_var(--accent),inset_0_-2px_0_var(--accent)] " +
+  "focus-visible:[&>td:last-child]:shadow-[inset_-2px_0_0_var(--accent),inset_0_2px_0_var(--accent),inset_0_-2px_0_var(--accent)]";
 
 export function Tr({ onActivate, selected, agent, className, onKeyDown, ...rest }: TrProps) {
   const key = (e: KeyboardEvent<HTMLTableRowElement>) => {
@@ -83,9 +101,12 @@ export function Tr({ onActivate, selected, agent, className, onKeyDown, ...rest 
       aria-selected={selected || undefined}
       className={cn(
         "[&>td]:transition-colors [&>td]:duration-[120ms]",
-        onActivate && "cursor-pointer hover:[&>td]:bg-accent-soft",
+        onActivate && cn("cursor-pointer", !selected && ROW_HOVER),
         selected && "[&>td]:bg-accent-soft",
-        agent && "[&>td:first-child]:shadow-[inset_2px_0_0_var(--agent)]",
+        selected
+          ? "[&>td:first-child]:shadow-[inset_2px_0_0_var(--accent)]"
+          : agent && "[&>td:first-child]:shadow-[inset_2px_0_0_var(--agent)]",
+        ROW_FOCUS,
         className,
       )}
       {...rest}

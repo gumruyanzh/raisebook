@@ -5,6 +5,8 @@
  * `round` is a round id or slug everywhere.
  */
 
+import { followUpState, priorityFromFit } from "../format";
+
 import { seg, type ApiClient } from "./client";
 import { roundPath } from "./core";
 import type {
@@ -12,8 +14,11 @@ import type {
   FollowUpItem,
   FollowUpState,
   Instrument,
+  Investor,
+  InvestorCompact,
   Page,
   Participant,
+  ParticipantOwner,
   Round,
   RoundStatus,
   RoundSummary,
@@ -216,6 +221,156 @@ export const recordCommitment = (
 /** Logs `removed_from_round`. */
 export const removeParticipant = (c: ApiClient, round: string, investorId: UUID) =>
   c.del<void>(roundPath(round, `/participants/${seg(investorId)}`));
+
+/* ---------- bulk changes (UX pass 1, P1-6) ---------- */
+
+export type BulkOp =
+  | "stage"
+  | "follow_up"
+  | "owner"
+  | "fit"
+  | "add_tag"
+  | "remove_tag"
+  | "remove"
+  | "restore";
+
+/** One investor's values for `op: "restore"` (Undo); only the given fields are applied. */
+export interface BulkItem extends Omit<ParticipantUpdate, "note"> {
+  investor_id: UUID;
+}
+
+export type BulkInput =
+  | { op: "stage"; investor_ids: UUID[]; stage: string }
+  | { op: "follow_up"; investor_ids: UUID[]; follow_up_on: DateString | null }
+  | { op: "owner"; investor_ids: UUID[]; owner_user_id: UUID | null }
+  | { op: "fit"; investor_ids: UUID[]; fit: number }
+  | { op: "add_tag" | "remove_tag"; investor_ids: UUID[]; tag: string }
+  | { op: "remove"; investor_ids: UUID[] }
+  | { op: "restore"; items: BulkItem[] };
+
+export interface BulkResult {
+  bulk_id: UUID;
+  op: BulkOp;
+  changed: number;
+  unchanged: number;
+  /** The listed investors' participations after the change (empty for `remove`). */
+  participants: Participant[];
+  removed: UUID[];
+}
+
+/**
+ * Up to 1,000 investors in one transaction, one activity each with a shared `data.bulk_id`.
+ * All or nothing: 404 if any id is outside the workspace, 409 `not_in_round` (except for
+ * `restore`, which adds them back).
+ */
+export const bulkUpdateParticipants = (c: ApiClient, round: string, body: BulkInput) =>
+  c.post<BulkResult>(roundPath(round, "/participants/bulk-update"), body);
+
+/* ---------- the pipeline page's trimmed payload (UX pass 1, P1-1) ---------- */
+
+/**
+ * One row of the pipeline as the server page sends it: the participant without the
+ * repeated round and stage objects, plus the few investor fields the cards, rows and
+ * filters use. `search` is the lowercased extra text the search box matches (location,
+ * focus, source, intro, check note and the start of the notes). The client expands rows
+ * back to `Participant` with {@link expandPipelineItems}.
+ */
+export interface PipelineItem {
+  investor: InvestorCompact;
+  stage: string;
+  fit: number;
+  probability?: number | null;
+  amount_soft?: number | null;
+  amount_committed?: number | null;
+  committed_on?: DateString | null;
+  follow_up_on?: DateString | null;
+  follow_up_note?: string | null;
+  next_step?: string | null;
+  owner?: ParticipantOwner | null;
+  stage_changed_at: string;
+  last_activity_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  industries: string[];
+  search: string;
+}
+
+/** Investor fields the pipeline keeps per row (filters and search), by investor id. */
+export interface PipelineExtra {
+  industries: string[];
+  search: string;
+}
+
+const NOTES_IN_SEARCH = 400;
+
+/** Server side: participants (+ the round's investors) → the trimmed rows. */
+export function toPipelineItems(participants: Participant[], investors: Investor[]): PipelineItem[] {
+  const byId = new Map(investors.map((i) => [i.id, i]));
+  return participants.map((p) => {
+    const inv = byId.get(p.investor.id);
+    const { email: _e, linkedin_url: _l, ...investor } = p.investor;
+    const search = inv
+      ? [
+          inv.location,
+          ...(inv.stage_focus ?? []),
+          inv.source,
+          inv.warm_intro_by,
+          inv.check_note,
+          inv.notes?.slice(0, NOTES_IN_SEARCH),
+          p.investor.email,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+      : (p.investor.email ?? "").toLowerCase();
+    const item: PipelineItem = {
+      investor,
+      stage: p.stage.key,
+      fit: p.fit,
+      stage_changed_at: p.stage_changed_at,
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+      industries: inv?.industries ?? [],
+      search,
+    };
+    // Only non-empty optional fields travel (most rows have few of them).
+    if (p.probability != null) item.probability = p.probability;
+    if (p.amount_soft != null) item.amount_soft = p.amount_soft;
+    if (p.amount_committed != null) item.amount_committed = p.amount_committed;
+    if (p.committed_on) item.committed_on = p.committed_on;
+    if (p.follow_up_on) item.follow_up_on = p.follow_up_on;
+    if (p.follow_up_note) item.follow_up_note = p.follow_up_note;
+    if (p.next_step) item.next_step = p.next_step;
+    if (p.owner) item.owner = p.owner;
+    if (p.last_activity_at) item.last_activity_at = p.last_activity_at;
+    return item;
+  });
+}
+
+/** Client side: trimmed rows → `Participant` objects (stage objects, priority, state). */
+export function expandPipelineItems(
+  items: PipelineItem[],
+  round: Pick<Round, "id" | "slug" | "stages">,
+  today: string,
+): { participants: Participant[]; extras: Record<UUID, PipelineExtra> } {
+  const stages = new Map(round.stages.map((s) => [s.key, s]));
+  const fallback = sortedStages(round.stages)[0]!;
+  const extras: Record<UUID, PipelineExtra> = {};
+  const participants = items.map((it) => {
+    const { industries, search, stage, ...rest } = it;
+    extras[it.investor.id] = { industries, search };
+    return {
+      ...rest,
+      round_id: round.id,
+      round_slug: round.slug,
+      investor: { ...it.investor, tags: it.investor.tags ?? [] },
+      stage: stages.get(stage) ?? fallback,
+      priority: priorityFromFit(it.fit),
+      follow_up_state: followUpState(it.follow_up_on, today),
+    } satisfies Participant;
+  });
+  return { participants, extras };
+}
 
 /* ---------- follow-ups ---------- */
 

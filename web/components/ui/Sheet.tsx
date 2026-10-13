@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/cn";
@@ -10,7 +10,8 @@ import { useFocusTrap } from "./useFocusTrap";
 /**
  * Right-side panel, min(520px, 100%) wide (SYSTEM 3.14): surface, 1px left line, scrim (no
  * shadow). Esc and the scrim close it. Focus is trapped while open, moves to the close button
- * on open and returns to the invoking element on close. Respects safe-area insets.
+ * (or, with `focusTitle`, to the title, so a pointer open shows no ring) and returns to the
+ * invoking element on close. Respects safe-area insets.
  */
 export function Sheet({
   open,
@@ -23,6 +24,8 @@ export function Sheet({
   label,
   width = 520,
   className,
+  focusTitle,
+  bodyRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -37,13 +40,18 @@ export function Sheet({
   label?: string;
   width?: number;
   className?: string;
+  /** Focus the title on open instead of ✕ (the investor sheet). */
+  focusTitle?: boolean;
+  /** The scrolling body (to scroll back to the top when the content changes). */
+  bodyRef?: Ref<HTMLDivElement>;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const titleId = useId();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  useFocusTrap(panel, open && mounted, close);
+  useFocusTrap(panel, open && mounted, focusTitle ? titleRef : close);
 
   useEffect(() => {
     if (!open) return;
@@ -77,7 +85,7 @@ export function Sheet({
       >
         <header className="flex items-start gap-10 border-b border-line px-18 pt-16 pb-12">
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="t-display-s">
+            <h2 ref={titleRef} id={titleId} tabIndex={focusTitle ? -1 : undefined} className="t-display-s outline-none">
               {title}
             </h2>
             {subline ? <p className="mt-3 text-muted">{subline}</p> : null}
@@ -86,7 +94,9 @@ export function Sheet({
           {headerAside ? <div className="shrink-0 pt-4">{headerAside}</div> : null}
           <CloseButton ref={close} onClick={onClose} />
         </header>
-        <div className="flex flex-col gap-16 overflow-y-auto px-18 pt-14 pb-24">{children}</div>
+        <div ref={bodyRef} className="flex flex-col gap-16 overflow-y-auto overscroll-contain px-18 pt-14 pb-24">
+          {children}
+        </div>
       </div>
     </>,
     document.body,

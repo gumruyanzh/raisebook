@@ -2,7 +2,8 @@
 
 import { useRef, useState } from "react";
 
-import { Button, Input, Segmented, Textarea, useToast } from "@/components/ui";
+import { Button, Segmented, Textarea, useToast } from "@/components/ui";
+import { DateField } from "@/components/ui/DateField";
 import { logActivity } from "@/lib/api/activities";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
 import type { Activity, LoggableKind } from "@/lib/api/types";
@@ -41,6 +42,7 @@ export function LogComposer({
   disabled,
   onLogged,
   className,
+  textareaId,
 }: {
   client: ApiClient;
   investorId: string;
@@ -52,6 +54,8 @@ export function LogComposer({
   disabled?: boolean;
   onLogged?: (a: Activity) => void;
   className?: string;
+  /** id of the textarea (the sheet's N key focuses it). */
+  textareaId?: string;
 }) {
   const toast = useToast();
   const [kind, setKind] = useState<LoggableKind>("note");
@@ -104,6 +108,7 @@ export function LogComposer({
         options={KINDS.map((k) => ({ value: k, label: LOGGABLE_KIND_LABEL[k] }))}
       />
       <Textarea
+        id={textareaId}
         aria-label={PLACEHOLDER[kind]}
         placeholder={disabled ? "View only" : PLACEHOLDER[kind]}
         value={body}
@@ -119,15 +124,15 @@ export function LogComposer({
         className="min-h-80"
       />
       <div className="flex flex-wrap items-center gap-8">
-        <Input
-          type="date"
+        <DateField
           aria-label="When it happened"
           value={date}
-          max="9999-12-31"
+          timeZone={timeZone}
+          quickPicks="none"
+          clearable={false}
           disabled={disabled}
-          onChange={(e) => setDate(e.target.value || today)}
-          className="w-[150px]!"
-          mono
+          onChange={(iso) => setDate(iso || today)}
+          className="w-[170px]"
         />
         <Button
           type="submit"
