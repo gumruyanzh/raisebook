@@ -20,12 +20,15 @@ export interface ToastAction {
 interface ToastItem {
   id: number;
   message: ReactNode;
-  action?: ToastAction;
+  actions: ToastAction[];
 }
 
 interface ToastApi {
-  /** One line. With an action ("Undo"), it stays 8s instead of 4s. */
-  show: (message: ReactNode, action?: ToastAction) => void;
+  /**
+   * One line. With an action ("Undo"), it stays 8s instead of 4s. At most two actions
+   * ("Refresh ≈ $0.20", "Undo"): the first is the offer, the last the undo.
+   */
+  show: (message: ReactNode, action?: ToastAction | ToastAction[]) => void;
   dismiss: () => void;
 }
 
@@ -46,11 +49,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const show = useCallback(
-    (message: ReactNode, action?: ToastAction) => {
+    (message: ReactNode, action?: ToastAction | ToastAction[]) => {
       if (timer.current) clearTimeout(timer.current);
       seq.current += 1;
-      setItem({ id: seq.current, message, action });
-      timer.current = setTimeout(() => setItem(null), action ? 8000 : 4000);
+      const actions = (Array.isArray(action) ? action : action ? [action] : []).slice(0, 2);
+      setItem({ id: seq.current, message, actions });
+      timer.current = setTimeout(() => setItem(null), actions.length > 1 ? 12000 : actions.length ? 8000 : 4000);
     },
     [],
   );
@@ -73,18 +77,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             className="anim-fade pointer-events-auto flex max-w-[min(560px,100%)] items-center gap-14 rounded-md bg-fg px-14 py-8 text-13 text-canvas"
           >
             <span className="min-w-0">{item.message}</span>
-            {item.action ? (
+            {item.actions.map((a) => (
               <button
+                key={a.label}
                 type="button"
-                className="shrink-0 border-0 bg-transparent p-0 font-semibold text-canvas underline underline-offset-2"
+                className="shrink-0 border-0 bg-transparent p-0 font-semibold whitespace-nowrap text-canvas underline underline-offset-2"
                 onClick={() => {
-                  item.action?.onClick();
+                  a.onClick();
                   dismiss();
                 }}
               >
-                {item.action.label}
+                {a.label}
               </button>
-            ) : null}
+            ))}
           </div>
         ) : null}
       </div>

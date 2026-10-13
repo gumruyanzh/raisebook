@@ -25,9 +25,11 @@ import { activitySentence } from "@/components/ui/Timeline";
 import { importRunOf, importSentence, listActivities } from "@/lib/api/activities";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
 import { importRunsCached, type ImportRun } from "@/lib/api/data";
-import { getInvestor } from "@/lib/api/investors";
+import { getInvestor, updateInvestor, type InvestorUpdate } from "@/lib/api/investors";
+import { acceptAllSuggestions, type AiSettings, type RoundResearchRow, type Suggestion } from "@/lib/api/research";
 import {
   bulkUpdateParticipants,
+  getParticipant,
   moveStage,
   setFollowUp,
   updateParticipant,
@@ -69,6 +71,8 @@ import {
 } from "@/lib/pipeline";
 
 import { checkSize } from "./InvestorSheet";
+import { forgetInvestorResearch } from "./research/hooks";
+import { TriageResearch } from "./research/TriageResearch";
 import { draftHref, ReachOut, type ReachPerson } from "./ReachOut";
 import { useMediaQuery } from "./util";
 
@@ -112,6 +116,8 @@ interface Decision {
   /** Where the cursor was when a bulk move was made: Undo goes back there, not to the
    * first id of the selection (critique 4: Undo of "Select 86 → 7" landed on the last fit-0 row). */
   cursor?: string | null;
+  /** Puts back what the entry changed outside the participant (investor fields from research). */
+  revert?: () => Promise<void>;
 }
 
 interface FullInvestor {
@@ -186,6 +192,7 @@ export function PipelineTriage({
   squeezed = false,
   fileId = null,
   onOrder,
+  research,
 }: {
   round: Round;
   stages: Stage[];
@@ -222,6 +229,16 @@ export function PipelineTriage({
   fileId?: string | null;
   /** The queue's order (the slice on screen), for the sheet's "3 of 190" and ↑ ↓. */
   onOrder?: (ids: string[]) => void;
+  /** The round's research rows and settings (RESEARCH-PLAN §8.4); absent hides research. */
+  research?: {
+    rows: Map<string, RoundResearchRow>;
+    settings: AiSettings | null | undefined;
+    onChange: () => void;
+    /** Offer a refresh when someone lands in Meeting with an old dossier (R10). */
+    refreshOffer: (investorId: string) => { label: string; onClick: () => void } | null;
+    /** Research or match the selection (the estimate dialog). */
+    onBulk: (kind: "identity" | "dossier", ids: string[]) => void;
+  };
 }) {
   const toast = useToast();
   const { workspace } = useWorkspace();
@@ -397,16 +414,17 @@ export function PipelineTriage({
    * buttons it answers, instead of a toast over the investor (critique 3); phones keep the
    * toast above the bottom bar. Failures are always toasts.
    */
-  const [notice, setNotice] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
+  const [notice, setNotice] = useState<{ id: number; text: string; undo?: () => void; extra?: { label: string; onClick: () => void } } | null>(null);
   const noticeSeq = useRef(0);
   const notify = useCallback(
-    (text: string, undoFn?: () => void) => {
+    (text: string, undoFn?: () => void, extra?: { label: string; onClick: () => void }) => {
       if (phone) {
-        toast.show(text, undoFn ? { label: "Undo", onClick: undoFn } : undefined);
+        const acts = [...(extra ? [extra] : []), ...(undoFn ? [{ label: "Undo", onClick: undoFn }] : [])];
+        toast.show(text, acts.length ? acts : undefined);
         return;
       }
       noticeSeq.current += 1;
-      setNotice({ id: noticeSeq.current, text, undo: undoFn });
+      setNotice({ id: noticeSeq.current, text, undo: undoFn, extra });
     },
     [phone, toast],
   );
@@ -460,6 +478,9 @@ export function PipelineTriage({
         if (entry.to) setCounts((c) => ({ ...c, [entry.to!]: Math.max(0, (c[entry.to!] ?? 0) - entry.ids.length) }));
         if (entry.bulk) setBulkN((n) => Math.max(0, n - entry.ids.length));
         else setTimes((t) => t.filter((x) => x !== entry.at));
+      }
+      if (entry.revert) {
+        void entry.revert().catch((err) => toast.show(`Couldn't put the research changes back. ${errorMessage(err)}`));
       }
       const back = entry.bulk && entry.cursor ? entry.cursor : entry.ids[0]!;
       go(back);
@@ -516,7 +537,8 @@ export function PipelineTriage({
       refreshFull(id);
       const msg = `${p.investor.name} moved to ${to.label}.`;
       store.announce(msg);
-      notify(msg, () => void undo(entry));
+      const offer = research?.refreshOffer(id) ?? null;
+      notify(offer ? `${msg} Refresh the dossier before the meeting?` : msg, () => void undo(entry), offer ?? undefined);
       store.afterWrite();
     } catch (err) {
       undoStack.current = undoStack.current.filter((x) => x !== entry);
@@ -668,6 +690,52 @@ export function PipelineTriage({
       undoStack.current = undoStack.current.filter((x) => x !== entry);
       store.rollback([p]);
       toast.show(`Couldn't change the fit. ${errorMessage(err)}`);
+    }
+  };
+
+  /**
+   * `A`: accept every pending research suggestion for the current investor (R7). One entry on
+   * the Undo stack: U restores the fit from the turn's snapshot and puts the investor fields
+   * research changed back to what they were.
+   */
+  const acceptResearch = async (pending: Suggestion[]) => {
+    if (!current || !canWrite || !pending.length) return;
+    const p = current;
+    const id = p.investor.id;
+    const before: InvestorUpdate = {};
+    for (const sg of pending) if (sg.field !== "fit") (before as Record<string, unknown>)[sg.field] = sg.current_value ?? null;
+    const entry: Decision = {
+      kind: "edit",
+      ids: [id],
+      snaps: [snap(p)],
+      to: null,
+      at: Date.now(),
+      what: "research suggestions",
+      revert: Object.keys(before).length
+        ? async () => {
+            await updateInvestor(client, id, before);
+            forgetInvestorResearch(id);
+            refreshFull(id);
+            research?.onChange();
+          }
+        : undefined,
+    };
+    pushUndo(entry);
+    try {
+      const r = await acceptAllSuggestions(client, { investorIds: [id] });
+      forgetInvestorResearch(id);
+      refreshFull(id);
+      research?.onChange();
+      store.afterWrite();
+      // An accepted fit changes the participant: read it back so the queue shows it.
+      if (pending.some((x) => x.field === "fit")) {
+        const fresh = await getParticipant(client, round.id, id).catch(() => null);
+        if (fresh) store.commit([fresh]);
+      }
+      notify(`Accepted ${r.accepted === 1 ? "1 research suggestion" : `${num(r.accepted)} research suggestions`} for ${firstName(p.investor.name)}.`, () => void undo(entry));
+    } catch (err) {
+      undoStack.current = undoStack.current.filter((x) => x !== entry);
+      toast.show(`Couldn't accept the suggestions. ${errorMessage(err)}`);
     }
   };
 
@@ -861,6 +929,35 @@ export function PipelineTriage({
   useToastLift(panelRef, !phone && Boolean(current || sel.length));
 
   const allFit0Selected = fit0.length > 0 && fit0.every((id) => selected.has(id));
+  // Research shows in the panel when it can run here or the round already has some (an
+  // agent's dossiers need no key); the same for every investor, so the panel never jumps.
+  const showResearch = Boolean(
+    research && (research.settings?.research_available || [...research.rows.values()].some((r) => r.verdict || r.identity_status === "needs_pick")),
+  );
+  const researchFor = (onPhone: boolean) =>
+    research && showResearch && current && !sel.length ? (
+      <TriageResearch
+        key={current.investor.id}
+        investorId={current.investor.id}
+        name={current.investor.name}
+        row={research.rows.get(current.investor.id) ?? full?.investor?.research ?? null}
+        settings={research.settings}
+        client={client}
+        wsSlug={wsSlug}
+        round={round.id}
+        today={today}
+        currency={round.currency}
+        canWrite={canWrite}
+        keysEnabled={keysEnabled && !confirm && !onPhone}
+        onChanged={() => {
+          refreshFull(current.investor.id);
+          research.onChange();
+          store.afterWrite();
+        }}
+        onAcceptAll={acceptResearch}
+      />
+    ) : null;
+
   const decisionPanel = (
     <DecisionPanel
       ref={panelRef}
@@ -906,11 +1003,17 @@ export function PipelineTriage({
       }}
       onDecide={decide}
       onFollow={(iso) => void setFollow(iso)}
+      research={!fileOpen ? researchFor(false) : null}
     />
   );
 
   const pane = sel.length ? (
-    <SelectionPane rows={sel} openLabel={openStage.label} onClear={() => setSelected(new Set())} />
+    <SelectionPane
+      rows={sel}
+      openLabel={openStage.label}
+      onClear={() => setSelected(new Set())}
+      onResearch={research && canWrite ? (kind) => research.onBulk(kind, sel.map((p) => p.investor.id)) : undefined}
+    />
   ) : current && fileOpen ? (
     // The file beside the queue already shows who this is: the pane keeps only the decision.
     <p className="t-body-s px-20 pt-14 pb-10 text-muted">
@@ -1073,6 +1176,7 @@ export function PipelineTriage({
         onFollow={(iso) => void setFollow(iso)}
         onSaveNextStep={saveNextStep}
         onDrafted={() => current && setDrafted(current.investor.id)}
+        research={researchFor(true)}
       />
     );
   }
@@ -1822,7 +1926,17 @@ function NextStepField({
   );
 }
 
-function SelectionPane({ rows, openLabel, onClear }: { rows: Participant[]; openLabel: string; onClear: () => void }) {
+function SelectionPane({
+  rows,
+  openLabel,
+  onClear,
+  onResearch,
+}: {
+  rows: Participant[];
+  openLabel: string;
+  onClear: () => void;
+  onResearch?: (kind: "identity" | "dossier") => void;
+}) {
   const fits = new Map<number, number>();
   for (const p of rows) fits.set(p.fit, (fits.get(p.fit) ?? 0) + 1);
   const fitKeys = [...fits.keys()].sort((a, b) => a - b);
@@ -1852,6 +1966,18 @@ function SelectionPane({ rows, openLabel, onClear }: { rows: Participant[]; open
         ))}
       </ul>
       {rows.length > SHOW ? <p className="t-body-s text-muted">and {num(rows.length - SHOW)} more</p> : null}
+      {onResearch ? (
+        <p className="flex flex-wrap items-center gap-8 border-t border-line pt-10">
+          <span className="t-label mr-4">Research</span>
+          <Button size="sm" onClick={() => onResearch("identity")}>
+            Match identities
+          </Button>
+          <Button size="sm" onClick={() => onResearch("dossier")}>
+            Research selected
+          </Button>
+          <span className="t-body-s text-muted">See the cost before anything runs.</span>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1882,8 +2008,11 @@ function DecisionPanel({
   onTrust,
   onDecide,
   onFollow,
+  research,
 }: {
   ref?: Ref<HTMLDivElement>;
+  /** The investor's research (Brief, "Is this them?", Research), fixed height. */
+  research?: ReactNode;
   who: string | null;
   /** How many are selected (0: one investor). */
   bulk: number;
@@ -1901,7 +2030,7 @@ function DecisionPanel({
   /** The file is open beside the queue (fewer key hints: the sheet's keys win). */
   fileOpen: boolean;
   /** The last change, with Undo (desktop says it here instead of a toast). */
-  notice: { id: number; text: string; undo?: () => void } | null;
+  notice: { id: number; text: string; undo?: () => void; extra?: { label: string; onClick: () => void } } | null;
   onDismissNotice: () => void;
   /** "Draft intro email" was clicked for this investor: point at Contacted. */
   drafted: boolean;
@@ -1990,6 +2119,7 @@ function DecisionPanel({
       }}
       className="@container/dp flex shrink-0 flex-col gap-10 border-t border-line bg-sunk px-20 pt-14 pb-12"
     >
+      {research ? <div className="-mx-20 -mt-14 mb-2 border-b border-line bg-surface px-20 pt-10 pb-10">{research}</div> : null}
       {confirm ? (
         <div role="alert" className="flex min-w-0 flex-wrap items-center gap-x-10 gap-y-6 rounded-sm border border-warm bg-warm-soft px-12 py-8">
           <p className="t-body-s min-w-0 flex-1 text-warm-ink">
@@ -2023,6 +2153,18 @@ function DecisionPanel({
                 ✓
               </span>
               <span className="min-w-0 truncate text-fg">{notice.text}</span>
+              {notice.extra ? (
+                <button
+                  type="button"
+                  className="link shrink-0 border-0 bg-transparent p-0 whitespace-nowrap"
+                  onClick={() => {
+                    notice.extra!.onClick();
+                    onDismissNotice();
+                  }}
+                >
+                  {notice.extra.label}
+                </button>
+              ) : null}
               {notice.undo ? (
                 <button
                   type="button"
@@ -2159,7 +2301,10 @@ function TriagePhone({
   onFollow,
   onSaveNextStep,
   onDrafted,
+  research,
 }: {
+  /** The investor's research block (the Brief, "Is this them?" or Research). */
+  research?: ReactNode;
   round: Round;
   current: Participant | null;
   full: FullInvestor | undefined;
@@ -2295,6 +2440,7 @@ function TriagePhone({
                   <p className="t-body-s mt-10 text-muted">Only the basics so far.</p>
                 ) : null}
               </article>
+              {research ? <div className="mt-12 rounded-md border border-line bg-surface px-16 py-12">{research}</div> : null}
               <div className="mt-12">
                 {stepOpen ? (
                   <NextStepField key={p.investor.id} value={p.next_step ?? ""} canWrite={canWrite} focusReq={0} onSave={onSaveNextStep} />

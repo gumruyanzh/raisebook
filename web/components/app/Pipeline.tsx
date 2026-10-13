@@ -34,6 +34,8 @@ import {
 import { Avatar } from "@/components/ui/Avatar";
 import { FilterChips, FilterMenu, type FilterField, type FilterMenuHandle } from "@/components/ui/FilterBar";
 import { errorMessage } from "@/lib/api/client";
+import { startResearch, type Batch } from "@/lib/api/research";
+import { approxUsd, refreshOffer } from "@/lib/research";
 import {
   bulkUpdateParticipants,
   cardFacts,
@@ -76,6 +78,10 @@ import { ledgerFacts, LedgerDesk, LedgerStrip, shownBuckets } from "./PipelineLe
 import { PipelinePhone } from "./PipelinePhone";
 import { PipelineTriage, type TriageStore } from "./PipelineTriage";
 import { RoundHeader } from "./RoundHeader";
+import { BatchProgress } from "./research/BatchProgress";
+import { EstimateDialog, type ResearchTarget } from "./research/EstimateDialog";
+import { RoundResearchMenu } from "./research/RoundResearchMenu";
+import { announceRun, invalidateResearch, useAiSettings, useRoundResearch } from "./research/hooks";
 import {
   DEFAULT_DIR,
   PipelineTable,
@@ -522,6 +528,37 @@ export function Pipeline(props: PipelineProps) {
     [setParticipants],
   );
 
+  /* ---------- research (RESEARCH-PLAN §8.4–8.6) ---------- */
+  const research = useRoundResearch(client, round.id);
+  const researchRowsRef = useRef(research.rows);
+  researchRowsRef.current = research.rows;
+  const { settings: aiSettings } = useAiSettings(client);
+  const aiRef = useRef(aiSettings);
+  aiRef.current = aiSettings;
+  const [estimateTarget, setEstimateTarget] = useState<ResearchTarget | null>(null);
+  const [batch, setBatch] = useState<Batch | null>(null);
+  /** "Refresh before your meeting? ≈ $0.20" (R10): only for an old dossier, never automatic. */
+  const meetingOffer = useCallback(
+    (investorId: string, name: string): { label: string; onClick: () => void } | null => {
+      const row = researchRowsRef.current.get(investorId);
+      const ai = aiRef.current;
+      if (!canWrite || !ai?.research_available || !refreshOffer("meeting", row?.dossier_at, new Date())) return null;
+      return {
+        label: `Refresh ${approxUsd(ai.estimates.current)}`.trim(),
+        onClick: () =>
+          void startResearch(client, investorId, { kind: "refresh", round: round.id })
+            .then(() => {
+              announceRun(investorId);
+              toast.show(`Refreshing ${name}'s dossier. What is new shows at the top when it is done.`);
+              void research.refresh();
+            })
+            .catch((err) => toast.show(`The refresh did not start. ${errorMessage(err)}`)),
+      };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, client, round.id, toast, research.refresh],
+  );
+
   /* ---------- single moves (optimistic, with Undo) ---------- */
   const participantsRef = useRef(participants);
   participantsRef.current = participants;
@@ -542,7 +579,13 @@ export function Pipeline(props: PipelineProps) {
         patchParticipant(res.participant);
         const msg = `${prev.investor.name} moved to ${to.label}.`;
         setAnnounce(msg);
+        const offer = to.key === "meeting" ? meetingOffer(investorId, prev.investor.name) : null;
         if (opts.undo === false) toast.show(msg);
+        else if (offer)
+          toast.show(`${msg} Refresh the dossier before the meeting?`, [
+            offer,
+            { label: "Undo", onClick: () => void doMoveRef.current(investorId, from.key, { undo: false }) },
+          ]);
         else
           toast.show(
             to.kind === "won" && !res.participant.amount_committed ? `${msg} Record the amount in their file.` : msg,
@@ -557,7 +600,7 @@ export function Pipeline(props: PipelineProps) {
         return false;
       }
     },
-    [stages, client, round.id, patchParticipant, toast, afterWrite, setParticipants],
+    [stages, client, round.id, patchParticipant, toast, afterWrite, setParticipants, meetingOffer],
   );
   const doMoveRef = useRef(doMove);
   doMoveRef.current = doMove;
@@ -1026,6 +1069,9 @@ export function Pipeline(props: PipelineProps) {
   runBulkRef.current = runBulk;
 
   const selectedRows = () => participantsRef.current.filter((p) => selected.has(p.investor.id));
+  const allIds = useMemo(() => participants.map((p) => p.investor.id), [participants]);
+  const researchSelection = (kind: "identity" | "dossier", ids: string[]) =>
+    setEstimateTarget({ kind, investorIds: ids, scope: `the ${num(ids.length)} selected` });
   const n = selected.size;
   const plural = (k: number) => `${num(k)} ${k === 1 ? "investor" : "investors"}`;
 
@@ -1409,6 +1455,35 @@ export function Pipeline(props: PipelineProps) {
       />
     ) : null;
 
+  // Research for the round (R4): the title row in Triage, the toolbar on the board and table.
+  const researchNode =
+    canWrite && !empty && aiSettings !== undefined ? (
+      <span className="inline-flex min-w-0 shrink-0 items-center gap-10">
+        {batch ? (
+          <BatchProgress
+            key={batch.id}
+            batch={batch}
+            client={client}
+            onTick={() => void research.refresh()}
+            onDone={() => {
+              setBatch(null);
+              invalidateResearch(client);
+              void research.refresh();
+              afterWrite();
+            }}
+          />
+        ) : null}
+        <RoundResearchMenu
+          ids={allIds}
+          rows={research.rows}
+          settings={aiSettings}
+          wsSlug={workspace.slug}
+          onMatchAll={() => setEstimateTarget({ kind: "identity", round: round.id, scope: `everyone in ${round.name}` })}
+          onResearchAll={() => setEstimateTarget({ kind: "dossier", round: round.id, scope: `everyone in ${round.name} with an identity` })}
+        />
+      </span>
+    ) : null;
+
   const bulkBar =
     n > 0 && canWrite && view !== "triage" ? (
       <BulkBar
@@ -1427,6 +1502,7 @@ export function Pipeline(props: PipelineProps) {
         onRemove={() => setConfirmRemove(true)}
         onExport={exportSelected}
         onClear={() => setSelected(new Set())}
+        onResearch={(kind) => researchSelection(kind, [...selected])}
       />
     ) : null;
 
@@ -1489,6 +1565,7 @@ export function Pipeline(props: PipelineProps) {
             aside={
               <>
                 {headW < 700 ? null : setupNode}
+                {view === "triage" ? researchNode : null}
                 {/* One place in every view (critique 3): the title row's right-aligned group. */}
                 {canWrite && !empty ? (
                   <Button
@@ -1615,6 +1692,7 @@ export function Pipeline(props: PipelineProps) {
                     Next steps
                   </button>
                 ) : null}
+                {researchNode}
                 <span className="t-micro whitespace-nowrap text-muted" aria-live="polite">
                   {n > 0 ? `${num(n)} selected · ` : ""}
                   {countText}
@@ -1709,6 +1787,13 @@ export function Pipeline(props: PipelineProps) {
             squeezed={splitOpen}
             fileId={openId}
             onOrder={onTriageOrder}
+            research={{
+              rows: research.rows,
+              settings: aiSettings,
+              onChange: () => void research.refresh(),
+              refreshOffer: (id) => meetingOffer(id, participantsRef.current.find((p) => p.investor.id === id)?.investor.name ?? "this investor"),
+              onBulk: researchSelection,
+            }}
           />
         </div>
       ) : phone ? null : (
@@ -1825,6 +1910,23 @@ export function Pipeline(props: PipelineProps) {
           void refreshSummary();
         }}
         onStageMove={doMove}
+        onResearchChange={() => void research.refresh()}
+      />
+
+      <EstimateDialog
+        target={estimateTarget}
+        client={client}
+        wsSlug={workspace.slug}
+        settings={aiSettings}
+        onClose={() => setEstimateTarget(null)}
+        onStarted={(b, runs) => {
+          setEstimateTarget(null);
+          setBatch(b);
+          setSelected(new Set());
+          toast.show(b.kind === "identity" ? `Matching ${plural(runs)}. Rows update as they finish.` : `Researching ${plural(runs)}. Rows update as they finish.`);
+          invalidateResearch(client);
+          void research.refresh();
+        }}
       />
 
       <AddInvestorDialog
@@ -2158,6 +2260,7 @@ function BulkBar({
   onRemove,
   onExport,
   onClear,
+  onResearch,
 }: {
   count: number;
   hiddenCount: number;
@@ -2174,6 +2277,7 @@ function BulkBar({
   onRemove: () => void;
   onExport: () => void;
   onClear: () => void;
+  onResearch: (kind: "identity" | "dossier") => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useToastLift(ref, true);
@@ -2264,6 +2368,15 @@ function BulkBar({
           items={[
             { label: "Add a tag…", onSelect: () => onTag("add") },
             { label: "Remove a tag…", onSelect: () => onTag("remove") },
+          ]}
+        />
+        <Menu
+          label="Research the selection"
+          trigger="Research"
+          triggerClassName={trigger}
+          items={[
+            { label: "Research selected…", onSelect: () => onResearch("dossier") },
+            { label: "Match identities…", onSelect: () => onResearch("identity") },
           ]}
         />
         <Menu
