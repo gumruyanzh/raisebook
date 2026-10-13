@@ -25,7 +25,7 @@ export function TableScroll({
   const style: CSSProperties | undefined =
     maxHeight || height !== undefined ? { maxHeight, height, overflowY: "auto" } : undefined;
   return (
-    <div ref={ref} className={cn("overflow-x-auto rounded-md border border-line bg-surface", className)} style={style}>
+    <div ref={ref} className={cn("relative overflow-x-auto rounded-md border border-line bg-surface", className)} style={style}>
       {children}
     </div>
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/api/rounds";
 import type { ActorType, InvestorType, Member, Participant, Priority, Round, RoundSummary } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL, PRIORITY_LABEL } from "@/lib/api/types";
+import { cn } from "@/lib/cn";
 import { useCommands } from "@/lib/commands";
 import { formatDate, num, priorityFromFit, relativeTime } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
@@ -84,12 +86,38 @@ type View = "board" | "table";
 type FollowFilter = "" | "due" | "week" | "none";
 
 const VIEW_KEY = (roundId: string) => `rb-view:${roundId}`;
+/** The investor sheet's width (Sheet's default). */
+const SHEET_W = 520;
 const COLS_KEY = (ws: string, roundId: string) => `rb-table-cols:${ws}:${roundId}`;
 const DENSITY_KEY = (view: View) => `rb-density:${view}`;
 const BOARD_SORT_KEY = (roundId: string) => `rb-board-sort:${roundId}`;
 /** Columns hidden until the founder turns them on. */
 const DEFAULT_HIDDEN: TableCol[] = ["title"];
 const FILTER_KEYS = ["stage", "prio", "type", "industry", "follow", "owner", "tag"] as const;
+/** URL keys a built-in view sets (the filters and the search). */
+const FILTER_PARAMS = ["q", ...FILTER_KEYS] as const;
+/** URL keys a saved view captures: filters, search, view and sort. */
+const VIEW_KEYS = [...FILTER_PARAMS, "view", "sort", "order"] as const;
+
+interface SavedView {
+  id: string;
+  name: string;
+  /** URL query (without the open investor). */
+  query: string;
+  builtin?: boolean;
+  density?: Density;
+  hidden?: TableCol[];
+}
+
+/** The given keys of a query, sorted, as a string (to compare views with the URL). */
+function normQuery(sp: URLSearchParams, keys: readonly string[]): string {
+  const out = new URLSearchParams();
+  for (const k of [...keys].sort()) {
+    const v = sp.get(k);
+    if (v) out.set(k, v);
+  }
+  return out.toString();
+}
 
 /** An agent action on the round in the last 24 hours (trimmed on the server). */
 export interface AgentMarkInput {
@@ -184,6 +212,8 @@ export interface PipelineProps {
   today: string;
   /** When the server made this payload (merge reference for the client store). */
   loadedAt: string;
+  /** "Get set up" facts the page cannot derive (null: not visible to this member). */
+  setup?: { activeKeys: number | null; pendingInvites: number | null };
 }
 
 /**
@@ -622,6 +652,87 @@ export function Pipeline(props: PipelineProps) {
     setParams({ q: null, prio: null, type: null, industry: null, follow: null, owner: null, stage: null, tag: null });
   };
 
+  /* ---------- saved views (P2-1): built-ins plus the founder's own, per round ---------- */
+  const me = props.members.find((m) => m.is_you);
+  const VIEWS_KEY = `rb-views:${workspace.slug}:${round.id}`;
+  const [saved, setSaved] = useState<SavedView[]>([]);
+  useEffect(() => setSaved(readJson<SavedView[]>(VIEWS_KEY, [])), [VIEWS_KEY]);
+  const storeSaved = (next: SavedView[]) => {
+    setSaved(next);
+    writeStore(VIEWS_KEY, JSON.stringify(next));
+  };
+  const builtins: SavedView[] = useMemo(
+    () => [
+      { id: "all", name: "All", query: "", builtin: true },
+      { id: "due", name: "Due now", query: "follow=due", builtin: true },
+      ...(me ? [{ id: "mine", name: "My investors", query: `owner=${me.user_id}`, builtin: true }] : []),
+      { id: "hot", name: "Hot", query: "prio=hot", builtin: true },
+    ],
+    [me],
+  );
+  const allViews = useMemo(() => [...builtins, ...saved], [builtins, saved]);
+  const currentQuery = (keys: readonly string[]) => normQuery(params, keys);
+  const activeView =
+    saved.find((v) => normQuery(new URLSearchParams(v.query), VIEW_KEYS) === currentQuery(VIEW_KEYS)) ??
+    builtins.find((v) => normQuery(new URLSearchParams(v.query), FILTER_PARAMS) === currentQuery(FILTER_PARAMS));
+  const applyView = (v: SavedView) => {
+    const next = new URLSearchParams(v.query);
+    const patch: Record<string, string | null> = {};
+    for (const k of v.builtin ? FILTER_PARAMS : VIEW_KEYS) patch[k] = next.get(k);
+    if (qTimer.current) clearTimeout(qTimer.current);
+    qTimer.current = null;
+    setQText(next.get("q") ?? "");
+    setParams(patch);
+    if (!v.builtin) {
+      const nv = (next.get("view") as View | null) ?? view;
+      if (nv === "board" || nv === "table") {
+        setStoredView(nv);
+        writeStore(VIEW_KEY(round.id), nv);
+      }
+      if (v.density) setDensity(nv, v.density);
+      if (v.hidden) {
+        setHidden(new Set(v.hidden));
+        writeStore(COLS_KEY(workspace.slug, round.id), JSON.stringify(v.hidden));
+      }
+    }
+  };
+  const [viewDialog, setViewDialog] = useState<null | { mode: "save" } | { mode: "rename"; id: string }>(null);
+  const suggestViewName = () => {
+    const parts = filterFields
+      .filter((f) => active[f.key])
+      .map((f) => f.values.find((x) => x.value === active[f.key])?.label ?? active[f.key]!);
+    if (q) parts.push(`“${q}”`);
+    return parts.join(" · ").slice(0, 40) || (view === "table" ? "Table" : "Board");
+  };
+  const saveView = (name: string) => {
+    const query = currentQuery(VIEW_KEYS);
+    const v: SavedView = {
+      id: `v${Date.now().toString(36)}`,
+      name,
+      query: query ? `${query}${query.includes("view=") ? "" : `&view=${view}`}` : `view=${view}`,
+      density: view === "table" ? tableDensity : boardDensity,
+      hidden: [...hidden],
+    };
+    storeSaved([...saved, v]);
+    toast.show(`Saved the view “${name}”.`);
+  };
+  // ⌘⇧1…9. Enabled one tick after mount so these registrations come after the shell's ⌘1…9
+  // (workspace switch), which would otherwise also match a shifted digit.
+  const [viewKeysReady, setViewKeysReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setViewKeysReady(true), 0);
+    return () => clearTimeout(t);
+  }, []);
+  for (let i = 0; i < 9; i++) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useHotkey(`mod+shift+${i + 1}`, () => allViews[i] && applyView(allViews[i]!), {
+      enabled: viewKeysReady && participants.length > 0 && Boolean(allViews[i]),
+      blockedByModals: true,
+      description: i === 0 ? "Switch saved view (1–9)" : undefined,
+      group: "Pipeline",
+    });
+  }
+
   /* ---------- order (table sort, board columns) ---------- */
   const sortedRows = useMemo(() => sortParticipants(filtered, sortCol, sortDir), [filtered, sortCol, sortDir]);
   const boardColumns = useMemo(() => {
@@ -647,7 +758,7 @@ export function Pipeline(props: PipelineProps) {
     return {
       ...base,
       inConversation: participants.filter((p) => p.stage.kind === "active").length,
-      funnel: stages.map((s) => ({ key: s.key, label: s.label, color: s.color, count: c[s.key] ?? 0 })),
+      funnel: stages.map((s) => ({ key: s.key, label: s.label, color: s.color, count: c[s.key] ?? 0, won: s.kind === "won" })),
     };
   }, [summary, participants, stages]);
 
@@ -690,6 +801,27 @@ export function Pipeline(props: PipelineProps) {
     const inRound = new Set(participants.map((p) => p.investor.id));
     return sheetOrder.filter((id) => inRound.has(id));
   }, [sheetOrder, order, participants]);
+
+  /* ---------- "Get set up" (P2-4) ---------- */
+  const SETUP_KEY = `rb-setup-dismissed:${workspace.slug}`;
+  const [setupDismissed, setSetupDismissed] = useState(true);
+  useEffect(() => setSetupDismissed(readStore(SETUP_KEY) === "1"), [SETUP_KEY]);
+  const setupSteps = useMemo(() => {
+    const keys = props.setup?.activeKeys ?? null;
+    const invites = props.setup?.pendingInvites ?? 0;
+    return [
+      { key: "import", label: "Bring in your investor list", done: participants.length > 0 },
+      { key: "invite", label: "Invite a co-founder", done: props.members.length > 1 || invites > 0 },
+      { key: "agent", label: "Connect an agent", done: keys !== null && keys > 0, unknown: keys === null },
+      { key: "followups", label: "Set your first follow-ups", done: participants.some((p) => p.follow_up_on) },
+    ];
+  }, [participants, props.members.length, props.setup]);
+  const setupLeft = setupSteps.filter((x) => !x.done).length;
+  const showSetup = canWrite && !setupDismissed && setupLeft > 0;
+  const dismissSetup = () => {
+    writeStore(SETUP_KEY, "1");
+    setSetupDismissed(true);
+  };
 
   const openParticipant = openId ? participants.find((p) => p.investor.id === openId) : undefined;
   const base = `/w/${encodeURIComponent(workspace.slug)}`;
@@ -897,6 +1029,9 @@ export function Pipeline(props: PipelineProps) {
 
   /* ---------- keyboard and palette ---------- */
   const isNarrow = useMediaQuery("(max-width: 899px)");
+  // ≥1280px the sheet is a split panel: the list stays usable and follows the keyboard (P2-3).
+  const split = useMediaQuery("(min-width: 1280px)") === true;
+  const splitOpen = split && Boolean(openId);
   useHotkey("/", () => searchRef.current?.focus(), {
     description: "Search this round",
     group: "Pipeline",
@@ -1018,9 +1153,31 @@ export function Pipeline(props: PipelineProps) {
   );
 
   return (
-    <div ref={surfaceRef} className="flex flex-col gap-14" style={eatBottom ? { marginBottom: -eatBottom } : undefined}>
+    <div
+      ref={surfaceRef}
+      className="flex flex-col gap-14"
+      style={{
+        ...(eatBottom ? { marginBottom: -eatBottom } : null),
+        ...(splitOpen ? { paddingRight: SHEET_W - 8 } : null),
+      }}
+    >
       {/* On phones the round picker under the top bar already names the round. */}
-      <RoundHeader wsSlug={workspace.slug} round={round} active="pipeline" className="mb-0 max-sm:hidden" />
+      <RoundHeader wsSlug={workspace.slug} round={round} active="pipeline" className="mb-0 max-sm:hidden">
+        {empty ? null : (
+          <ViewTabs
+            views={allViews}
+            activeId={activeView?.id ?? null}
+            onSelect={applyView}
+            onSave={() => setViewDialog({ mode: "save" })}
+            onRename={(id) => setViewDialog({ mode: "rename", id })}
+            onDelete={(id) => {
+              const v = saved.find((x) => x.id === id);
+              storeSaved(saved.filter((x) => x.id !== id));
+              if (v) toast.show(`Deleted the view “${v.name}”.`, { label: "Undo", onClick: () => storeSaved([...saved]) });
+            }}
+          />
+        )}
+      </RoundHeader>
       <Ledger
         {...ledger}
         variant="compact"
@@ -1030,6 +1187,16 @@ export function Pipeline(props: PipelineProps) {
         onDueSelect={openInvestor}
         onDueFilter={() => setParams({ follow: "due" })}
       />
+
+      {!empty && showSetup ? (
+        <SetupChecklist
+          steps={setupSteps}
+          base={base}
+          roundSlug={round.slug}
+          onDismiss={dismissSetup}
+          onFollowUps={() => setParams({ follow: "none" })}
+        />
+      ) : null}
 
       {empty ? null : (
         <div
@@ -1170,7 +1337,11 @@ export function Pipeline(props: PipelineProps) {
         >
           Import a spreadsheet, add them one at a time, or ask your agent.
         </EmptyState>
-      ) : view === "board" ? (
+      ) : null}
+      {empty && showSetup ? (
+        <SetupChecklist steps={setupSteps} base={base} roundSlug={round.slug} onDismiss={dismissSetup} />
+      ) : null}
+      {empty ? null : view === "board" ? (
         <PipelineBoard
           round={round}
           stages={stages}
@@ -1187,6 +1358,7 @@ export function Pipeline(props: PipelineProps) {
           openId={openId}
           focusReq={focusReq}
           onOpen={openInvestor}
+          onFocusMove={splitOpen ? openInvestor : undefined}
           onMove={doMove}
         />
       ) : (
@@ -1207,6 +1379,7 @@ export function Pipeline(props: PipelineProps) {
             })
           }
           onOpen={openInvestor}
+          onFocusMove={splitOpen ? openInvestor : undefined}
           openId={openId}
           selected={canWrite ? selected : null}
           onSelectedChange={setSelected}
@@ -1234,6 +1407,8 @@ export function Pipeline(props: PipelineProps) {
         canWrite={canWrite}
         order={navOrder}
         onNavigate={openInvestor}
+        modal={!split}
+        top={stickyTop}
         onClose={closeSheet}
         onParticipantChange={(p) => {
           dirty.current = true;
@@ -1297,6 +1472,22 @@ export function Pipeline(props: PipelineProps) {
         <p>Their contacts, notes and timelines stay. You can undo this right after.</p>
       </ConfirmDialog>
 
+      <NameDialog
+        open={viewDialog !== null}
+        title={viewDialog?.mode === "rename" ? "Rename view" : "Save this view"}
+        hint="Filters, search, sort, view, density and columns. Saved in this browser."
+        initial={
+          viewDialog?.mode === "rename" ? (saved.find((v) => v.id === viewDialog.id)?.name ?? "") : viewDialog ? suggestViewName() : ""
+        }
+        submitLabel={viewDialog?.mode === "rename" ? "Rename" : "Save view"}
+        onClose={() => setViewDialog(null)}
+        onSubmit={(name) => {
+          if (viewDialog?.mode === "rename") storeSaved(saved.map((v) => (v.id === viewDialog.id ? { ...v, name } : v)));
+          else saveView(name);
+          setViewDialog(null);
+        }}
+      />
+
       <TagDialog
         mode={tagDialog}
         count={n}
@@ -1308,6 +1499,191 @@ export function Pipeline(props: PipelineProps) {
         }}
       />
     </div>
+  );
+}
+
+/* ---------- saved views ---------- */
+
+function ViewTabs({
+  views,
+  activeId,
+  onSelect,
+  onSave,
+  onRename,
+  onDelete,
+}: {
+  views: SavedView[];
+  activeId: string | null;
+  onSelect: (v: SavedView) => void;
+  onSave: () => void;
+  onRename: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const current = views.find((v) => v.id === activeId);
+  const own = views.filter((v) => !v.builtin);
+  const mod = typeof navigator !== "undefined" && /mac/i.test(navigator.platform) ? "⌘⇧" : "Ctrl+Shift+";
+  return (
+    <div className="flex min-w-0 items-center gap-6 self-center">
+      <div role="group" aria-label="Views" className="flex min-w-0 items-center gap-2 overflow-x-auto rounded-pill bg-sunk p-2 scrollbar-none">
+        {views.map((v, i) => {
+          const on = v.id === activeId;
+          return (
+            <button
+              key={v.id}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onSelect(v)}
+              title={i < 9 ? `${v.name} (${mod}${i + 1})` : v.name}
+              className={cn(
+                "h-26 shrink-0 rounded-pill border-0 px-10 text-sm whitespace-nowrap transition-colors duration-[120ms]",
+                on ? "bg-surface font-medium text-fg shadow-pill" : "bg-transparent text-muted hover:text-fg",
+              )}
+            >
+              {v.name}
+            </button>
+          );
+        })}
+      </div>
+      <Menu
+        label="View actions"
+        align="start"
+        trigger={<span aria-hidden>⋯</span>}
+        triggerClassName="inline-flex size-26 items-center justify-center rounded-pill border-0 bg-transparent text-muted hover:bg-sunk hover:text-fg"
+        items={[
+          { label: "Save current view…", onSelect: onSave },
+          ...(current && !current.builtin
+            ? ([
+                { type: "separator" },
+                { label: `Rename “${current.name}”…`, onSelect: () => onRename(current.id) },
+                { label: `Delete “${current.name}”`, danger: true, onSelect: () => onDelete(current.id) },
+              ] as MenuEntry[])
+            : own.length
+              ? ([{ type: "separator" }, { type: "label", label: "Open a saved view to rename or delete it" }] as MenuEntry[])
+              : []),
+        ]}
+      />
+    </div>
+  );
+}
+
+function NameDialog({
+  open,
+  title,
+  hint,
+  initial,
+  submitLabel,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  title: string;
+  hint?: string;
+  initial: string;
+  submitLabel: string;
+  onClose: () => void;
+  onSubmit: (name: string) => void;
+}) {
+  const [text, setText] = useState(initial);
+  useEffect(() => {
+    if (open) setText(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const t = text.trim();
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={title}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (t) onSubmit(t.slice(0, 40));
+      }}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" disabled={!t}>
+            {submitLabel}
+          </Button>
+        </>
+      }
+    >
+      <Field label="Name" hint={hint}>
+        <Input autoFocus value={text} maxLength={40} onChange={(e) => setText(e.target.value)} />
+      </Field>
+    </Dialog>
+  );
+}
+
+/* ---------- "Get set up" checklist ---------- */
+
+function SetupChecklist({
+  steps,
+  base,
+  roundSlug,
+  onDismiss,
+  onFollowUps,
+  className,
+}: {
+  steps: { key: string; label: string; done: boolean; unknown?: boolean }[];
+  base: string;
+  roundSlug: string;
+  onDismiss: () => void;
+  onFollowUps?: () => void;
+  className?: string;
+}) {
+  const href: Record<string, string> = {
+    import: `${base}/import?round=${encodeURIComponent(roundSlug)}`,
+    invite: `${base}/settings/members`,
+    agent: `${base}/settings/mcp`,
+  };
+  const done = steps.filter((x) => x.done).length;
+  const item = (x: (typeof steps)[number]) => (
+    <li key={x.key} className="flex min-w-0 items-center gap-6">
+      <span
+        aria-hidden
+        className={cn(
+          "inline-flex size-16 shrink-0 items-center justify-center rounded-pill border text-[10px]",
+          x.done ? "border-good bg-good-soft text-good-ink" : "border-line text-transparent",
+        )}
+      >
+        ✓
+      </span>
+      {x.done ? (
+        <span className="text-muted">{x.label}</span>
+      ) : x.key === "followups" && onFollowUps ? (
+        <button type="button" onClick={onFollowUps} className="link border-0 bg-transparent p-0 text-left">
+          {x.label}
+        </button>
+      ) : href[x.key] ? (
+        <Link href={href[x.key]!} className="link">
+          {x.label}
+        </Link>
+      ) : (
+        <span>{x.label}</span>
+      )}
+      <span className="sr-only">{x.done ? "(done)" : "(to do)"}</span>
+    </li>
+  );
+  return (
+    <section
+      aria-label="Get set up"
+      className={cn("flex flex-wrap items-center gap-x-18 gap-y-6 rounded-md border border-line bg-surface px-14 py-8", className)}
+    >
+      <span className="t-label">
+        Get set up · {done}/{steps.length}
+      </span>
+      <ul className="t-body-s m-0 flex list-none flex-wrap gap-x-16 gap-y-4 p-0">{steps.map(item)}</ul>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="t-body-s ml-auto border-0 bg-transparent p-0 text-muted hover:text-fg"
+        aria-label="Dismiss the setup checklist"
+      >
+        Dismiss
+      </button>
+    </section>
   );
 }
 

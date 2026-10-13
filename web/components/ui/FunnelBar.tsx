@@ -11,12 +11,16 @@ export interface FunnelSegment {
   label: string;
   color: StageColor;
   count: number;
+  /** The won stage: its segment is always labeled (UX pass 1, P2-11). */
+  won?: boolean;
 }
 
 /**
  * The prototype funnel (SYSTEM 3.9): a 26px bar of stage-colored segments plus a legend row.
  * Every segment and legend item is a button that filters by stage (`onSelect`). Zero-count
- * stages appear only in the legend. Segment numbers show only when wider than 6%.
+ * stages appear only in the legend. A segment is at least 22px wide (so it can be clicked and
+ * read); its number shows when it is wider than 6%, and always for the won stage. Each
+ * segment's tooltip gives the count and the share.
  */
 export function FunnelBar({
   segments,
@@ -46,26 +50,34 @@ export function FunnelBar({
       >
         {segments
           .filter((s) => s.count > 0)
-          .map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              tabIndex={interactive ? 0 : -1}
-              disabled={!interactive}
-              onClick={() => onSelect?.(s.key)}
-              title={`${s.label}: ${num(s.count)}`}
-              aria-label={`${s.label}: ${num(s.count)}`}
-              aria-pressed={interactive ? active === s.key : undefined}
-              className={cn(
-                "min-w-0 overflow-hidden border-0 p-0 font-mono text-xs font-medium whitespace-nowrap text-on-stage",
-                "disabled:cursor-default",
-                active && active !== s.key && "opacity-45",
-              )}
-              style={{ flex: `${s.count} 1 0`, background: stageVar(s.color) }}
-            >
-              {s.count / total > 0.06 ? num(s.count) : ""}
-            </button>
-          ))}
+          .map((s) => {
+            const share = Math.round((s.count / total) * 100);
+            const labeled = s.count / total > 0.06 || s.won;
+            return (
+              <button
+                key={s.key}
+                type="button"
+                tabIndex={interactive ? 0 : -1}
+                disabled={!interactive}
+                onClick={() => onSelect?.(s.key)}
+                title={`${s.label}: ${num(s.count)} (${share < 1 ? "<1" : share}%)`}
+                aria-label={`${s.label}: ${num(s.count)}`}
+                aria-pressed={interactive ? active === s.key : undefined}
+                className={cn(
+                  "overflow-hidden border-0 p-0 font-mono text-xs font-medium whitespace-nowrap text-on-stage",
+                  "focus-visible:-outline-offset-2 disabled:cursor-default",
+                  active && active !== s.key && "opacity-45",
+                )}
+                style={{
+                  flex: `${s.count} 1 0`,
+                  minWidth: labeled ? Math.max(22, 8 + 7.5 * String(s.count).length) : 22,
+                  background: stageVar(s.color),
+                }}
+              >
+                {labeled ? num(s.count) : ""}
+              </button>
+            );
+          })}
       </div>
       <div className={cn("flex flex-wrap gap-x-12 gap-y-4", legendClassName)}>
         {segments.map((s) => (

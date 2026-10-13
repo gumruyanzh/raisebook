@@ -1,5 +1,7 @@
 "use client";
 
+import { useLayoutEffect, useRef, useState } from "react";
+
 import type { RoundSummary, StageColor } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { formatDate, money, moneyCompact, num } from "@/lib/format";
@@ -74,6 +76,7 @@ export function ledgerFromSummary(
       label: f.label,
       color: f.color as StageColor,
       count: f.count,
+      won: f.kind === "won",
     })),
     due,
     dueTotal: s.follow_ups.overdue + s.follow_ups.today,
@@ -87,9 +90,31 @@ export function ledgerFromSummary(
 export function Ledger(p: LedgerProps) {
   const variant = p.variant ?? "compact";
   const dueTotal = p.dueTotal ?? p.due.length;
-  // One line: whole chips only (five on the pipeline, three in the narrower overview column),
-  // then "+N more".
-  const shown = p.due.slice(0, variant === "full" ? 3 : 5);
+  // One line of whole chips, as many as fit (measured), then "+N more", which is always
+  // fully visible (UX pass 1, P2-11).
+  const shown = p.due.slice(0, 8);
+  const strip = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState(Math.min(shown.length, variant === "full" ? 3 : 5));
+  const shownKey = shown.map((d) => d.id).join(",");
+  useLayoutEffect(() => {
+    const box = strip.current;
+    if (!box) return;
+    const measure = () => {
+      const kids = Array.from(box.querySelectorAll<HTMLElement>("[data-due-chip]"));
+      const width = box.clientWidth;
+      let n = 0;
+      for (const k of kids) {
+        if (k.offsetLeft + k.offsetWidth <= width + 0.5) n++;
+        else break;
+      }
+      setFit(n);
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(box);
+    return () => ro?.disconnect();
+  }, [shownKey]);
+  const more = Math.max(0, dueTotal - fit);
   const pct = p.target > 0 ? Math.round((p.committed / p.target) * 100) : null;
   const stats: { n: string; label: string }[] = p.closed
     ? [
@@ -163,12 +188,17 @@ export function Ledger(p: LedgerProps) {
       </div>
       <div className="flex min-w-0 flex-col gap-8">
         <p className="t-label max-sm:hidden">Pipeline</p>
-        <FunnelBar
-          segments={p.funnel}
-          onSelect={p.onStageSelect}
-          active={p.activeStage}
-          legendClassName="max-sm:hidden"
-        />
+        {p.funnel.some((f) => f.count > 0) ? (
+          <FunnelBar
+            segments={p.funnel}
+            onSelect={p.onStageSelect}
+            active={p.activeStage}
+            legendClassName="max-sm:hidden"
+          />
+        ) : (
+          // An all-zero funnel says nothing; it appears with the first investor (P2-4).
+          <p className="t-body-s text-muted">The funnel appears once the round has investors.</p>
+        )}
         {p.closed ? (
           <p className="t-body-s text-muted">
             This round is closed. Reopen it in its settings to track follow-ups.
@@ -194,34 +224,40 @@ export function Ledger(p: LedgerProps) {
               {shown.length ? (
                 <>
                   <span className="shrink-0">Follow up now:</span>
-                  {shown.map((d) =>
-                    p.onDueSelect ? (
-                      <Chip
-                        key={d.id}
-                        as="button"
-                        tone="due"
-                        className="shrink-0"
-                        onClick={() => p.onDueSelect?.(d.id)}
-                      >
-                        {d.name}
-                      </Chip>
-                    ) : (
-                      <Chip key={d.id} tone="due" className="shrink-0">
-                        {d.name}
-                      </Chip>
-                    ),
-                  )}
-                  {dueTotal > shown.length ? (
+                  <div ref={strip} className="relative flex min-w-0 shrink flex-nowrap items-center gap-6 overflow-hidden">
+                    {shown.map((d, i) => {
+                      const hidden = i >= fit;
+                      return p.onDueSelect ? (
+                        <Chip
+                          key={d.id}
+                          as="button"
+                          tone="due"
+                          data-due-chip
+                          aria-hidden={hidden || undefined}
+                          tabIndex={hidden ? -1 : undefined}
+                          className={cn("shrink-0", hidden && "invisible")}
+                          onClick={() => p.onDueSelect?.(d.id)}
+                        >
+                          {d.name}
+                        </Chip>
+                      ) : (
+                        <Chip key={d.id} tone="due" data-due-chip className={cn("shrink-0", hidden && "invisible")}>
+                          {d.name}
+                        </Chip>
+                      );
+                    })}
+                  </div>
+                  {more > 0 ? (
                     p.onDueFilter ? (
                       <button
                         type="button"
                         onClick={p.onDueFilter}
                         className="link shrink-0 border-0 bg-transparent p-0 whitespace-nowrap"
                       >
-                        +{num(dueTotal - shown.length)} more
+                        +{num(more)} more
                       </button>
                     ) : (
-                      <span className="shrink-0 whitespace-nowrap">+{num(dueTotal - shown.length)} more</span>
+                      <span className="shrink-0 whitespace-nowrap">+{num(more)} more</span>
                     )
                   ) : null}
                 </>

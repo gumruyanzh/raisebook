@@ -130,6 +130,8 @@ export function InvestorSheet({
   canWrite,
   order,
   onNavigate,
+  modal = true,
+  top,
   onClose,
   onParticipantChange,
   onInvestorChange,
@@ -149,6 +151,9 @@ export function InvestorSheet({
   /** Investor ids in the page's current (filtered, sorted) order, for J / K. */
   order?: string[];
   onNavigate?: (investorId: string) => void;
+  /** false at ≥1280px: a split panel beside the board or table (P2-3). */
+  modal?: boolean;
+  top?: number;
   onClose: () => void;
   onParticipantChange: (p: Participant) => void;
   onInvestorChange?: (inv: Investor) => void;
@@ -292,6 +297,8 @@ export function InvestorSheet({
       label={name}
       focusTitle
       bodyRef={body}
+      modal={modal}
+      top={modal ? undefined : top}
       subline={who || undefined}
       chips={
         <>

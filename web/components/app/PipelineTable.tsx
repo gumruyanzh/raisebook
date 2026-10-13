@@ -140,6 +140,7 @@ export function PipelineTable({
   dir,
   onSort,
   onOpen,
+  onFocusMove,
   openId,
   selected,
   onSelectedChange,
@@ -160,6 +161,8 @@ export function PipelineTable({
   dir: SortDir;
   onSort: (col: TableCol) => void;
   onOpen: (investorId: string) => void;
+  /** With the split sheet open, keyboard moves open the row they land on. */
+  onFocusMove?: (investorId: string) => void;
   openId?: string | null;
   /** `null` hides the selection column (viewers). */
   selected: Set<string> | null;
@@ -274,6 +277,8 @@ export function PipelineTable({
         selectRange(anchor.current, j);
       } else anchor.current = null;
       goTo(j);
+      const to = rows[j]?.investor.id;
+      if (to && !e.shiftKey && onFocusMove) onFocusMove(to);
     };
     if (e.altKey) return;
     switch (e.key) {

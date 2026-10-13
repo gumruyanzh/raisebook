@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import { Chip } from "@/components/ui";
 import type { Round } from "@/lib/api/types";
@@ -18,11 +19,14 @@ export function RoundHeader({
   round,
   active,
   className,
+  children,
 }: {
   wsSlug: string;
   round: Round;
   active: "pipeline" | "overview" | "settings";
   className?: string;
+  /** Between the title and "Edit round" (the pipeline's saved views). */
+  children?: ReactNode;
 }) {
   const { canWrite } = useWorkspace();
   const base = `/w/${encodeURIComponent(wsSlug)}/r/${encodeURIComponent(round.slug)}`;
@@ -34,6 +38,7 @@ export function RoundHeader({
       </h1>
       <span className="t-micro text-muted">{INSTRUMENT_LABEL[round.instrument]}</span>
       {round.status === "closed" ? <Chip tone="mode">Closed</Chip> : null}
+      {children}
       <span className="t-body-s ml-auto">
         {active === "settings" ? (
           <Link href={`${base}/overview`} className="link">

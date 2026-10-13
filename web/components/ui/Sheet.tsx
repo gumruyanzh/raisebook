@@ -26,6 +26,8 @@ export function Sheet({
   className,
   focusTitle,
   bodyRef,
+  modal = true,
+  top,
 }: {
   open: boolean;
   onClose: () => void;
@@ -44,6 +46,13 @@ export function Sheet({
   focusTitle?: boolean;
   /** The scrolling body (to scroll back to the top when the content changes). */
   bodyRef?: Ref<HTMLDivElement>;
+  /**
+   * `false`: a split panel beside the page (no scrim, no focus trap, focus stays where it
+   * is), so the list stays usable while the file is open. Esc still closes it.
+   */
+  modal?: boolean;
+  /** Top offset for a split panel (below the app bar). */
+  top?: number;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -51,7 +60,7 @@ export function Sheet({
   const titleId = useId();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  useFocusTrap(panel, open && mounted, focusTitle ? titleRef : close);
+  useFocusTrap(panel, open && mounted && modal, focusTitle ? titleRef : close);
 
   useEffect(() => {
     if (!open) return;
@@ -68,11 +77,11 @@ export function Sheet({
   if (!open || !mounted) return null;
   return createPortal(
     <>
-      <div aria-hidden className="anim-fade fixed inset-0 z-40 bg-scrim" onClick={onClose} />
+      {modal ? <div aria-hidden className="anim-fade fixed inset-0 z-40 bg-scrim" onClick={onClose} /> : null}
       <div
         ref={panel}
         role="dialog"
-        aria-modal="true"
+        aria-modal={modal ? "true" : "false"}
         aria-labelledby={label ? undefined : titleId}
         aria-label={label}
         tabIndex={-1}
@@ -81,7 +90,7 @@ export function Sheet({
           "pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]",
           className,
         )}
-        style={{ width: `min(${width}px, 100%)` }}
+        style={{ width: `min(${width}px, 100%)`, ...(top !== undefined ? { top } : null) }}
       >
         <header className="flex items-start gap-10 border-b border-line px-18 pt-16 pb-12">
           <div className="min-w-0 flex-1">

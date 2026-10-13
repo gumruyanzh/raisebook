@@ -8,7 +8,7 @@ import { Loading } from "@/components/ui";
 import { listActivities } from "@/lib/api/activities";
 import { listAllInvestors } from "@/lib/api/investors";
 import { getRoundSummary, listAllParticipants, toPipelineItems } from "@/lib/api/rounds";
-import { listMembers } from "@/lib/api/settings";
+import { listApiKeys, listInvites, listMembers } from "@/lib/api/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +26,7 @@ export default async function PipelinePage({ params }: { params: Promise<Params>
   const res = await load(async () => {
     const round = await roundOr404(client, ref);
     const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-    const [summary, participants, investors, members, agentActivity] = await Promise.all([
+    const [summary, participants, investors, members, agentActivity, keys, invites] = await Promise.all([
       getRoundSummary(client, round.id),
       listAllParticipants(client, round.id),
       optional(listAllInvestors(client, { round: round.id }).then((r) => r.data), []),
@@ -35,6 +35,9 @@ export default async function PipelinePage({ params }: { params: Promise<Params>
         listActivities(client, { round: round.id, actor_type: "agent", since, limit: 200 }).then((r) => r.data),
         [],
       ),
+      // For the "Get set up" checklist; admins only, so null means "unknown".
+      optional(listApiKeys(client).then((r) => r.data.filter((k) => !k.revoked_at).length), null),
+      optional(listInvites(client).then((r) => r.data.filter((i) => i.status === "pending").length), null),
     ]);
     // Only what the cards, rows and filters use travels to the browser (UX pass 1, P1-1);
     // the sheet fetches the full investor when it opens.
@@ -52,6 +55,7 @@ export default async function PipelinePage({ params }: { params: Promise<Params>
         imported: a.actor.via === "import" || Boolean(a.data?.import_run_id),
       })),
       loadedAt: new Date().toISOString(),
+      setup: { activeKeys: keys, pendingInvites: invites },
     };
   });
   if (!res.ok) return <ApiErrorState error={res.error} title="The pipeline could not load" retryHref={`/w/${ws}/r/${ref}`} />;

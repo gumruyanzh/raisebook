@@ -12,7 +12,7 @@ import {
 } from "react";
 
 import { Board, BoardCard, BoardColumn, Menu, StageDot } from "@/components/ui";
-import { boardCardHeight, boardCardLines, CARD_GAP } from "@/components/ui/Board";
+import { boardCardHeight, boardCardLines, CARD_GAP, COMPACT_CARD_GAP } from "@/components/ui/Board";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
 import type { PipelineExtra } from "@/lib/api/rounds";
 import type { Participant, Round, Stage } from "@/lib/api/types";
@@ -84,6 +84,7 @@ export function PipelineBoard({
   openId,
   focusReq,
   onOpen,
+  onFocusMove,
   onMove,
 }: {
   round: Round;
@@ -104,6 +105,8 @@ export function PipelineBoard({
   openId?: string | null;
   focusReq: { id: string; n: number } | null;
   onOpen: (investorId: string) => void;
+  /** With the split sheet open, keyboard moves open the card they land on. */
+  onFocusMove?: (investorId: string) => void;
   /** Returns false when the move failed (the card snaps back). */
   onMove: (investorId: string, stageKey: string) => Promise<boolean>;
 }) {
@@ -218,6 +221,7 @@ export function PipelineBoard({
       if (target) {
         e.preventDefault();
         focusCard(target.investor.id);
+        onFocusMove?.(target.investor.id);
       }
     };
     const sideways = (dir: 1 | -1) => {
@@ -475,7 +479,7 @@ function StageColumn({
           amount,
         };
         const h = variant === "compact" ? boardCardHeight("compact", boardCardLines(c)) : boardCardHeight("standard", boardCardLines(c));
-        return { c, slot: h + CARD_GAP };
+        return { c, slot: h + (variant === "compact" ? COMPACT_CARD_GAP : CARD_GAP) };
       }),
     [cards, extras, won, currency, variant],
   );
@@ -530,7 +534,11 @@ function StageColumn({
         const id = p.investor.id;
         const { c, slot } = props[i]!;
         return (
-          <div key={id} className="relative shrink-0" style={{ height: slot, paddingBottom: CARD_GAP }}>
+          <div
+            key={id}
+            className="relative shrink-0"
+            style={{ height: slot, paddingBottom: variant === "compact" ? COMPACT_CARD_GAP : CARD_GAP }}
+          >
             <BoardCard
               data-investor={id}
               name={p.investor.name}

@@ -25,7 +25,9 @@ export function Board({
   return (
     <div
       className={cn(
-        "grid min-h-[60vh] auto-cols-[85vw] grid-flow-col gap-10 overflow-x-auto pb-8 scrollbar-thin",
+        // `relative` keeps absolutely positioned bits (sr-only text) inside the scroller, so they
+        // never widen the page on phones.
+        "relative grid min-h-[60vh] auto-cols-[85vw] grid-flow-col gap-10 overflow-x-auto pb-8 scrollbar-thin",
         "snap-x snap-mandatory [--col-min:250px] sm:auto-cols-[minmax(var(--col-min),1fr)] sm:snap-none",
         "2xl:[--col-min:176px]",
         columns && "sm:[grid-template-columns:var(--board-cols)]",
@@ -195,6 +197,7 @@ export type BoardCardVariant = "standard" | "compact";
 
 /** Gap under each card in a column (folded into the virtualized row height). */
 export const CARD_GAP = 6;
+export const COMPACT_CARD_GAP = 4;
 
 /**
  * Exact card heights in px (borders included), so a column can be windowed without measuring.
@@ -224,7 +227,7 @@ export function boardCardHeight(
   variant: BoardCardVariant,
   c: { who: boolean; chips: boolean; nextStep: boolean },
 ): number {
-  if (variant === "compact") return 52;
+  if (variant === "compact") return 50;
   return 2 + 14 + 17 + (c.who ? 2 + 16 : 0) + (c.chips ? 4 + 20 : 0) + (c.nextStep ? 3 + 16 : 0);
 }
 
@@ -330,7 +333,7 @@ export function BoardCard({
   if (variant === "compact") {
     const chip = dueChip ?? moneyChip;
     return (
-      <button type={type} title={hint} className={cn(base, "h-52 justify-center py-6", className)} {...rest}>
+      <button type={type} title={hint} className={cn(base, "h-50 justify-center py-5", className)} {...rest}>
         <span className="flex h-19 w-full min-w-0 items-center gap-6">
           <span className="min-w-0 flex-1 truncate leading-[19px] font-semibold">{name}</span>
           {marker}
