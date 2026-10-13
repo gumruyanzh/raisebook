@@ -6,8 +6,8 @@ investor fields, emails (hash them with :func:`hash_email`) or tokens.
 
 ``redact_secrets`` is a last line of defence: it replaces values under sensitive
 keys (``token``, ``secret``, ``password``, ``authorization``, ``cookie``,
-``api_key``, ``email``…) and scrubs bearer tokens, Raisebook keys and email
-addresses embedded in free text.
+``api_key``, ``email``, ``kek``…) and scrubs bearer tokens, Raisebook and OpenRouter keys
+and email addresses embedded in free text.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ REDACTED = "[REDACTED]"
 
 SENSITIVE_KEY_RE = re.compile(
     r"(token|secret|authorization|signature|password|api[_-]?key|cookie|csrf|^email$|"
-    r"^body$|^notes?$|magic_link|dev_link)",
+    r"^body$|^notes?$|magic_link|dev_link|openrouter_key|kek)",
     re.IGNORECASE,
 )
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -34,6 +34,8 @@ _VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "Bearer " + REDACTED),
     # A full key has 32 chars after the prefix; the 12-char display prefix stays readable.
     (re.compile(r"rb_(live|test)_[A-Za-z0-9]{8,}"), r"rb_\1_" + REDACTED),
+    # OpenRouter keys (sk-or-v1-…): a workspace's own key never reaches a log line.
+    (re.compile(r"sk-or-(?:v1-)?[A-Za-z0-9_-]{16,}"), "sk-or-" + REDACTED),
     (re.compile(r"([?&]token=)[^&\s]+"), r"\1" + REDACTED),
     (_EMAIL_RE, "[EMAIL]"),
 )

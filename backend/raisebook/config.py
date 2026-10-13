@@ -74,6 +74,21 @@ class Settings(BaseSettings):
     # Rate limits (SPEC §7).
     rate_limit_backend: Literal["postgres", "memory", "off"] = "postgres"
 
+    # Investor research (docs/RESEARCH-PLAN.md). The KEK seals each workspace's OpenRouter
+    # key: ``<kek_id>:<base64url of 32 bytes>`` (or bare base64url, id ``k1``). Unset = research
+    # is unavailable; the rest of the app works. ``_PREVIOUS`` opens keys sealed before a
+    # rotation (``rbctl secrets rotate`` re-wraps them under the current KEK).
+    secrets_kek: SecretStr | None = None
+    secrets_kek_previous: SecretStr | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_timeout_s: float = 90.0
+
+    # Background worker (``rbctl worker``).
+    worker_concurrency: int = Field(4, ge=1, le=32)
+    worker_poll_s: float = Field(2.0, gt=0, le=60)
+    worker_lease_s: int = Field(120, ge=10, le=3600)
+    worker_grace_s: int = Field(50, ge=0, le=600)
+
     @field_validator("environment", mode="before")
     @classmethod
     def _short_env(cls, v: object) -> object:
@@ -88,6 +103,14 @@ class Settings(BaseSettings):
             if raw.startswith("["):
                 return json.loads(raw)
             return [p.strip() for p in raw.split(",") if p.strip()]
+        return v
+
+    @field_validator("secrets_kek", "secrets_kek_previous", mode="before")
+    @classmethod
+    def _blank_kek(cls, v: object) -> object:
+        # Compose passes ``${RAISEBOOK_SECRETS_KEK:-}``: an empty string means "not set".
+        if isinstance(v, str) and not v.strip():
+            return None
         return v
 
     @property

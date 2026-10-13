@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
@@ -23,6 +24,7 @@ from raisebook.auth.session import (
     session_key,
 )
 from raisebook.config import Settings, get_settings
+from raisebook.core import secrets
 from raisebook.core.actor import AGENT_MODEL_HEADER, AGENT_NAME_HEADER
 from raisebook.core.database import dispose_engine
 from raisebook.core.errors import install_error_handlers
@@ -58,6 +60,11 @@ def create_app(
     s = settings or get_settings()
     configure_logging(s.log_level, json=s.log_json)
     session_key(s)  # fail fast: staging/production need RAISEBOOK_SESSION_SECRET
+    # Fail fast on a malformed RAISEBOOK_SECRETS_KEK; a missing one only turns research off.
+    if secrets.keyring_from(s) is None and s.is_production:
+        structlog.get_logger(__name__).warning(
+            "research_disabled", reason="RAISEBOOK_SECRETS_KEK is not set"
+        )
     app = FastAPI(
         title="Raisebook API",
         version=__version__,

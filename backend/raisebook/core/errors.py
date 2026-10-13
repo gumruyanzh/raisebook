@@ -235,6 +235,76 @@ class ImportInvalid(Unprocessable):
     code = "import_invalid"
 
 
+# --- Investor research (docs/RESEARCH-PLAN.md §6.6) -----------------------------------------
+class NoAiKey(Unprocessable):
+    code = "no_ai_key"
+    default_message = (
+        "This workspace has no OpenRouter key. An owner can add one in Settings → AI research."
+    )
+
+
+class InvalidOpenRouterKey(Unprocessable):
+    code = "invalid_openrouter_key"
+    default_message = "OpenRouter did not accept this key. Copy it again from openrouter.ai/keys."
+
+
+class ModelUnavailable(Unprocessable):
+    code = "model_unavailable"
+
+
+class SpendCapReached(Unprocessable):
+    code = "spend_cap_reached"
+
+
+class InvalidDossier(Unprocessable):
+    code = "invalid_dossier"
+
+
+class NoCitedFacts(Unprocessable):
+    code = "no_cited_facts"
+    default_message = (
+        "No fact in this dossier cites an accepted source, so nothing was saved. Cite a fetched "
+        "source for every fact."
+    )
+
+
+class EstimateChanged(Conflict):
+    code = "estimate_changed"
+
+
+class IdentityRequired(Conflict):
+    code = "identity_required"
+    default_message = "Pick who this investor is first, then research them."
+
+
+class IdentityMismatch(Conflict):
+    code = "identity_mismatch"
+
+
+class ResearchSuppressed(Conflict):
+    code = "research_suppressed"
+    default_message = "This person asked Raisebook not to research them, so research is off."
+
+
+class NoDossier(NotFound):
+    code = "no_dossier"
+    default_message = "No dossier yet. Run research on this investor first."
+
+
+class ResearchUnavailable(APIError):
+    status_code = 503
+    code = "research_unavailable"
+    default_message = (
+        "Research is off on this server: RAISEBOOK_SECRETS_KEK is not set. Ask whoever runs it."
+    )
+
+
+class OpenRouterUnavailable(APIError):
+    status_code = 503
+    code = "openrouter_unavailable"
+    default_message = "OpenRouter did not answer. Try again in a minute."
+
+
 # --- 429 / 500 -----------------------------------------------------------------------------
 class RateLimited(APIError):
     status_code = 429

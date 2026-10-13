@@ -17,6 +17,7 @@ dependencies = [
     "structlog>=24.4",
     "typer>=0.15",
     "pyjwt[crypto]>=2.10",
+    "cryptography>=43",
 ]
 
 [project.scripts]
@@ -66,5 +67,12 @@ warn_unused_ignores = true
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["raisebook.auth.*", "raisebook.services.normalize", "raisebook.services.csv_io"]
+module = [
+    "raisebook.auth.*",
+    "raisebook.core.secrets",
+    "raisebook.services.normalize",
+    "raisebook.services.csv_io",
+    "raisebook.services.jobs",
+    "raisebook.services.spend",
+]
 strict = true
