@@ -30,6 +30,7 @@ import { sortedStages } from "@/lib/api/rounds";
 import type { Activity, Investor, Member, Participant, Round } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { formatDate, isoDate, money, moneyCompact, stageFocusLabel } from "@/lib/format";
+import { visibleIndustries } from "@/lib/pipeline";
 
 import { LogComposer } from "./LogComposer";
 import { ParticipantFields, useParticipantSave } from "./ParticipantFields";
@@ -283,7 +284,7 @@ export function InvestorSheet({
 
   const who = [investor?.firm ?? p?.investor.firm, investor?.title ?? p?.investor.title].filter(Boolean).join(" · ");
   const type = investor?.type ?? p?.investor.type;
-  const industries = investor?.industries ?? [];
+  const industries = visibleIndustries(investor?.industries);
   const otherRounds = (investor?.rounds ?? []).filter((r) => r.round_id !== round.id);
   const base = `/w/${encodeURIComponent(wsSlug)}`;
   const navBtn =
@@ -460,7 +461,7 @@ export function InvestorSheet({
               items={[
                 { term: "Invests at", value: investor.stage_focus.map(stageFocusLabel).join(", ") },
                 { term: "Check size", value: checkSize(investor, round.currency) },
-                { term: "Industries", value: investor.industries.join(", ") },
+                { term: "Industries", value: visibleIndustries(investor.industries).join(", ") },
                 {
                   term: "Tags",
                   value: investor.tags.length ? (

@@ -89,7 +89,7 @@ export function Button({
       ) : (
         <>
           {children}
-          {kbd ? <Kbd className="ml-2">{kbd}</Kbd> : null}
+          {kbd ? <Kbd className={cn("ml-2", variant === "primary" && "border-accent-ink/40! text-accent-ink!")}>{kbd}</Kbd> : null}
         </>
       )}
     </button>

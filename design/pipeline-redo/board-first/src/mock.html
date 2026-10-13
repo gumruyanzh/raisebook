@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board-first round page</title>
+<style>
+@font-face{font-family:"Bricolage Grotesque";font-weight:200 800;src:url(fonts/bricolage.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:400 600;src:url(fonts/plex-sans.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:400;src:url(fonts/plex-mono-400.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:500;src:url(fonts/plex-mono-500.woff2) format("woff2")}
+
+/* Tokens copied from web/app/globals.css */
+:root{
+  --canvas:#f3f5f8;--surface:#fff;--sunk:#e8ecf2;--line:#d5dce6;--fg:#16202e;--muted:#5b6778;--faint:#8994a5;
+  --accent:#2f55d4;--accent-ink:#fff;--accent-soft:#e3e9fb;
+  --hot:#c2410c;--hot-soft:#fde7db;--warm:#b7791f;--warm-soft:#fbf0d5;--maybe:#6b7a8f;--maybe-soft:#e9edf2;
+  --good:#15803d;--good-soft:#dcf3e3;--hot-ink:#a3360a;--warm-ink:#8a5a0f;--maybe-ink:#4f5d70;--good-ink:#11652f;
+  --bad:#b42318;--bad-soft:#fbe1de;--agent:#a1307a;--agent-soft:#f8e4f0;
+  --stage-slate:#8994a5;--stage-violet:#7c5cd6;--stage-cobalt:#2f55d4;--stage-teal:#0e8a9e;--stage-amber:#b7791f;
+  --stage-orange:#c2410c;--stage-green:#15803d;--stage-gray:#9aa3b0;--on-stage:#fff;--scrim:rgb(10 15 25/.35);
+  --f-d:"Bricolage Grotesque","Avenir Next",sans-serif;--f-b:"IBM Plex Sans",sans-serif;--f-m:"IBM Plex Mono",ui-monospace,monospace;
+  --shadow-menu:0 8px 24px rgb(10 15 25/.14);--shadow-pill:0 1px 2px rgb(0 0 0/.08);--shadow-drag:0 6px 16px rgb(0 0 0/.12);
+}
+:root[data-theme="dark"]{
+  --canvas:#0f141c;--surface:#171e29;--sunk:#1d2532;--line:#2a3444;--fg:#e6ebf2;--muted:#9aa6b8;--faint:#6e7a8c;
+  --accent:#7c9bff;--accent-ink:#0f141c;--accent-soft:#1f2a4a;
+  --hot:#ff8a5b;--hot-soft:#3a2218;--warm:#f0b54e;--warm-soft:#33291a;--maybe:#a3afc0;--maybe-soft:#232b38;
+  --good:#4ade80;--good-soft:#15301f;--hot-ink:#ff8a5b;--warm-ink:#f0b54e;--maybe-ink:#a3afc0;--good-ink:#4ade80;
+  --bad:#f87171;--bad-soft:#3a1c1c;--agent:#f08bc8;--agent-soft:#3a1e31;
+  --stage-slate:#8c98aa;--stage-violet:#a78bfa;--stage-cobalt:#7c9bff;--stage-teal:#38c6da;--stage-amber:#f0b54e;
+  --stage-orange:#ff8a5b;--stage-green:#4ade80;--stage-gray:#5e6878;--on-stage:#0f141c;
+  --shadow-menu:0 8px 24px rgb(0 0 0/.5);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--canvas);color:var(--fg);font:14px/1.45 var(--f-b);-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer}
+.mono{font-family:var(--f-m);font-variant-numeric:tabular-nums}
+.label{font:500 11px/1.3 var(--f-m);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.muted{color:var(--muted)}
+.tnum{font-variant-numeric:tabular-nums}
+.kbd{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 4px;border:1px solid var(--line);border-radius:4px;font:10.5px/1 var(--f-m);color:var(--muted);background:transparent}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
+.app{height:100vh;display:flex;flex-direction:column}
+
+/* top bar */
+.top{height:57px;flex:none;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:18px;padding:0 24px;background:var(--canvas)}
+.wm{font:700 20px/1 var(--f-d);letter-spacing:-.02em}
+.ws{font-weight:500;display:flex;align-items:center;gap:6px}
+.caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--muted)}
+.rpick{display:flex;background:var(--sunk);border-radius:999px;padding:3px;gap:2px}
+.rpick span{padding:4px 12px;border-radius:999px;font-weight:500;color:var(--muted)}
+.rpick span.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-pill)}
+.nav{margin-left:auto;display:flex;gap:18px;align-items:center;font-weight:500}
+.nav a{color:var(--muted);height:56px;display:flex;align-items:center;border-bottom:2px solid transparent}
+.nav a.on{color:var(--fg);border-color:var(--accent)}
+.srch{height:32px;border:1px solid var(--line);border-radius:6px;display:flex;align-items:center;gap:8px;padding:0 6px 0 10px;color:var(--muted);background:var(--surface)}
+.av{width:28px;height:28px;border-radius:50%;background:var(--sunk);display:flex;align-items:center;justify-content:center;font:500 12px var(--f-b)}
+
+main{flex:1;min-height:0;display:flex;flex-direction:column;padding:14px 24px 0;gap:14px}
+.title{height:40px;display:flex;align-items:center;gap:12px;flex:none}
+.title h1{font:700 22px/1.15 var(--f-d);margin:0}
+.seg{display:flex;background:var(--sunk);border-radius:999px;padding:3px;gap:2px;font-size:13px}
+.seg span{padding:3px 11px;border-radius:999px;color:var(--muted);font-weight:500;display:flex;gap:6px;align-items:center}
+.seg span.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-pill)}
+.seg .n{font:11.5px var(--f-m);color:var(--muted)}
+.link{color:var(--accent)}
+.ring{display:inline-flex;align-items:center;gap:6px;font-size:13px}
+
+/* buttons */
+.btn{height:32px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);display:inline-flex;align-items:center;gap:8px;font-weight:500;font-size:13px;white-space:nowrap}
+.btn.sm{height:28px;padding:0 10px;font-size:12.5px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary .kbd{border-color:color-mix(in oklab,var(--accent-ink) 45%,transparent);color:var(--accent-ink)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btnseg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--surface)}
+.btnseg span{height:30px;padding:0 12px;display:flex;align-items:center;font-weight:500;font-size:13px}
+.btnseg span.on{background:var(--fg);color:var(--canvas)}
+
+/* round strip (411 state) */
+.strip{flex:none;height:52px;background:var(--surface);border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;padding:0 8px 0 16px;gap:0}
+.strip .cell{display:flex;align-items:center;gap:10px;padding:0 18px;height:100%;border-right:1px solid var(--line)}
+.strip .cell:first-child{padding-left:0}
+.strip .cell:last-child{border-right:0}
+.strip b{font-weight:600}
+.prog{width:150px;height:6px;border-radius:999px;background:var(--sunk);position:relative;overflow:hidden}
+.prog i{position:absolute;inset:0 auto 0 0;background:var(--fg)}
+
+/* toolbar */
+.tools{flex:none;display:flex;align-items:center;gap:8px}
+.input{height:32px;border:1px solid var(--line);border-radius:6px;background:var(--surface);display:flex;align-items:center;padding:0 6px 0 10px;color:var(--faint);gap:8px;flex:1 1 220px;max-width:420px}
+.input .kbd{margin-left:auto}
+.count{font:11.5px var(--f-m);color:var(--muted);margin-left:4px}
+.sp{flex:1}
+
+/* board */
+.board{flex:1;min-height:0;display:grid;gap:10px;padding-bottom:14px;grid-auto-flow:column}
+.col{background:var(--sunk);border-radius:8px;display:flex;flex-direction:column;min-width:0;min-height:0;border-top:3px solid var(--c);position:relative}
+.colh{height:38px;flex:none;display:flex;align-items:center;gap:7px;padding:0 10px;font-weight:600;font-size:13px}
+.colh .cnt{margin-left:auto;font:12px var(--f-m);color:var(--muted);font-weight:400;display:flex;gap:8px;align-items:center}
+.colh .tot{color:var(--good-ink)}
+.colh .due{background:var(--bad-soft);color:var(--bad);border-radius:999px;padding:0 6px;font-size:11px;line-height:16px}
+.colb{flex:1;min-height:0;overflow:hidden;padding:0 8px 8px;display:flex;flex-direction:column;gap:5px}
+.fade{position:absolute;left:0;right:0;bottom:0;height:40px;background:linear-gradient(transparent,var(--sunk));border-radius:0 0 8px 8px;pointer-events:none}
+
+/* fit distribution in the New column */
+.fitdist{padding:0 10px 8px;flex:none;display:flex;flex-direction:column;gap:6px}
+.fbar{display:flex;gap:2px;height:6px;border-radius:3px;overflow:hidden}
+.fbar i{display:block;min-width:4px}
+.flegend{display:flex;gap:4px;font-size:12px;color:var(--muted)}
+.flegend span{display:flex;align-items:center;gap:5px;padding:2px 7px;border-radius:999px;border:1px solid transparent}
+.flegend span.on{border-color:var(--line);background:var(--surface);color:var(--fg)}
+.flegend b{font:500 11.5px var(--f-m);color:var(--fg)}
+.fittabs{display:flex;gap:4px;padding:0 8px 8px;flex:none}
+.fittabs span{flex:1;display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-radius:6px;background:var(--surface);border:1px solid transparent;font-size:12px;color:var(--muted)}
+.fittabs span b{font:500 13px var(--f-m);color:var(--fg)}
+.fittabs span.on{border-color:var(--fg)}
+.fittabs .bar{height:3px;border-radius:2px;background:var(--line)}
+.fittabs .bar i{display:block;height:100%;border-radius:2px}
+
+.grp{display:flex;align-items:center;gap:8px;padding:6px 2px 2px;flex:none}
+.grp .label{display:flex;gap:6px;align-items:center}
+.grp .sel{margin-left:auto;font-size:12px;color:var(--accent)}
+.pdot{width:7px;height:7px;border-radius:50%}
+
+/* compact card: two lines */
+.card{flex:none;background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:7px 10px 7px;display:grid;grid-template-columns:auto 1fr;column-gap:8px;position:relative}
+.card .cb{grid-row:1/3;align-self:center;width:14px;height:14px;border:1.5px solid var(--faint);border-radius:3px;display:none}
+.selmode .card .cb{display:block}
+.card.sel{background:var(--accent-soft);border-color:var(--accent)}
+.card.sel .cb{background:var(--accent);border-color:var(--accent);position:relative}
+.card.sel .cb::after{content:"";position:absolute;left:3.5px;top:0.5px;width:4px;height:8px;border:solid var(--accent-ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.r1,.r2{grid-column:2;display:flex;align-items:center;gap:8px;min-width:0}
+.r1{height:19px}
+.r2{height:17px;font-size:12.5px;color:var(--muted)}
+.nm{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.firm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.ty{font:11px var(--f-m);color:var(--muted);flex:none}
+.pips{display:inline-flex;gap:2px;margin-left:auto;flex:none}
+.pips i{width:5px;height:9px;border-radius:2px;background:var(--line)}
+.pips i.f{background:var(--good)}
+.chip{font:500 11.5px/1.6 var(--f-b);padding:0 7px;border-radius:999px;white-space:nowrap;flex:none;font-variant-numeric:tabular-nums}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.soon{background:var(--warm-soft);color:var(--warm-ink)}
+.chip.money{background:var(--good-soft);color:var(--good-ink);font-family:var(--f-m);font-size:11px}
+.chip.ind{background:var(--sunk);color:var(--muted)}
+.chip.type{background:var(--accent-soft);color:var(--accent)}
+.chip.hot{background:var(--hot-soft);color:var(--hot-ink)}
+.chip.warm{background:var(--warm-soft);color:var(--warm-ink)}
+.soft{font:11px var(--f-m);color:var(--muted);flex:none}
+.later{font:11px var(--f-m);color:var(--muted);flex:none}
+.diamond{width:7px;height:7px;background:var(--agent);transform:rotate(45deg);flex:none;margin-left:2px}
+
+/* expanded triage card */
+.card.tri{border:1px solid var(--accent);outline:2px solid var(--accent);outline-offset:-1px;padding:12px 14px 12px;display:block;box-shadow:var(--shadow-drag)}
+.tri .h{display:flex;align-items:baseline;gap:8px}
+.tri .h .nm{font-size:15px}
+.tri .sub{color:var(--muted);font-size:12.5px;margin-top:1px}
+.tri .chips{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.tri dl{display:grid;grid-template-columns:78px 1fr;gap:3px 10px;margin:10px 0 0;font-size:12.5px}
+.tri dt{color:var(--muted)}
+.tri dd{margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tri .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.tri .acts .btn{height:28px;font-size:12.5px;padding:0 8px 0 6px;gap:6px}
+.tri .acts .btn .kbd{order:-1}
+.tri .pos{font:11.5px var(--f-m);color:var(--muted);margin-left:auto}
+.tri .lnk{display:flex;gap:6px;margin-top:10px}
+.tri .lnk span{white-space:nowrap;border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:12px;color:var(--accent)}
+
+/* empty-column drop zone */
+.drop{margin:0 0 0;border:1.5px dashed var(--line);border-radius:7px;padding:14px 10px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;color:var(--muted);font-size:12.5px;background:color-mix(in oklab,var(--surface) 35%,transparent)}
+.drop .k{display:flex;align-items:center;gap:6px;color:var(--fg);font-weight:500}
+.drop.hot{border-color:var(--accent);border-style:dashed;background:color-mix(in oklab,var(--accent-soft) 70%,transparent);color:var(--accent)}
+.drop.hot .k{color:var(--accent)}
+.col.target{outline:2px dashed var(--accent);outline-offset:-2px}
+
+/* board overflow (mature) */
+.edge{position:absolute;top:0;right:0;bottom:0;width:72px;background:linear-gradient(90deg,transparent,var(--canvas));pointer-events:none}
+.more{position:absolute;right:28px;bottom:26px;height:30px;display:flex;align-items:center;gap:6px;padding:0 10px;background:var(--surface);border:1px solid var(--line);border-radius:999px;box-shadow:var(--shadow-menu);font-size:12.5px;font-weight:500}
+/* bulk bar */
+.bulk{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-menu);display:flex;align-items:center;gap:6px;padding:7px 8px 7px 14px;white-space:nowrap}
+.bulk .div{width:1px;height:20px;background:var(--line);margin:0 6px}
+.bulk .btn{height:28px;font-size:12.5px;padding:0 9px 0 6px;gap:6px}
+.bulk .btn .kbd{order:-1}
+
+/* toast */
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--fg);color:var(--canvas);border-radius:8px;padding:9px 14px;display:flex;gap:16px;font-size:13px;align-items:center}
+.toast u{text-decoration:none;font-weight:600}
+
+/* mature ledger */
+.ledger{flex:none;background:var(--surface);border:1px solid var(--line);border-radius:8px;display:grid;grid-template-columns:1.15fr 1fr 1fr}
+.ledger>div{padding:14px 18px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:7px;min-width:0}
+.ledger>div:last-child{border-right:0}
+.amt{font:700 30px/1.1 var(--f-d);font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:8px}
+.amt small{font:500 18px var(--f-d);color:var(--muted)}
+.meter{height:8px;border-radius:999px;background:var(--sunk);position:relative;overflow:hidden}
+.meter i{position:absolute;top:0;bottom:0;left:0}
+.stats{font-size:13px;color:var(--muted)}
+.stats b{color:var(--fg);font-weight:600}
+.due-row,.nx-row{display:flex;align-items:center;gap:8px;font-size:13px;height:22px;min-width:0}
+.due-row .nm{font-size:13px;font-weight:500}
+.due-row .when{margin-left:auto;font:11.5px var(--f-m)}
+.nx-row .n{font:500 12.5px var(--f-m);min-width:22px;text-align:right}
+.nx-row .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nx-row .go{color:var(--accent);margin-left:auto;font-size:12.5px;flex:none}
+
+/* ---------- phone ---------- */
+.phone main{padding:12px 16px 0;gap:12px}
+.ptop{height:57px;flex:none;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 16px}
+.ptop .menu{margin-left:auto}
+.pills{display:flex;gap:6px;overflow:hidden;flex:none;margin-right:-16px}
+.pill{flex:none;height:32px;border:1px solid var(--line);border-radius:999px;display:flex;align-items:center;gap:7px;padding:0 12px;font-size:13px;font-weight:500;background:var(--surface)}
+.pill b{font:500 12px var(--f-m);color:var(--muted)}
+.pill.on{background:var(--fg);color:var(--canvas);border-color:var(--fg)}
+.pill.on b{color:var(--canvas)}
+.plist{background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:none}
+.prow{display:grid;grid-template-columns:1fr;padding:9px 12px;border-bottom:1px solid var(--line)}
+.prow:last-child{border-bottom:0}
+.pgrp{padding:8px 12px 6px;background:var(--canvas);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px}
+.pstrip{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:9px;flex:none}
+</style>
+<script src="data.js"></script>
+</head>
+<body>
+<div class="app" id="app"></div>
+<script>
+const P = new URLSearchParams(location.search);
+const S = P.get("s") || "new";
+if (P.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+const R = window.ROWS;
+const STAGES = [
+  ["New","slate","Fresh from an import"],["Researching","violet","Worth a closer look"],["Contacted","cobalt","You reached out"],
+  ["Replied","teal","They wrote back"],["Meeting","amber","On the calendar"],["Diligence","orange","Reading the data room"],
+  ["Committed","green","Signed or wired"],["Passed","gray","Not this round"]];
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const pips = f => `<span class="pips" title="fit ${f}/5">${[1,2,3,4,5].map(i=>`<i class="${i<=f?"f":""}"></i>`).join("")}</span>`;
+const short = {"Corporate VC":"CVC","Family office":"FO","Accelerator":"Accel.","Other":""};
+const tyl = t => short[t] ?? t;
+function who(r){ return r.f ? r.f : (r.t || "Independent"); }
+function card(r, opts={}){
+  const extra = opts.extra || "";
+  return `<div class="card ${opts.cls||""}"><span class="cb"></span>
+    <div class="r1"><span class="nm">${esc(r.n)}</span>${opts.diamond?'<span class="diamond" title="Moved by claude-code 2h ago"></span>':""}${opts.hidePips?"":pips(r.fit)}</div>
+    <div class="r2"><span class="firm">${esc(who(r))}</span>${extra}${opts.noType||!tyl(r.ty)?"":`<span class="ty">${tyl(r.ty)}</span>`}</div></div>`;
+}
+const byFit = (a,b)=> b.fit-a.fit || a.n.localeCompare(b.n);
+const groups = rows => ({hot:rows.filter(r=>r.fit===5).sort(byFit),warm:rows.filter(r=>r.fit===4).sort(byFit),maybe:rows.filter(r=>r.fit===3).sort(byFit),low:rows.filter(r=>r.fit<3).sort(byFit)});
+
+function topbar(){
+  return `<header class="top"><span class="wm">Raisebook</span><span class="ws">Lumen Grid <i class="caret"></i></span>
+  <span class="rpick"><span class="on">Seed</span><span>+ Round</span></span>
+  <nav class="nav"><a class="on">Pipeline</a><a>Overview</a><a>Investors</a><a>Settings</a>
+  <span class="srch">Search <span class="kbd">⌘K</span></span><span class="av">F</span></nav></header>`;
+}
+function titleRow(mature){
+  return `<div class="title"><h1>Seed</h1><span class="mono muted" style="font-size:11.5px">SAFE · $16M CAP</span>
+   <span class="seg" style="margin-left:6px"><span class="on">All</span>${mature?'<span>Due now <span class="n">6</span></span>':'<span>Unsorted <span class="n">411</span></span>'}<span>My investors</span><span>Hot</span></span>
+   <span class="muted" style="font-size:18px;line-height:1;margin-left:2px">⋯</span>
+   <span class="sp"></span>
+   ${mature?"":`<span class="ring muted"><span class="mono" style="font-size:11.5px">SET UP 2/4</span><span class="link">Invite a co-founder</span></span><span style="width:12px"></span>`}
+   <span class="link" style="font-size:13px">Edit round</span></div>`;
+}
+function toolbar(mature, n){
+  return `<div class="tools"><span class="input">Search name, firm, focus, notes… <span class="kbd">/</span></span>
+   <span class="btn sm">Filter <span class="kbd">F</span></span>
+   <span class="btn sm">Group: ${mature?"None":"Fit"} <i class="caret"></i></span>
+   <span class="btnseg"><span class="on">Board</span><span>Table</span></span>
+   <span class="btn sm">Display</span>
+   <span class="count">${n}</span><span class="sp"></span>
+   ${mature?`<span class="btn sm">Triage <span class="kbd">T</span></span><span class="btn primary">Add investor <span class="kbd">C</span></span>`
+           :`<span class="btn">Add investor <span class="kbd">C</span></span>`}</div>`;
+}
+function emptyCol(i, target, sel){
+  const [label,color,hint] = STAGES[i];
+  return `<section class="col ${target?"target":""}" style="--c:var(--stage-${color})">
+    <div class="colh"><span class="dot" style="background:var(--stage-${color})"></span><span>${label}</span><span class="cnt">0</span></div>
+    <div class="colb"><div class="drop ${target?"hot":""}"><span class="k"><span class="kbd">${i+1}</span>${target?`Drop ${sel}`:"Drop here"}</span><span>${hint}</span></div></div></section>`;
+}
+
+/* ---------------- 411 / all-New desktop ---------------- */
+function render411(bulk){
+  const g = groups(R);
+  const total = R.length;
+  const cards = [];
+  cards.push(`<div class="grp"><span class="label"><span class="pdot" style="background:var(--hot)"></span>Hot · fit 5</span><span class="mono muted" style="font-size:11.5px">${g.hot.length}</span><span class="sel">${bulk?"Clear":"Select 14"}</span></div>`);
+  g.hot.forEach((r,i)=>{
+    if(!bulk && i===0){
+      cards.push(`<div class="card tri">
+        <div class="h"><span class="nm">${esc(r.n)}</span>${pips(r.fit)}<span class="mono muted" style="font-size:11.5px">5/5</span></div>
+        <div class="sub">${esc(r.t)} · ${esc(r.f)}</div>
+        <div class="chips"><span class="chip type">${r.ty}</span>${r.i!=="Other"?r.i.split(";").map(x=>`<span class="chip ind">${x}</span>`).join(""):""}<span class="muted" style="font-size:12.5px;margin-left:2px">${r.l}</span></div>
+        <dl><dt>Met at</dt><dd>Tech Week SF 2026</dd><dt>Check size</dt><dd class="mono" style="font-size:12px">$250k–$1M</dd><dt>Invests at</dt><dd>Pre-seed, Seed</dd></dl>
+        <div class="lnk"><span>LinkedIn ↗</span><span>Website ↗</span><span>Email · copy</span></div>
+        <div class="acts">
+          <span class="btn"><span class="kbd">2</span>Researching</span><span class="btn"><span class="kbd">3</span>Contacted</span><span class="btn"><span class="kbd">8</span>Pass</span>
+          <span class="btn"><span class="kbd">F</span>Follow-up</span><span class="btn ghost" style="padding:0 6px"><span class="kbd">S</span>Skip</span>
+        </div>
+        <div style="display:flex;margin-top:8px;align-items:center;gap:8px"><span class="muted" style="font-size:12px">↵ open file · 1–8 any stage · x select</span><span class="pos">1 of 41 Hot + Warm</span></div>
+      </div>`);
+    } else cards.push(card(r,{cls:bulk?"sel":""}));
+  });
+  cards.push(`<div class="grp"><span class="label"><span class="pdot" style="background:var(--warm)"></span>Warm · fit 4</span><span class="mono muted" style="font-size:11.5px">${g.warm.length}</span><span class="sel">Select 27</span></div>`);
+  g.warm.slice(0,8).forEach(r=>cards.push(card(r)));
+  const seg = [["Hot",g.hot.length,"var(--hot)"],["Warm",g.warm.length,"var(--warm)"],["Maybe",g.maybe.length,"var(--maybe)"],["Low fit",g.low.length,"var(--faint)"]];
+  const dist = `<div class="fitdist"><div class="fbar">${seg.map(([l,n,c])=>`<i style="flex:${n};background:${c}"></i>`).join("")}</div>
+    <div class="flegend">${seg.map(([l,n,c],i)=>`<span class="${i===0?"on":""}"><span class="pdot" style="background:${c}"></span>${l} <b>${n}</b></span>`).join("")}</div></div>`;
+  const newCol = `<section class="col" style="--c:var(--stage-slate)">
+    <div class="colh"><span class="dot" style="background:var(--stage-slate)"></span><span>New</span><span class="kbd" style="margin-left:2px">1</span><span class="cnt">${total}</span></div>
+    ${dist}
+    <div class="colb ${bulk?"selmode":""}">${cards.join("")}</div><div class="fade"></div></section>`;
+  const sel = bulk ? 14 : 0;
+  const strip = `<section class="strip">
+     <div class="cell"><span class="label">Target</span><span class="tnum"><b>$2,000,000</b></span><span class="muted">· closes Dec 18, <span class="tnum">67</span> days</span></div>
+     <div class="cell"><span class="label">Sorted</span><span class="prog"><i style="width:${bulk?0:0}%"></i></span><span class="tnum"><b>0</b> <span class="muted">of 411</span></span></div>
+     <div class="cell" style="flex:1"><span style="white-space:nowrap"><b>41 Hot and Warm</b> <span class="muted">haven't been sorted yet. Start with them.</span></span></div>
+     <div class="cell" style="padding-right:0"><span class="mono muted" style="font-size:11.5px">$0 COMMITTED</span><span class="btn primary">Start triage <span class="kbd">T</span></span></div>
+   </section>`;
+  const cols = [newCol]; for(let i=1;i<8;i++) cols.push(emptyCol(i, bulk && [1,2,7].includes(i), sel));
+  return `${topbar()}<main>${titleRow(false)}${strip}${toolbar(false, bulk?"14 selected · 411 in New":"411 in New")}
+    <div class="board" style="grid-template-columns:400px repeat(7,minmax(0,1fr))">${cols.join("")}</div></main>
+    ${bulk?`<div class="bulk"><b class="tnum">14 selected</b><span class="div"></span><span class="muted" style="font-size:12.5px">Move to</span>
+      <span class="btn"><span class="kbd">2</span>Researching</span><span class="btn"><span class="kbd">3</span>Contacted</span><span class="btn"><span class="kbd">8</span>Passed</span><span class="btn"><span class="kbd">M</span>Other stage…</span>
+      <span class="div"></span><span class="btn"><span class="kbd">F</span>Follow-up</span><span class="btn">Owner</span><span class="btn">Fit</span><span class="btn">Tag</span>
+      <span class="div"></span><span class="btn ghost"><span class="kbd">Esc</span>Clear</span></div>`:""}`;
+}
+
+/* ---------------- mature desktop ---------------- */
+function matureData(){
+  const rows = R.slice().sort((a,b)=>b.fit-a.fit || a.n.localeCompare(b.n));
+  const take = (pred,n)=>{const out=[];for(let i=0;i<rows.length&&out.length<n;i++){if(pred(rows[i])){out.push(rows[i]);rows.splice(i,1);i--;}}return out;};
+  const st = {};
+  st.Committed = take(r=>r.fit===5,5);
+  st.Diligence = take(r=>r.fit>=4,6);
+  st.Meeting = take(r=>r.fit>=3 && (r.n.length%2===0),18);
+  st.Replied = take(r=>r.fit>=3,31);
+  st.Contacted = take(r=>r.fit>=2,88);
+  st.Researching = take(r=>r.fit>=1 && r.n.length%3!==0,64);
+  st.Passed = take(r=>r.fit<=2 && r.n.length%2===1,57);
+  st.New = rows;
+  return st;
+}
+function renderMature(){
+  const st = matureData();
+  const amt = {Committed:["$250k","$200k","$150k","$150k","$100k"], Diligence:["$200k","$150k","$100k","$150k",null,null], Meeting:[null,"$100k",null,null,null,null,null,null]};
+  const due = {
+    Replied:[["bad","Overdue 4d"],["bad","Overdue 1d"],["soon","Oct 15"],null,["later","Oct 24"],null,["soon","Oct 16"],null],
+    Meeting:[["bad","Due today"],["soon","Oct 14"],null,["soon","Oct 17"],null,["later","Oct 22"]],
+    Contacted:[["bad","Due today"],["bad","Due today"],["soon","Oct 16"],["soon","Oct 16"],null,null,["later","Oct 21"]],
+    Diligence:[["bad","Overdue 2d"],null,["soon","Oct 15"]],
+    Researching:[null,null,["soon","Oct 18"]],
+  };
+  const cols = STAGES.map(([label,color],i)=>{
+    const list = st[label]; const shown = list.slice(0,14);
+    const body = shown.map((r,j)=>{
+      let extra = "";
+      const d = (due[label]||[])[j]; const a = (amt[label]||[])[j];
+      if(label==="Committed" && a) extra = `<span class="chip money">${a}</span>`;
+      else if(a) extra = `<span class="soft">${a} soft</span>`;
+      if(d) extra += d[0]==="later"?`<span class="later">${d[1]}</span>`:`<span class="chip ${d[0]}">${d[1]}</span>`;
+      return card(r,{extra, noType: !!extra, hidePips: label==="Committed"||label==="Passed", diamond: label==="Replied"&&j===2});
+    }).join("");
+    const dueN = (due[label]||[]).filter(x=>x&&x[0]==="bad").length;
+    return `<section class="col" style="--c:var(--stage-${color})"><div class="colh"><span class="dot" style="background:var(--stage-${color})"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span>
+      <span class="cnt">${dueN?`<span class="due">${dueN}</span>`:""}${label==="Committed"?'<span class="tot">$850k</span>':""}${list.length}</span></div>
+      <div class="colb">${body}</div><div class="fade"></div></section>`;
+  });
+  const dueRows = [["Zara Draycott","teal","Overdue 4d","bad"],["Kestrel Fairbanks","orange","Overdue 2d","bad"],["Zeke Everly","teal","Overdue 1d","bad"],["Yara Vasquez","amber","Today","bad"]];
+  const ledger = `<section class="ledger">
+    <div><span class="label">Committed toward Seed</span><span class="amt">$850,000 <small>of $2,000,000</small></span>
+      <span class="meter"><i style="width:72.5%;background:color-mix(in oklab,var(--good) 32%,var(--sunk))"></i><i style="width:42.5%;background:var(--good)"></i></span>
+      <span class="stats"><b class="tnum">5</b> committed · <b class="tnum">$600k</b> soft · <b class="tnum">55</b> in conversation · <b class="tnum">39</b> days to close</span></div>
+    <div><span class="label" style="display:flex;justify-content:space-between">Follow up now <span class="link" style="text-transform:none;letter-spacing:0;font-family:var(--f-b);font-size:12.5px">All 6 →</span></span>
+      ${dueRows.map(([n,c,w])=>`<div class="due-row"><span class="dot" style="background:var(--stage-${c})"></span><span class="nm">${n}</span><span class="when" style="color:var(--bad)">${w}</span></div>`).join("")}</div>
+    <div><span class="label">Next up</span>
+      <div class="nx-row"><span class="n">7</span><span class="t">Hot or Warm in Researching, never contacted</span><span class="go">Triage →</span></div>
+      <div class="nx-row"><span class="n">5</span><span class="t">in Replied, quiet for 14+ days</span><span class="go">Show →</span></div>
+      <div class="nx-row"><span class="n">4</span><span class="t">in Meeting with no soft amount</span><span class="go">Show →</span></div>
+      <div class="nx-row"><span class="n">142</span><span class="t">still New, 9 of them Hot</span><span class="go">Triage →</span></div></div>
+  </section>`;
+  return `${topbar()}<main>${titleRow(true)}${ledger}${toolbar(true,"411 investors")}
+    <div style="flex:1;min-height:0;position:relative;display:flex;margin-right:-24px;overflow:hidden">
+      <div class="board" style="grid-template-columns:repeat(8,232px);padding-right:24px">${cols.join("")}</div>
+      <div class="edge"></div>
+      <div class="more"><span class="dot" style="background:var(--stage-green)"></span>Committed <span class="mono" style="color:var(--good-ink)">$850k</span><span class="mono muted">5</span><span class="muted">·</span><span class="dot" style="background:var(--stage-gray)"></span>Passed <span class="mono muted">57</span><span>→</span></div>
+    </div></main>`;
+}
+
+/* ---------------- phone ---------------- */
+function ptop(){
+  return `<header class="ptop"><span class="wm">Raisebook</span><span class="ws">Lumen Grid <i class="caret"></i></span><span class="btn menu">Menu</span><span class="av">F</span></header>`;
+}
+function renderPhone411(){
+  const g = groups(R);
+  const row = r=>`<div class="prow">${card(r).replace('class="card ','class="card " style="border:0;padding:0;background:transparent" ')}</div>`;
+  return `<div class="phone app">${ptop()}<main>
+    <div class="title" style="height:32px"><h1>Seed</h1><span class="mono muted" style="font-size:11.5px">SAFE · $2M TARGET</span><span class="sp"></span><span class="link" style="font-size:13px">Edit</span></div>
+    <section class="pstrip">
+      <div style="display:flex;align-items:center;gap:10px"><span class="label">Sorted</span><span class="prog" style="flex:1"><i style="width:0"></i></span><span class="tnum"><b>0</b> <span class="muted">of 411</span></span></div>
+      <div style="font-size:13px"><b>41 Hot and Warm</b> <span class="muted">are waiting. Start with them.</span></div>
+      <span class="btn primary" style="height:40px;justify-content:center;font-size:14px">Start triage</span>
+    </section>
+    <div class="pills">${STAGES.slice(0,4).map(([l,c],i)=>`<span class="pill ${i===0?"on":""}"><span class="dot" style="background:var(--stage-${c})"></span>${l}<b>${i===0?411:0}</b></span>`).join("")}</div>
+    <div style="display:flex;gap:8px;flex:none"><span class="input" style="max-width:none">Search investors…</span><span class="btn">Filter</span></div>
+    <div class="plist">
+      <div class="pgrp"><span class="pdot" style="background:var(--hot)"></span><span class="label">Hot · fit 5</span><span class="mono muted" style="font-size:11.5px;margin-left:4px">14</span><span class="link" style="margin-left:auto;font-size:12.5px">Select</span></div>
+      ${g.hot.slice(-5).map(row).join("")}
+      <div class="pgrp" style="border-top:1px solid var(--line)"><span class="pdot" style="background:var(--warm)"></span><span class="label">Warm · fit 4</span><span class="mono muted" style="font-size:11.5px;margin-left:4px">27</span><span class="link" style="margin-left:auto;font-size:12.5px">Select</span></div>
+      ${g.warm.slice(0,3).map(row).join("")}
+    </div></main></div>`;
+}
+function renderPhoneTriage(){
+  const r = groups(R).hot[0];
+  return `<div class="phone app" style="background:var(--canvas)">
+   <header class="ptop" style="gap:10px"><span class="btn" style="width:32px;padding:0;justify-content:center">✕</span><span style="font-weight:600">Triage</span><span class="mono muted" style="font-size:11.5px">1 OF 41 · HOT + WARM</span></header>
+   <div style="height:3px;background:var(--sunk)"><div style="width:2.4%;height:100%;background:var(--fg)"></div></div>
+   <main style="padding:16px;gap:12px">
+    <section style="background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;flex:none">
+      <div style="display:flex;align-items:center;gap:8px"><span class="chip hot">Hot</span><span style="display:flex;gap:6px;align-items:center">${pips(5)}<span class="mono muted" style="font-size:11.5px">5/5</span></span><span style="margin-left:auto;display:flex;gap:6px;align-items:center;font-size:12.5px" class="muted"><span class="dot" style="background:var(--stage-slate)"></span>New</span></div>
+      <div style="font:700 22px/1.15 var(--f-d)">${esc(r.n)}</div>
+      <div class="muted" style="font-size:13px;margin-top:-6px">${esc(r.t)} · ${esc(r.f)}</div>
+      <div class="chips" style="display:flex;gap:5px;flex-wrap:wrap"><span class="chip type">${r.ty}</span>${r.i.split(";").map(x=>`<span class="chip ind">${x}</span>`).join("")}</div>
+      <dl style="display:grid;grid-template-columns:96px 1fr;gap:5px 10px;margin:4px 0 0;font-size:13px">
+        <dt class="muted">Met at</dt><dd style="margin:0">Tech Week SF 2026</dd><dt class="muted">Based in</dt><dd style="margin:0">${r.l}</dd>
+        <dt class="muted">Check size</dt><dd class="mono" style="margin:0;font-size:12.5px">$250k–$1M</dd><dt class="muted">Invests at</dt><dd style="margin:0">Pre-seed, Seed</dd></dl>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn sm" style="color:var(--accent)">LinkedIn ↗</span><span class="btn sm" style="color:var(--accent)">Website ↗</span><span class="btn sm" style="color:var(--accent)">Email · copy</span></div>
+    </section>
+    <section style="background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;flex:none;display:flex;flex-direction:column;gap:8px">
+      <span class="label">Next step</span><span style="height:36px;border:1px solid var(--line);border-radius:6px;background:var(--canvas);display:flex;align-items:center;padding:0 10px;color:var(--faint);font-size:14px">Optional, e.g. ask for a warm intro</span>
+    </section>
+    <section style="flex:none;display:flex;flex-direction:column;gap:6px">
+      <span class="label">Up next</span>
+      ${groups(R).hot.slice(1,4).map(x=>`<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="font-weight:600">${esc(x.n)}</span><span class="muted" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(who(x))}</span>${pips(x.fit)}</div>`).join("")}
+    </section>
+    <div class="sp"></div>
+   </main>
+   <div style="flex:none;border-top:1px solid var(--line);background:var(--surface);padding:12px 16px 26px;display:flex;flex-direction:column;gap:8px">
+     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+       <span class="btn" style="height:48px;justify-content:center;font-size:14px">Pass</span>
+       <span class="btn" style="height:48px;justify-content:center;font-size:14px">Research</span>
+       <span class="btn primary" style="height:48px;justify-content:center;font-size:14px">Contact</span></div>
+     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+       <span class="btn ghost" style="justify-content:center;height:40px">Skip</span><span class="btn ghost" style="justify-content:center;height:40px">Follow-up</span><span class="btn ghost" style="justify-content:center;height:40px">Other stage</span></div>
+   </div></div>`;
+}
+function renderPhoneMature(){
+  const st = matureData();
+  const due = [["Zara Draycott","Replied","teal","Overdue 4d"],["Kestrel Fairbanks","Diligence","orange","Overdue 2d"],["Zeke Everly","Replied","teal","Overdue 1d"],["Yara Vasquez","Meeting","amber","Due today"],["Elio Underhill","Contacted","cobalt","Due today"],["Emeric Northcote","Contacted","cobalt","Due today"]];
+  return `<div class="phone app">${ptop()}<main>
+    <div class="title" style="height:32px"><h1>Seed</h1><span class="mono muted" style="font-size:11.5px">SAFE · 39 DAYS LEFT</span><span class="sp"></span><span class="link" style="font-size:13px">Edit</span></div>
+    <section class="pstrip"><span class="label">Committed toward Seed</span><span class="amt" style="font-size:26px">$850,000 <small style="font-size:15px">of $2M</small></span>
+      <span class="meter"><i style="width:72.5%;background:color-mix(in oklab,var(--good) 32%,var(--sunk))"></i><i style="width:42.5%;background:var(--good)"></i></span>
+      <span class="stats"><b>5</b> committed · <b>$600k</b> soft · <b>55</b> talking</span></section>
+    <div class="pills"><span class="pill">All<b>411</b></span><span class="pill on">Due now<b>6</b></span>${STAGES.map(([l,c],i)=>`<span class="pill"><span class="dot" style="background:var(--stage-${c})"></span>${l}<b>${st[l].length}</b></span>`).slice(0,3).join("")}</div>
+    <div class="plist"><div class="pgrp"><span class="label">Follow up now</span><span class="mono muted" style="font-size:11.5px;margin-left:4px">6</span></div>
+      ${due.map(([n,s,c,w])=>`<div class="prow"><div style="display:flex;align-items:center;gap:8px"><span style="font-weight:600">${n}</span><span class="chip bad" style="margin-left:auto">${w}</span></div><div style="display:flex;gap:6px;align-items:center;font-size:12.5px" class="muted"><span class="dot" style="background:var(--stage-${c})"></span>${s}</div></div>`).join("")}
+    </div>
+    <div class="plist"><div class="pgrp"><span class="label">Next up</span></div>
+      <div class="prow"><div class="nx-row"><span class="n">7</span><span class="t">Hot or Warm, never contacted</span><span class="go">Triage →</span></div></div>
+      <div class="prow"><div class="nx-row"><span class="n">5</span><span class="t">quiet in Replied 14+ days</span><span class="go">Show →</span></div></div>
+    </div></main></div>`;
+}
+const app = document.getElementById("app");
+if (S==="new") app.innerHTML = render411(false);
+else if (S==="bulk") app.innerHTML = render411(true);
+else if (S==="mature") app.innerHTML = renderMature();
+else if (S==="m-new") app.outerHTML = renderPhone411();
+else if (S==="m-triage") app.outerHTML = renderPhoneTriage();
+else if (S==="m-mature") app.outerHTML = renderPhoneMature();
+</script>
+</body>
+</html>

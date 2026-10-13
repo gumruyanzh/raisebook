@@ -192,7 +192,9 @@ Chips are pills with `chip` type and a 1px transparent border. Variants: `priori
 `type` (`accent-soft`/`accent`: VC, Angel…), `tag` and `industry` (`sunk`/`muted`), `due` and
 `soon` (§2.3), `money` (`good-soft`/`good`, mono amount: "$250k"), `agent` (`agent-soft`/
 `agent`, used only for "by claude-code" badges), `mode` (outlined, mono: SANDBOX, TEST). There
-are at most four chips on a board card. Extra tags collapse to "+3".
+are no chips on a board card (§3.13: one right-slot item). The industry "Other" and the
+investor type `other` are never rendered as chips or labels anywhere (cards, rows, sheet
+header, Triage, phone); they stay as filter values labelled "Other".
 
 ### 2.5 Actor rendering
 | Actor | Render |
@@ -233,10 +235,10 @@ tokens, and works with the keyboard. The live inventory is `/design` (dev only, 
 | 3.7 | `FitMeter` | Five 6×10px pips (radius 2), filled `good`, empty `line`, with an optional "4/5" mono label. Read-only by default. `editable` turns it into a radio group of six (0–5), where the arrow keys change the value. |
 | 3.8 | `Meter` | Ledger meter: an 8px `sunk` pill track with a `good` fill (width animated). Props `value`, `max`, `label`. Over 100%: the fill is full and a mono "112% of target" appears in `good`. |
 | 3.9 | `FunnelBar` | The prototype funnel: a 26px bar of stage-colored flex segments (radius 6 on the container), with a legend row under it (dot, label, bold count). Every segment and legend item is a button that filters the pipeline by stage. Zero-count stages appear only in the legend. |
-| 3.10 | `Ledger` | The round summary strip. Grid `1.2fr / 2fr` (stacked under 860px). Left: mono label "COMMITTED TOWARD SEED", `amount` "$750,000 of $2,000,000", Meter, a sub-row of stats (`b` tabular): "18 in conversation · 4 committed · $400k soft · 41 days to close". Right: label "PIPELINE", FunnelBar, a due strip ("Follow up now:" + up to 8 due chips + "+3 more"). Compact variant on the pipeline page. Full variant on the overview. |
+| 3.10 | `Ledger` | The round summary strip. Grid `1.2fr / 2fr` (stacked under 860px). Left: mono label "COMMITTED TOWARD SEED", `amount` "$750,000 of $2,000,000", Meter, a sub-row of stats (`b` tabular): "18 in conversation · 4 committed · $400k soft · 41 days to close". Right: label "PIPELINE", FunnelBar, a due strip ("Follow up now:" + up to 8 due chips + "+3 more"). Full variant (with the FunnelBar) on the overview only. The pipeline page uses its own two states (`PipelineLedger`, design/pipeline-redo/DECISION.md §5.1): before money exists (soft + committed = 0 and nobody in the won stage) a 52px **strip** (Target · Sorted meter "0 of 411" · "40 Hot and Warm are still New. Start with them." · "$0 COMMITTED" · [Start triage T]); once money exists the **desk** (Committed with the soft tint · Follow up now · Next up buckets). No FunnelBar on the pipeline page. |
 | 3.11 | `Table` (`Table`, `THead`, `TBody`, `Tr`, `Th`, `Td`, `TableScroll`) | The prototype table: a surface with 1px line and radius 8, `min-width` per use, sticky `Th` with `label` type, `aria-sort` + "↑/↓" on the sorted column, 1px row rules, clickable rows (Enter opens). Row hover is a neutral tint (`color-mix(in oklab, var(--sunk) 55%, var(--surface))`); a selected or open row is `accent-soft` plus a 2px inset accent rule on the left, so hover and selected never look alike. Density toggle: Compact 32px / Comfortable 44px rows (Compact is the default past 100 rows, saved per viewer). Cells are one line with an ellipsis and the full value in `title`. Long tables window their rows (`useVirtualRows`, fixed row heights) and use roving focus: one tab stop, ↑/↓ or j/k move, Enter opens, x selects, Shift extends, ⌘A selects all shown. Focus rings on rows are inset. `Td variant="num"` = mono tabular 12.5. Selection checkbox column optional. `TableScroll` handles horizontal overflow on phones. |
-| 3.12 | `BoardColumn` | A `sunk` column with radius 8 and a 3px top rule in the stage color, sticky header (StageDot, label 600 13px, mono count right, and for the won stage the column total, "$750k", in good). The board fills the viewport: the page stops scrolling and each column body scrolls on its own, windowed (no "Show more"). The header has a sort Menu (Fit, Due first, Last activity, Name) and a due count. Empty columns fold into thin rails. Empty: muted "Drag investors here" (or "Nothing here yet" for viewers). Drop target: 2px dashed accent outline at -2px. |
-| 3.13 | `BoardCard` | A `<button>` surface with 1px line and radius 7, padding 9/10, gap 5. Row 1: name (600, ellipsis) + agent marker if recent. Row 2: "Firm · Title" (firm first; body-s, muted, ellipsis). Row 3: one wrapping row of chips: priority, type, the follow-up chip with short labels ("Overdue 4d", "Due today", "Oct 16") and the money chip (won stage or soft amount), plus FitMeter. Committed cards hide fit and priority. Optional next-step line (body-s muted, one line). A card without a next step stays ≤ 84px. **Compact** variant (a toggle, ≤ 52px): name and firm, then only the stage-relevant chip (due or amount). Hover: accent border. Focus ring inset (`outline-offset: -2px`), never clipped. Dragging: 50% opacity on the source, shadow on the ghost. Keyboard: §4.3. |
+| 3.12 | `BoardColumn` | A `sunk` column with radius 8 and a 3px top rule in the stage color, sticky header (StageDot, label 600 13px, mono count right, and for the won stage the column total, "$750k", in good). The board fills the viewport: the page stops scrolling and each column body scrolls on its own, windowed (no "Show more"). The header has a sort Menu (Fit, Due first, Last activity, Name) and a due count ("2 due"). **No rails, ever**: tracks are `minmax(352px, 2.5fr)` for the dominant stage (≥ 60% of the round and ≥ 50 investors), `minmax(232px, 1fr)` for a stage with cards and `minmax(136px, .6fr)` for an empty one, gap 12; a mature round scrolls sideways and a pill at the bottom right ("● Committed $650k 4 · ● Passed 230 →") reaches the end stages. An empty column stays full height with a 96px dashed box: "Drop here" + the stage's meaning ("Worth a closer look"); viewers see "Nothing here yet"; while dragging it reads "Drop 14". The dominant New column adds a priority bar with a legend that filters, and groups its cards by priority with "Select N". Drop target: 2px dashed accent outline at -2px. |
+| 3.13 | `BoardCard` | A `<button>` surface with 1px line and radius 7, **52px, two lines**. Line 1: name (600 13.5px, ellipsis) + agent marker if recent + FitMeter pips (hidden in the won stage). Line 2: firm (else title, else type) in body-s muted, and **exactly one** right-slot item (`cardSlot`): overdue/today chip → won money chip → "$150k soft" mono → soon chip ("Oct 14") → later date mono → type mono ("VC", never `other`). No priority, type, industry or tag chips. Display → "Show next step" adds a third line (70px). Selected: `accent-soft` + accent border, with a checkbox at the left. Hover: accent border. Focus ring inset (`outline-offset: -2px`), never clipped. Dragging: 50% opacity on the source, shadow on the ghost. Keyboard: §4.3. |
 | 3.14 | `Sheet` | A right-side panel, `min(520px, 100%)` wide, full height, surface, 1px left line, scrim. Header: `display-s` title, muted subline, chips, close button (32px square, 1px line, radius 6, "✕"). The body scrolls with 16px section gaps. Esc and the scrim close it. Focus is trapped while open, moves to the close button on open, and returns to the invoking card on close. Respects safe-area insets. |
 | 3.15 | `Dialog`, `ConfirmDialog` | Native `<dialog>`: surface, radius 8, dialog shadow, max-width 480. Title `display-s`, body, actions right-aligned (secondary then primary). `ConfirmDialog` with `typed` asks the user to type the slug or name to enable the `danger` button ("Delete workspace permanently"). |
 | 3.16 | `Toast` (`ToastProvider`, `useToast`, `useToastLift`) | The prototype toast: an `fg` box with `canvas` text, radius 8, centered bottom with safe-area offset. One line, plus an optional action ("Undo" for stage moves, bulk changes, Done and Snooze). Auto-dismisses after 4s, or 8s with an action. `role="status"`. A bar at the bottom of the viewport (a selection bar, the Today queue's "Next follow-up?" strip) calls `useToastLift` so the toast rises above it and never covers its buttons. |
@@ -306,7 +308,24 @@ background, 1px line under it, sticky.
   company). Switching companies returns to the last page used there.
 
 ### 4.2 Round: Pipeline (`/w/[ws]/r/[round]`, default view)
-This is the prototype page, made real.
+This is the prototype page, made real, with the pipeline redo on top
+(design/pipeline-redo/DECISION.md is the detailed spec and wins where they differ):
+- Three views in the title row: **Triage | Board | Table** (`?view=`). The view that opens: the
+  URL, else this viewer's choice for the round (`rb-view:<ws>:<round>`, written only by a
+  click), else **Triage** when New is the dominant stage and the viewer can write, else Board.
+  An auto pick says so ("All 411 are New, so the round opens in Triage."). Viewers never get
+  Triage. `T` switches to it.
+- Triage: queue (grouped Hot/Warm/Maybe/Low fit, pills, tail offer for fit 0) · the investor
+  (only fields with values) with a decision panel pinned at the bottom (1–9 file and open the
+  next, S skip, U undo, `[` `]` fit, N next step, `f` then 1/m/7 follow-up, X select, Enter
+  file, L LinkedIn) · rail (the round, "Where they go" with the keys and +N this session, the
+  session pace). The next two investors are prefetched. Phones get a full-screen takeover.
+- "Get set up" lives in the title row as "SET UP 1/4" + the next step (a Menu lists all four
+  and Dismiss); it is never a full-width row.
+- The bulk bar is pinned to the bottom of the work surface (Board and Table) and lifts the
+  toast.
+- Phones have no board: a Sorted card (or the compact ledger), Follow up now, stage pills
+  and one stage as a list (grouped by priority when New is long).
 ```
 ┌ Ledger (compact) ──────────────────────────────────────────────────────────────────┐
 │ COMMITTED TOWARD SEED          │ PIPELINE                                           │
@@ -362,8 +381,12 @@ Seed SAFE  [All | Due now | My investors | Hot | …saved views] ⋯            
   between columns, Enter opens the sheet.
 - `Alt+→` / `Alt+←` moves the focused card to the next or previous stage, skipping the `lost`
   stage (which you reach only through the menu). Focus follows the card.
-- `M` opens the card's "Move to…" Menu (all stages). This only opens a menu, so no write
-  happens on a bare key.
+- `M` opens the card's "Move to…" Menu (all stages; digits pick a stage inside the menu, so
+  `M` `7` files a card in Passed). This only opens a menu, so no write happens on a bare key.
+  `X` selects the focused card and Shift+↑/↓ extends; with several selected, `M` and dragging
+  move the whole selection in one request.
+- **Bare digits write only in Triage** (an explicit sorting mode; every write is undoable and
+  announced). On the board, bare digits do nothing.
 - Each move announces itself through an `aria-live="polite"` region ("Dana Whitfield moved
   to Meeting") and shows a Toast with "Undo".
 - The sheet's stage buttons are the third path (pointer, touch and screen-reader friendly).

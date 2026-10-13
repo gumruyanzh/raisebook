@@ -145,3 +145,14 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   `data.bulk_id`; feeds collapse runs with `GET /v1/activities?collapse_runs=true`.
 - Google sign-in is off unless `RAISEBOOK_GOOGLE_CLIENT_ID` and `_SECRET` are set; the web
   asks `GET /v1/auth/providers` and hides the button otherwise.
+
+## Invariants added in the pipeline redo (keep them; spec: `design/pipeline-redo/DECISION.md`)
+- The round page has three views: Triage, Board, Table. Pure rules (default view, money
+  exists, dominant stage, triage keys, the card's one right slot, Next up buckets, pace) live
+  in `web/lib/pipeline.ts` with unit tests. Triage needs a writer and an open stage.
+- The board never folds a column into a rail. Cards are two lines with one right-slot item;
+  the industry "Other" and the type `other` are never shown as chips or labels.
+- Bare digits write only in Triage. Triage moves are optimistic through the page's store
+  (`TriageStore`), and Undo restores the turn's snapshot with one `bulk-update` `restore`.
+- Fictional fixtures for the 411-in-New and mature states: `design/pipeline-redo/fixtures/seed.py`
+  (through the API, against a dev server).

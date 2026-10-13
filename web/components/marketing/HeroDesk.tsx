@@ -98,7 +98,6 @@ export function HeroDesk({ className }: { className?: string }) {
                   count={col.count}
                   total={total}
                   dueCount={col.cards.filter((c) => c.followUpState === "overdue" || c.followUpState === "today").length || undefined}
-                  hiddenCount={0}
                   className="max-h-none"
                 >
                   {col.cards.map((c) => (

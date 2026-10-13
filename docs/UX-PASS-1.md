@@ -519,8 +519,9 @@ Acceptance:
   Cards with no next step target ≤ 84px, and Compact cards (a toggle) ≤ 52px: name and firm,
   then only the stage-relevant chip (due or amount). Committed cards hide fit and priority.
 - A column header menu sorts by Fit, Due first, Last activity or Name, and shows a due count.
-- Empty columns collapse into thin rails (as Passed already does). On mobile the board opens
-  on the first column that has cards.
+- ~~Empty columns collapse into thin rails (as Passed already does). On mobile the board opens
+  on the first column that has cards.~~ Superseded by design/pipeline-redo/DECISION.md §5.2
+  and §7: no rails ever, and phones get a list instead of a board.
 - The board fits the viewport: page scroll stops, only the columns scroll, and column headers
   are sticky.
 - Keyboard: one tab stop for the board, arrow keys move between cards and columns, M opens

@@ -10,7 +10,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 
 import {
@@ -22,8 +21,6 @@ import {
   Field,
   Input,
   Kbd,
-  Ledger,
-  ledgerFromSummary,
   Menu,
   SearchInput,
   Segmented,
@@ -31,6 +28,7 @@ import {
   Sheet,
   StageDot,
   useToast,
+  useToastLift,
   type MenuEntry,
 } from "@/components/ui";
 import { Avatar } from "@/components/ui/Avatar";
@@ -54,12 +52,28 @@ import { cn } from "@/lib/cn";
 import { useCommands } from "@/lib/commands";
 import { formatDate, num, priorityFromFit, relativeTime } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
+import {
+  countByStage,
+  defaultView,
+  dominantStage,
+  isQuiet,
+  moneyExists as hasMoney,
+  openStage as findOpenStage,
+  PRIORITY_ORDER,
+  triageTargets,
+  type NextUpBucket,
+  type PipelineView,
+  type TriageSlice,
+} from "@/lib/pipeline";
 import { useWorkspace } from "@/lib/session";
 
 import { AddInvestorDialog } from "./AddInvestorDialog";
 import { InvestorSheet } from "./InvestorSheet";
 import { quickPicks } from "@/lib/dates";
 import { PipelineBoard, sortCards, type AgentMark, type BoardSort } from "./PipelineBoard";
+import { ledgerFacts, LedgerDesk, LedgerStrip } from "./PipelineLedger";
+import { PipelinePhone } from "./PipelinePhone";
+import { PipelineTriage, type TriageStore } from "./PipelineTriage";
 import { RoundHeader } from "./RoundHeader";
 import {
   DEFAULT_DIR,
@@ -82,18 +96,19 @@ import {
   writeStore,
 } from "./util";
 
-type View = "board" | "table";
-type FollowFilter = "" | "due" | "week" | "none";
+type View = PipelineView;
+type FollowFilter = "" | "due" | "week" | "none" | "quiet";
 
-const VIEW_KEY = (roundId: string) => `rb-view:${roundId}`;
+const VIEW_KEY = (ws: string, roundId: string) => `rb-view:${ws}:${roundId}`;
+const STEP_KEY = "rb-card-next-step";
 /** The investor sheet's width (Sheet's default). */
 const SHEET_W = 520;
 const COLS_KEY = (ws: string, roundId: string) => `rb-table-cols:${ws}:${roundId}`;
-const DENSITY_KEY = (view: View) => `rb-density:${view}`;
+const DENSITY_KEY = (view: "board" | "table") => `rb-density:${view}`;
 const BOARD_SORT_KEY = (roundId: string) => `rb-board-sort:${roundId}`;
 /** Columns hidden until the founder turns them on. */
 const DEFAULT_HIDDEN: TableCol[] = ["title"];
-const FILTER_KEYS = ["stage", "prio", "type", "industry", "follow", "owner", "tag"] as const;
+const FILTER_KEYS = ["stage", "prio", "type", "industry", "follow", "owner", "tag", "kind"] as const;
 /** URL keys a built-in view sets (the filters and the search). */
 const FILTER_PARAMS = ["q", ...FILTER_KEYS] as const;
 /** URL keys a saved view captures: filters, search, view and sort. */
@@ -323,6 +338,7 @@ export function Pipeline(props: PipelineProps) {
   const owner = get("owner");
   const tag = get("tag");
   const stageFilter = get("stage");
+  const kindFilter = get("kind");
   const openId = params.get("investor");
   const sortCol = (TABLE_COLS.some((c) => c.key === get("sort")) ? get("sort") : "fit") as TableCol;
   const sortDir = (get("order") === "asc" || get("order") === "desc" ? get("order") : DEFAULT_DIR[sortCol]) as SortDir;
@@ -338,31 +354,54 @@ export function Pipeline(props: PipelineProps) {
     if (url !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(null, "", url);
   }, []);
 
-  /* ---------- view and per-viewer preferences ---------- */
-  const [storedView, setStoredView] = useState<View | null>(null);
-  useEffect(() => setStoredView(readStore(VIEW_KEY(round.id)) === "table" ? "table" : "board"), [round.id]);
+  /* ---------- view (DECISION §3) and per-viewer preferences ---------- */
+  const phone = useMediaQuery("(max-width: 639px)") === true;
+  const oStage = useMemo(() => findOpenStage(stages), [stages]);
+  const stageN = useMemo(() => countByStage(participants), [participants]);
+  const openCount = oStage ? (stageN[oStage.key] ?? 0) : 0;
+  const dominantKey = useMemo(() => dominantStage(stageN, participants.length), [stageN, participants.length]);
+  // undefined until this browser's choice is read (before paint), so the auto rule never flashes.
+  const [storedView, setStoredView] = useState<string | null | undefined>(undefined);
+  useLayoutEffect(() => setStoredView(readStore(VIEW_KEY(workspace.slug, round.id))), [workspace.slug, round.id]);
   const urlView = get("view");
-  const view: View = urlView === "table" || urlView === "board" ? urlView : (storedView ?? "board");
+  const resolved = defaultView({
+    url: urlView,
+    stored: storedView ?? null,
+    canWrite,
+    hasOpenStage: Boolean(oStage),
+    openCount,
+    total: participants.length,
+  });
+  // Phones have no board: the list, or the Triage takeover when asked for.
+  const view: View = phone ? (resolved.view === "triage" && urlView === "triage" ? "triage" : "table") : resolved.view;
+  const autoTriage = !phone && resolved.auto && view === "triage";
+  const triageOk = canWrite && Boolean(oStage) && (openCount > 0 || view === "triage");
   const setView = (v: View) => {
-    setStoredView(v);
-    writeStore(VIEW_KEY(round.id), v);
-    setParams({ view: v });
+    if (!phone) {
+      setStoredView(v);
+      writeStore(VIEW_KEY(workspace.slug, round.id), v);
+    }
+    setParams({ view: v, ...(v !== "triage" ? { tq: null, at: null } : {}) });
   };
+  const startTriage = (tq?: TriageSlice) => setParams({ view: "triage", tq: tq && tq !== "all" ? tq : null, at: null });
 
-  const [density, setDensityState] = useState<Record<View, Density | null>>({ board: null, table: null });
+  const [density, setDensityState] = useState<Density | null>(null);
+  const [showStep, setShowStep] = useState(false);
   useEffect(() => {
-    const d = (v: View) => {
-      const raw = readStore(DENSITY_KEY(v));
-      return raw === "compact" || raw === "comfortable" ? raw : null;
-    };
-    setDensityState({ board: d("board"), table: d("table") });
+    const raw = readStore(DENSITY_KEY("table"));
+    setDensityState(raw === "compact" || raw === "comfortable" ? raw : null);
+    setShowStep(readStore(STEP_KEY) === "1");
   }, []);
-  const tableDensity: Density = density.table ?? (participants.length > 100 ? "compact" : "comfortable");
-  const boardDensity: Density = density.board ?? "comfortable";
-  const setDensity = (v: View, d: Density) => {
-    writeStore(DENSITY_KEY(v), d);
-    setDensityState((x) => ({ ...x, [v]: d }));
+  const tableDensity: Density = density ?? (participants.length > 100 ? "compact" : "comfortable");
+  const setDensity = (_v: View, d: Density) => {
+    writeStore(DENSITY_KEY("table"), d);
+    setDensityState(d);
   };
+  const toggleStep = () =>
+    setShowStep((x) => {
+      writeStore(STEP_KEY, x ? "0" : "1");
+      return !x;
+    });
 
   const [hidden, setHidden] = useState<Set<TableCol>>(new Set(DEFAULT_HIDDEN));
   useEffect(() => {
@@ -443,8 +482,12 @@ export function Pipeline(props: PipelineProps) {
   useEffect(() => () => void (refreshSoon.current && clearTimeout(refreshSoon.current)), []);
 
   /** After a write: the store first, then the summary, then (debounced) the server page. */
+  // Debounced: a run of Triage decisions refreshes the summary once, not once per key.
+  const summarySoon = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (summarySoon.current && clearTimeout(summarySoon.current)), []);
   const afterWrite = useCallback(() => {
-    void refreshSummary();
+    if (summarySoon.current) clearTimeout(summarySoon.current);
+    summarySoon.current = setTimeout(() => void refreshSummary(), 1500);
     backgroundRefresh(4000);
   }, [refreshSummary, backgroundRefresh]);
 
@@ -516,6 +559,8 @@ export function Pipeline(props: PipelineProps) {
     let due = 0;
     let week = 0;
     let none = 0;
+    let quiet = 0;
+    const nowMs = Date.now();
     for (const p of participants) {
       stage[p.stage.key] = (stage[p.stage.key] ?? 0) + 1;
       const pr = priorityFromFit(p.fit);
@@ -527,6 +572,7 @@ export function Pipeline(props: PipelineProps) {
       if (!p.follow_up_on) none++;
       if (st === "overdue" || st === "today") due++;
       if (st === "overdue" || st === "today" || st === "soon") week++;
+      if (isQuiet(p, today, nowMs)) quiet++;
       for (const i of extras[p.investor.id]?.industries ?? []) {
         const k = i.toLowerCase();
         const cur = ind.get(k);
@@ -540,8 +586,8 @@ export function Pipeline(props: PipelineProps) {
     }
     const sortMap = (m: Map<string, { label: string; n: number }>) =>
       [...m.values()].sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
-    return { industries: sortMap(ind), tags: sortMap(tags), stage, prioN, typeN, ownerN, due, week, none };
-  }, [participants, extras]);
+    return { industries: sortMap(ind), tags: sortMap(tags), stage, prioN, typeN, ownerN, due, week, none, quiet };
+  }, [participants, extras, today]);
 
   const searchText = useMemo(() => {
     const m = new Map<Participant, string>();
@@ -555,10 +601,11 @@ export function Pipeline(props: PipelineProps) {
     };
   }, [extras]);
 
-  const filtered = useMemo(() => {
-    return participants.filter((p) => {
-      if (stageFilter && p.stage.key !== stageFilter) return false;
+  // Every filter except the stage (Triage works inside the open stage).
+  const matches = useCallback(
+    (p: Participant) => {
       if (prio && priorityFromFit(p.fit) !== prio) return false;
+      if (kindFilter && p.stage.kind !== kindFilter) return false;
       if (type && p.investor.type !== type) return false;
       if (industry) {
         const inds = extras[p.investor.id]?.industries ?? [];
@@ -570,13 +617,19 @@ export function Pipeline(props: PipelineProps) {
         if (follow === "none" && p.follow_up_on) return false;
         if (follow === "due" && st !== "overdue" && st !== "today") return false;
         if (follow === "week" && st !== "overdue" && st !== "today" && st !== "soon") return false;
+        if (follow === "quiet" && !isQuiet(p, today, Date.now())) return false;
       }
       if (owner === "none" && p.owner) return false;
       if (owner && owner !== "none" && p.owner?.user_id !== owner) return false;
       if (query && !matchesQuery(searchText(p), query)) return false;
       return true;
-    });
-  }, [participants, extras, stageFilter, prio, type, industry, tag, follow, owner, query, searchText]);
+    },
+    [extras, prio, kindFilter, type, industry, tag, follow, owner, query, searchText, today],
+  );
+  const filtered = useMemo(
+    () => participants.filter((p) => (!stageFilter || p.stage.key === stageFilter) && matches(p)),
+    [participants, stageFilter, matches],
+  );
 
   const active: Record<string, string | undefined> = {
     stage: stageFilter || undefined,
@@ -586,6 +639,7 @@ export function Pipeline(props: PipelineProps) {
     follow: follow || undefined,
     owner: owner || undefined,
     tag: tag || undefined,
+    kind: kindFilter || undefined,
   };
   const activeFilters = FILTER_KEYS.filter((k) => active[k]).length;
 
@@ -632,6 +686,7 @@ export function Pipeline(props: PipelineProps) {
           { value: "due", label: "Due now", hint: num(counts.due) },
           { value: "week", label: "Due this week", hint: num(counts.week) },
           { value: "none", label: "No follow-up set", hint: num(counts.none) },
+          { value: "quiet", label: "Gone quiet (14+ days)", hint: num(counts.quiet) },
         ],
       },
       {
@@ -653,6 +708,16 @@ export function Pipeline(props: PipelineProps) {
         label: "Tag",
         values: counts.tags.map((t) => ({ value: t.label, label: t.label, hint: num(t.n) })),
       },
+      {
+        key: "kind",
+        label: "Stage kind",
+        values: [
+          { value: "open", label: "Not contacted yet" },
+          { value: "active", label: "Talking" },
+          { value: "won", label: "Committed" },
+          { value: "lost", label: "Passed" },
+        ],
+      },
     ],
     [stages, counts, props.members],
   );
@@ -661,7 +726,7 @@ export function Pipeline(props: PipelineProps) {
     if (qTimer.current) clearTimeout(qTimer.current);
     qTimer.current = null;
     setQText("");
-    setParams({ q: null, prio: null, type: null, industry: null, follow: null, owner: null, stage: null, tag: null });
+    setParams({ q: null, prio: null, type: null, industry: null, follow: null, owner: null, stage: null, tag: null, kind: null });
   };
 
   /* ---------- saved views (P2-1): built-ins plus the founder's own, per round ---------- */
@@ -699,7 +764,7 @@ export function Pipeline(props: PipelineProps) {
       const nv = (next.get("view") as View | null) ?? view;
       if (nv === "board" || nv === "table") {
         setStoredView(nv);
-        writeStore(VIEW_KEY(round.id), nv);
+        writeStore(VIEW_KEY(workspace.slug, round.id), nv);
       }
       if (v.density) setDensity(nv, v.density);
       if (v.hidden) {
@@ -722,7 +787,7 @@ export function Pipeline(props: PipelineProps) {
       id: `v${Date.now().toString(36)}`,
       name,
       query: query ? `${query}${query.includes("view=") ? "" : `&view=${view}`}` : `view=${view}`,
-      density: view === "table" ? tableDensity : boardDensity,
+      density: tableDensity,
       hidden: [...hidden],
     };
     storeSaved([...saved, v]);
@@ -751,8 +816,15 @@ export function Pipeline(props: PipelineProps) {
     const m: Record<string, Participant[]> = {};
     for (const s of stages) m[s.key] = [];
     for (const p of filtered) (m[p.stage.key] ??= []).push(p);
-    return stages.map((s) => ({ stage: s, cards: sortCards(m[s.key] ?? [], boardSorts[s.key] ?? "fit") }));
-  }, [stages, filtered, boardSorts]);
+    return stages.map((s) => {
+      const cards = sortCards(m[s.key] ?? [], boardSorts[s.key] ?? "fit");
+      if (s.key !== oStage?.key || s.key !== dominantKey) return { stage: s, cards };
+      // The dominant New column is grouped by priority (DECISION §5.4); keep the sort inside.
+      const by: Record<string, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
+      for (const p of cards) by[priorityFromFit(p.fit)]!.push(p);
+      return { stage: s, cards: PRIORITY_ORDER.flatMap((pr) => by[pr]!) };
+    });
+  }, [stages, filtered, boardSorts, oStage, dominantKey]);
   const order = useMemo(
     () =>
       view === "table"
@@ -761,18 +833,20 @@ export function Pipeline(props: PipelineProps) {
     [view, sortedRows, boardColumns],
   );
 
-  /* ---------- ledger ---------- */
-  const ledger = useMemo(() => {
-    const base = ledgerFromSummary(summary);
-    // Funnel counts and "in conversation" follow the board immediately (optimistic moves).
-    const c: Record<string, number> = {};
-    for (const p of participants) c[p.stage.key] = (c[p.stage.key] ?? 0) + 1;
-    return {
-      ...base,
-      inConversation: participants.filter((p) => p.stage.kind === "active").length,
-      funnel: stages.map((s) => ({ key: s.key, label: s.label, color: s.color, count: c[s.key] ?? 0, won: s.kind === "won" })),
-    };
-  }, [summary, participants, stages]);
+  /* ---------- ledger (DECISION §5.1): a strip until money exists ---------- */
+  const facts = useMemo(
+    () => ledgerFacts(participants, oStage?.key ?? null, today, summary.round.target_close_on ?? round.target_close_on),
+    [participants, oStage, today, summary.round.target_close_on, round.target_close_on],
+  );
+  const money = useMemo(() => hasMoney(participants), [participants]);
+  const showStrip = !money && participants.length > 0;
+  const startTriageOnScreen = showStrip && canWrite && Boolean(oStage) && openCount > 0;
+  const onBucket = (b: NextUpBucket) => {
+    if (b.id === "hw") startTriage("hw");
+    else if (b.id === "new") startTriage("all");
+    else if (b.id === "quiet") setParams({ follow: "quiet", kind: null, stage: null });
+    else setParams({ follow: "none", kind: "active", stage: null });
+  };
 
   /* ---------- the sheet ---------- */
   const [focusReq, setFocusReq] = useState<{ id: string; n: number } | null>(null);
@@ -915,9 +989,10 @@ export function Pipeline(props: PipelineProps) {
   const n = selected.size;
   const plural = (k: number) => `${num(k)} ${k === 1 ? "investor" : "investors"}`;
 
-  const bulkMove = (key: string) => {
+  const bulkMove = (key: string, ids?: string[]) => {
     const to = stages.find((s) => s.key === key);
-    const rows = selectedRows();
+    const pick = ids ? new Set(ids) : null;
+    const rows = pick ? participantsRef.current.filter((p) => pick.has(p.investor.id) && p.stage.key !== key) : selectedRows();
     if (!to || !rows.length) return;
     void runBulk(
       { op: "stage", investor_ids: rows.map((p) => p.investor.id), stage: key },
@@ -1045,22 +1120,49 @@ export function Pipeline(props: PipelineProps) {
   };
   const [tagDialog, setTagDialog] = useState<null | "add" | "remove">(null);
 
+  /* ---------- Triage's window into the store ---------- */
+  const triageStore: TriageStore = useMemo(
+    () => ({
+      apply: (ids, fn) => {
+        const set = new Set(ids);
+        for (const id of ids) cache.current!.pending.add(id);
+        setParticipants((list) => list.map((p) => (set.has(p.investor.id) ? fn(p) : p)));
+      },
+      commit: (rows) => {
+        for (const p of rows) cache.current!.pending.delete(p.investor.id);
+        for (const p of rows) patchParticipant(p);
+      },
+      rollback: (prev) => {
+        const m = new Map(prev.map((p) => [p.investor.id, p]));
+        for (const id of m.keys()) cache.current!.pending.delete(id);
+        setParticipants((list) => list.map((p) => m.get(p.investor.id) ?? p));
+      },
+      afterWrite,
+      announce: setAnnounce,
+    }),
+    [setParticipants, patchParticipant, afterWrite],
+  );
+  const tqRaw = get("tq");
+  const tq: TriageSlice = tqRaw === "hw" || tqRaw === "maybe" || tqRaw === "low" ? tqRaw : "all";
+  const setCursor = useCallback((id: string | null) => setParams({ at: id }), [setParams]);
+
   /* ---------- keyboard and palette ---------- */
   const isNarrow = useMediaQuery("(max-width: 899px)");
   // ≥1280px the sheet is a split panel: the list stays usable and follows the keyboard (P2-3).
   const split = useMediaQuery("(min-width: 1280px)") === true;
-  const splitOpen = split && Boolean(openId);
+  const splitOpen = split && Boolean(openId) && view !== "triage";
+  const working = !empty && view !== "triage";
   useHotkey("/", () => searchRef.current?.focus(), {
     description: "Search this round",
     group: "Pipeline",
     blockedByModals: true,
-    enabled: !empty,
+    enabled: working,
   });
   useHotkey("f", () => filterRef.current?.open(), {
     description: "Filter",
     group: "Pipeline",
     blockedByModals: true,
-    enabled: !empty,
+    enabled: working,
   });
   useHotkey("c", () => setAdding(true), {
     description: "Add investor",
@@ -1068,37 +1170,56 @@ export function Pipeline(props: PipelineProps) {
     blockedByModals: true,
     enabled: canWrite,
   });
+  useHotkey("t", () => setView("triage"), {
+    description: `Triage ${oStage?.label ?? "New"}`,
+    group: "Pipeline",
+    blockedByModals: true,
+    enabled: working && !phone && triageOk && openCount > 0,
+  });
   useHotkey("escape", () => setSelected(new Set()), {
     blockedByModals: true,
-    enabled: n > 0,
+    enabled: n > 0 && view !== "triage",
+  });
+  const [bulkMenu, setBulkMenu] = useState<null | "move" | "follow">(null);
+  useHotkey("m", () => setBulkMenu("move"), {
+    description: "Move the selection to…",
+    group: "Pipeline",
+    blockedByModals: true,
+    enabled: n > 0 && canWrite && view !== "triage",
+  });
+  useHotkey("d", () => setBulkMenu("follow"), {
+    description: "Follow-up for the selection",
+    group: "Pipeline",
+    blockedByModals: true,
+    enabled: n > 0 && canWrite && view !== "triage",
   });
   useCommands(
     "pipeline",
     useMemo(
       () => [
         ...(canWrite ? [{ id: "investor.new", label: "New investor", group: round.name, kbd: "c", run: () => setAdding(true) }] : []),
-        {
-          id: "pipeline.view",
-          label: view === "board" ? "Show as table" : "Show as board",
-          group: round.name,
-          run: () => setView(view === "board" ? "table" : "board"),
-        },
+        ...(triageOk && openCount > 0 && view !== "triage"
+          ? [{ id: "pipeline.triage", label: `Triage ${oStage?.label ?? "New"}`, group: round.name, kbd: "t", run: () => setView("triage") }]
+          : []),
+        ...(view !== "board" ? [{ id: "pipeline.board", label: "Show as board", group: round.name, run: () => setView("board") }] : []),
+        ...(view !== "table" ? [{ id: "pipeline.table", label: "Show as table", group: round.name, run: () => setView("table") }] : []),
         {
           id: "pipeline.due",
           label: "Show follow-ups due now",
           group: round.name,
-          run: () => setParams({ follow: "due" }),
+          run: () => setParams({ follow: "due", ...(view === "triage" ? { view: "board" } : {}) }),
         },
         ...(activeFilters || q ? [{ id: "pipeline.clear", label: "Clear filters", group: round.name, run: clearFilters }] : []),
       ],
       // eslint-disable-next-line react-hooks/exhaustive-deps
-      [canWrite, round.name, view, activeFilters, q],
+      [canWrite, round.name, view, activeFilters, q, triageOk, openCount],
     ),
   );
 
   /* ---------- fill the viewport: the page stops, the columns or rows scroll ---------- */
-  const toolbarRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const headRef = useRef<HTMLDivElement>(null);
+  const workRef = useRef<HTMLDivElement>(null);
   const [stickyTop, setStickyTop] = useState(0);
   const [fill, setFill] = useState<number | null>(null);
   const [eatBottom, setEatBottom] = useState(0);
@@ -1106,39 +1227,31 @@ export function Pipeline(props: PipelineProps) {
     const measure = () => {
       const bar = document.querySelector<HTMLElement>("body header.sticky");
       const top = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
-      const tb = toolbarRef.current?.getBoundingClientRect().height ?? 0;
       const main = surfaceRef.current?.closest("main");
       const pb = main ? parseFloat(getComputedStyle(main).paddingBottom) || 0 : 0;
       // Keep a 12px gap under the board: the shell's bottom padding is taken back.
       const gap = Math.min(pb, 12);
       setEatBottom(Math.max(0, pb - gap));
       setStickyTop(top);
-      setFill(Math.max(320, Math.floor(window.innerHeight - top - tb - 14 - gap)));
+      const workTop = workRef.current ? workRef.current.getBoundingClientRect().top + window.scrollY : top + 200;
+      setFill(Math.max(420, Math.floor(window.innerHeight - workTop - gap)));
     };
     measure();
     window.addEventListener("resize", measure);
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-    if (toolbarRef.current) ro?.observe(toolbarRef.current);
+    if (headRef.current) ro?.observe(headRef.current);
     return () => {
       window.removeEventListener("resize", measure);
       ro?.disconnect();
     };
-  }, [empty]);
+  }, [empty, view, phone]);
 
-  const viewOptions: MenuEntry[] = [
-    { type: "label", label: "Density" },
-    {
-      label: view === "table" ? "Compact rows" : "Compact cards",
-      selected: (view === "table" ? tableDensity : boardDensity) === "compact",
-      onSelect: () => setDensity(view, "compact"),
-    },
-    {
-      label: view === "table" ? "Comfortable rows" : "Standard cards",
-      selected: (view === "table" ? tableDensity : boardDensity) === "comfortable",
-      onSelect: () => setDensity(view, "comfortable"),
-    },
-    ...(view === "table"
-      ? ([
+  const viewOptions: MenuEntry[] =
+    view === "table"
+      ? [
+          { type: "label", label: "Density" },
+          { label: "Compact rows", selected: tableDensity === "compact", onSelect: () => setDensity("table", "compact") },
+          { label: "Comfortable rows", selected: tableDensity === "comfortable", onSelect: () => setDensity("table", "comfortable") },
           { type: "separator" },
           { type: "label", label: "Columns" },
           ...TABLE_COLS.filter((c) => !c.required).map((c) => ({
@@ -1146,18 +1259,17 @@ export function Pipeline(props: PipelineProps) {
             selected: visible.has(c.key),
             onSelect: () => toggleCol(c.key),
           })),
-        ] as MenuEntry[])
-      : []),
-  ];
+        ]
+      : [
+          { type: "label", label: "Cards" },
+          { label: "Show next step", selected: showStep, onSelect: toggleStep },
+        ];
 
   const mobileFilters = (
     <>
       {filterFields.map((f) => (
         <Field key={f.key} label={f.label}>
-          <Select
-            value={active[f.key] ?? ""}
-            onChange={(e) => setParams({ [f.key]: e.target.value || null })}
-          >
+          <Select value={active[f.key] ?? ""} onChange={(e) => setParams({ [f.key]: e.target.value || null })}>
             <option value="">Any</option>
             {f.values.map((v) => (
               <option key={v.value} value={v.value}>
@@ -1170,243 +1282,376 @@ export function Pipeline(props: PipelineProps) {
     </>
   );
 
+  const countText =
+    filtered.length !== participants.length
+      ? `${num(filtered.length)} of ${num(participants.length)}`
+      : Object.keys(stageN).length === 1 && oStage && stageN[oStage.key]
+        ? `${num(participants.length)} in ${oStage.label}`
+        : `${num(participants.length)} investors`;
+
+  const viewSegment =
+    empty ? null : (
+      <Segmented
+        label="View"
+        value={view}
+        onChange={setView}
+        className="self-center"
+        options={[
+          ...(triageOk
+            ? [
+                {
+                  value: "triage" as View,
+                  label: (
+                    <span className="inline-flex items-baseline gap-6" title="Triage (T)">
+                      Triage <span className={cn("font-mono text-[11.5px]", view === "triage" ? "text-canvas" : "text-muted")}>{num(openCount)}</span>
+                    </span>
+                  ),
+                },
+              ]
+            : []),
+          { value: "board" as View, label: "Board" },
+          { value: "table" as View, label: "Table" },
+        ]}
+      />
+    );
+
+  const setupNode =
+    showSetup && !phone ? (
+      <SetupMenu
+        steps={setupSteps}
+        base={base}
+        roundSlug={round.slug}
+        onDismiss={dismissSetup}
+        onFollowUps={() => setParams({ follow: "none", view: view === "triage" ? "board" : view })}
+      />
+    ) : null;
+
+  const bulkBar =
+    n > 0 && canWrite && view !== "triage" ? (
+      <BulkBar
+        count={n}
+        hiddenCount={hiddenSelected}
+        stages={stages}
+        members={props.members}
+        today={today}
+        openMenu={bulkMenu}
+        onMenuChange={setBulkMenu}
+        onMove={(k: string) => bulkMove(k)}
+        onFollowUp={bulkFollowUp}
+        onOwner={bulkOwner}
+        onFit={bulkFit}
+        onTag={(mode) => setTagDialog(mode)}
+        onRemove={() => setConfirmRemove(true)}
+        onExport={exportSelected}
+        onClear={() => setSelected(new Set())}
+      />
+    ) : null;
+
   return (
     <div
       ref={surfaceRef}
       className="flex flex-col gap-14"
       style={{
-        ...(eatBottom ? { marginBottom: -eatBottom } : null),
+        ...(eatBottom && !phone ? { marginBottom: -eatBottom } : null),
         ...(splitOpen ? { paddingRight: SHEET_W - 8 } : null),
       }}
     >
-      {/* On phones the round picker under the top bar already names the round. */}
-      <RoundHeader wsSlug={workspace.slug} round={round} active="pipeline" className="mb-0 max-sm:hidden">
-        {empty ? null : (
-          <ViewTabs
-            views={allViews}
-            activeId={activeView?.id ?? null}
-            onSelect={applyView}
-            onSave={() => setViewDialog({ mode: "save" })}
-            onRename={(id) => setViewDialog({ mode: "rename", id })}
-            onDelete={(id) => {
-              const v = saved.find((x) => x.id === id);
-              storeSaved(saved.filter((x) => x.id !== id));
-              if (v) toast.show(`Deleted the view “${v.name}”.`, { label: "Undo", onClick: () => storeSaved([...saved]) });
-            }}
+      {phone ? (
+        empty ? null : (
+          <PipelinePhone
+            round={round}
+            stages={stages}
+            rows={filtered}
+            all={participants}
+            openKey={oStage?.key ?? null}
+            facts={facts}
+            moneyOn={money}
+            today={today}
+            canWrite={canWrite}
+            triageOk={triageOk && openCount > 0}
+            stage={stageFilter}
+            dueOnly={follow === "due"}
+            dueTotal={counts.due}
+            selected={canWrite ? selected : null}
+            onSelectedChange={setSelected}
+            onStage={(k) => setParams({ stage: k, follow: null })}
+            onDue={() => setParams({ follow: "due", stage: null })}
+            onBucket={onBucket}
+            onOpen={openInvestor}
+            onStartTriage={() => startTriage()}
+            onFilters={() => setFiltersOpen(true)}
+            activeFilters={activeFilters}
+            search={qText}
+            onSearch={onSearch}
+            base={base}
           />
-        )}
-      </RoundHeader>
-      <Ledger
-        {...ledger}
-        variant="compact"
-        today={today}
-        activeStage={stageFilter || null}
-        onStageSelect={(key) => setParams({ stage: stageFilter === key ? null : key })}
-        onDueSelect={openInvestor}
-        onDueFilter={() => setParams({ follow: "due" })}
-      />
-
-      {!empty && showSetup ? (
-        <SetupChecklist
-          steps={setupSteps}
-          base={base}
-          roundSlug={round.slug}
-          onDismiss={dismissSetup}
-          onFollowUps={() => setParams({ follow: "none" })}
-        />
-      ) : null}
-
-      {empty ? null : (
-        <div
-          ref={toolbarRef}
-          data-pipeline-toolbar
-          className="sticky z-20 -mx-4 flex flex-col gap-8 bg-canvas px-4 py-6"
-          style={{ top: stickyTop }}
-        >
-          <div className="flex items-center gap-8 max-lg:flex-wrap" role="search" aria-label="Filter investors">
-            <div className="relative flex min-w-0 flex-[1_1_220px]">
-              <SearchInput
-                ref={searchRef}
-                placeholder="Search name, firm, focus, notes…"
-                aria-label="Search investors in this round"
-                aria-keyshortcuts="/"
-                value={qText}
-                onChange={(e) => onSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    if (qText) onSearch("");
-                    else e.currentTarget.blur();
-                  }
+        )
+      ) : (
+        <div ref={headRef} className="flex flex-col gap-14">
+          <RoundHeader wsSlug={workspace.slug} round={round} active="pipeline" className="mb-0 items-center">
+            {viewSegment}
+            {autoTriage ? (
+              <span className="t-micro text-muted max-2xl:hidden">
+                {openCount === participants.length
+                  ? `All ${num(openCount)} are ${oStage?.label ?? "New"}, so the round opens in Triage.`
+                  : `${num(openCount)} of ${num(participants.length)} are ${oStage?.label ?? "New"}, so the round opens in Triage.`}
+              </span>
+            ) : null}
+            {!empty && view !== "triage" ? (
+              <ViewTabs
+                views={allViews}
+                activeId={activeView?.id ?? null}
+                dueCount={counts.due}
+                onSelect={applyView}
+                onSave={() => setViewDialog({ mode: "save" })}
+                onRename={(id) => setViewDialog({ mode: "rename", id })}
+                onDelete={(id) => {
+                  const v = saved.find((x) => x.id === id);
+                  storeSaved(saved.filter((x) => x.id !== id));
+                  if (v) toast.show(`Deleted the view “${v.name}”.`, { label: "Undo", onClick: () => storeSaved([...saved]) });
                 }}
-                className="pr-28"
               />
-              {qText ? null : <Kbd className="pointer-events-none absolute top-7 right-8">/</Kbd>}
-            </div>
-            <FilterMenu
-              ref={filterRef}
-              fields={filterFields}
-              active={active}
-              onChange={(k, v) => setParams({ [k]: v })}
-              onOpenRequest={() => {
-                if (!isNarrow) return false;
-                setFiltersOpen(true);
-                return true;
-              }}
-            />
-            <Segmented
-              label="View"
-              value={view}
-              onChange={setView}
-              options={[
-                { value: "board", label: "Board" },
-                { value: "table", label: "Table" },
-              ]}
-            />
-            <Menu
-              label="View options"
-              align="end"
-              trigger={
-                <>
-                  <span className="max-xl:sr-only">Display</span>
-                  <span aria-hidden className="xl:hidden">
-                    ⋯
-                  </span>
-                </>
-              }
-              triggerClassName="inline-flex h-32 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-muted hover:text-fg"
-              items={viewOptions}
-            />
-            <span className="t-micro whitespace-nowrap text-muted" aria-live="polite">
-              {num(filtered.length)} of {num(participants.length)}
-            </span>
-            {canWrite ? (
-              <Button variant="primary" className="ml-auto" onClick={() => setAdding(true)} title="Add investor (C)" aria-keyshortcuts="C">
-                <span className="sm:hidden">+ Add</span>
-                <span className="hidden sm:inline">Add investor</span>
+            ) : null}
+            {setupNode ? <span className="ml-auto">{setupNode}</span> : null}
+            {view === "triage" && canWrite ? (
+              <Button size="sm" onClick={() => setAdding(true)} kbd="C" aria-keyshortcuts="C" className={setupNode ? undefined : "ml-auto"}>
+                Add investor
               </Button>
             ) : null}
-          </div>
-          <FilterChips
-            fields={filterFields}
-            active={active}
-            onRemove={(k) => setParams({ [k]: null })}
-            onClear={clearFilters}
-            focusAfterRemove={filterBtnFocus}
-            extra={
-              q
-                ? [
-                    {
-                      key: "q",
-                      label: `Matches “${q}”`,
-                      onRemove: () => {
-                        setQText("");
-                        setParams({ q: null });
-                      },
-                    },
-                  ]
-                : undefined
-            }
-          />
-          {filtered.length === 0 ? (
-            <p className="t-body-s text-muted" role="status">
-              No investors match these filters.{" "}
-              <button type="button" className="link border-0 bg-transparent p-0" onClick={clearFilters}>
-                Clear filters
-              </button>
-            </p>
+          </RoundHeader>
+
+          {working ? (
+            showStrip ? (
+              <LedgerStrip
+                round={round}
+                facts={facts}
+                openLabel={oStage?.label ?? "New"}
+                today={today}
+                canWrite={canWrite && Boolean(oStage)}
+                onStartTriage={() => startTriage(facts.hwOpen > 0 ? "hw" : "all")}
+              />
+            ) : (
+              <LedgerDesk
+                round={round}
+                rows={participants}
+                facts={facts}
+                openKey={oStage?.key ?? null}
+                openLabel={oStage?.label ?? "New"}
+                today={today}
+                nowMs={serverAt || Date.now()}
+                canWrite={canWrite}
+                onOpen={openInvestor}
+                onDueAll={() => setParams({ follow: "due", stage: null, kind: null })}
+                onBucket={onBucket}
+              />
+            )
           ) : null}
-          {view === "table" && n > 0 && canWrite ? (
-            <BulkBar
-              count={n}
-              hiddenCount={hiddenSelected}
-              stages={stages}
-              members={props.members}
-              today={today}
-              onMove={bulkMove}
-              onFollowUp={bulkFollowUp}
-              onOwner={bulkOwner}
-              onFit={bulkFit}
-              onTag={(mode) => setTagDialog(mode)}
-              onRemove={() => setConfirmRemove(true)}
-              onExport={exportSelected}
-              onClear={() => setSelected(new Set())}
-            />
+
+          {working ? (
+            <div data-pipeline-toolbar className="flex flex-col gap-8">
+              <div className="flex items-center gap-8 max-lg:flex-wrap" role="search" aria-label="Filter investors">
+                <div className="relative flex min-w-0 flex-[1_1_220px]">
+                  <SearchInput
+                    ref={searchRef}
+                    placeholder="Search name, firm, focus, notes…"
+                    aria-label="Search investors in this round"
+                    aria-keyshortcuts="/"
+                    value={qText}
+                    onChange={(e) => onSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        if (qText) onSearch("");
+                        else e.currentTarget.blur();
+                      }
+                    }}
+                    className="pr-28"
+                  />
+                  {qText ? null : <Kbd className="pointer-events-none absolute top-7 right-8">/</Kbd>}
+                </div>
+                <FilterMenu
+                  ref={filterRef}
+                  fields={filterFields}
+                  active={active}
+                  onChange={(k, v) => setParams({ [k]: v })}
+                  onOpenRequest={() => {
+                    if (!isNarrow) return false;
+                    setFiltersOpen(true);
+                    return true;
+                  }}
+                />
+                <Menu
+                  label="Display options"
+                  align="end"
+                  trigger="Display"
+                  triggerClassName="inline-flex h-32 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-fg hover:border-muted"
+                  items={viewOptions}
+                />
+                <span className="t-micro whitespace-nowrap text-muted" aria-live="polite">
+                  {n > 0 ? `${num(n)} selected · ` : ""}
+                  {countText}
+                </span>
+                {canWrite ? (
+                  <Button
+                    variant={startTriageOnScreen ? "secondary" : "primary"}
+                    className="ml-auto"
+                    onClick={() => setAdding(true)}
+                    title="Add investor (C)"
+                    kbd="C"
+                    aria-keyshortcuts="C"
+                  >
+                    Add investor
+                  </Button>
+                ) : null}
+              </div>
+              <FilterChips
+                fields={filterFields}
+                active={active}
+                onRemove={(k) => setParams({ [k]: null })}
+                onClear={clearFilters}
+                focusAfterRemove={filterBtnFocus}
+                extra={
+                  q
+                    ? [
+                        {
+                          key: "q",
+                          label: `Matches “${q}”`,
+                          onRemove: () => {
+                            setQText("");
+                            setParams({ q: null });
+                          },
+                        },
+                      ]
+                    : undefined
+                }
+              />
+              {filtered.length === 0 ? (
+                <p className="t-body-s text-muted" role="status">
+                  No investors match these filters.{" "}
+                  <button type="button" className="link border-0 bg-transparent p-0" onClick={clearFilters}>
+                    Clear filters
+                  </button>
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       )}
 
       {empty ? (
-        <EmptyState
-          title={`No investors in ${round.name} yet`}
-          actions={
-            <>
-              {canWrite ? <ButtonLink href={`${base}/import?round=${encodeURIComponent(round.slug)}`}>Import CSV</ButtonLink> : null}
-              {canWrite ? (
-                <Button variant="primary" onClick={() => setAdding(true)}>
-                  Add investor
-                </Button>
-              ) : null}
-              <ButtonLink variant="ghost" href={`${base}/settings/mcp`}>
-                Connect an agent →
-              </ButtonLink>
-            </>
-          }
-        >
-          Import a spreadsheet, add them one at a time, or ask your agent.
-        </EmptyState>
-      ) : null}
-      {empty && showSetup ? (
-        <SetupChecklist steps={setupSteps} base={base} roundSlug={round.slug} onDismiss={dismissSetup} />
-      ) : null}
-      {empty ? null : view === "board" ? (
-        <PipelineBoard
-          round={round}
-          stages={stages}
-          columns={boardColumns}
-          sorts={boardSorts}
-          onSortChange={setBoardSort}
-          extras={extras}
-          agentMarks={agentMarks}
-          today={today}
-          canWrite={canWrite}
-          density={boardDensity}
-          filtered={activeFilters > 0 || Boolean(query)}
-          height={fill}
-          openId={openId}
-          focusReq={focusReq}
-          onOpen={openInvestor}
-          onFocusMove={splitOpen ? openInvestor : undefined}
-          onMove={doMove}
-        />
-      ) : (
-        <PipelineTable
-          round={round}
-          rows={sortedRows}
-          extras={extras}
-          agentMarks={agentMarks}
-          members={props.members}
-          visible={visible}
-          density={tableDensity}
-          sort={sortCol}
-          dir={sortDir}
-          onSort={(c) =>
-            setParams({
-              sort: c,
-              order: c === sortCol ? (sortDir === "asc" ? "desc" : "asc") : DEFAULT_DIR[c],
-            })
-          }
-          onOpen={openInvestor}
-          onFocusMove={splitOpen ? openInvestor : undefined}
-          openId={openId}
-          selected={canWrite ? selected : null}
-          onSelectedChange={setSelected}
-          height={fill}
-          focusReq={focusReq}
-          today={today}
-          timeZone={tz}
-        />
+        <>
+          {phone ? <h1 className="t-display-s">{round.name}</h1> : null}
+          <EmptyState
+            title={`No investors in ${round.name} yet`}
+            actions={
+              <>
+                {canWrite ? <ButtonLink href={`${base}/import?round=${encodeURIComponent(round.slug)}`}>Import CSV</ButtonLink> : null}
+                {canWrite ? (
+                  <Button variant="primary" onClick={() => setAdding(true)}>
+                    Add investor
+                  </Button>
+                ) : null}
+                <ButtonLink variant="ghost" href={`${base}/settings/mcp`}>
+                  Connect an agent →
+                </ButtonLink>
+              </>
+            }
+          >
+            Import a spreadsheet, add them one at a time, or ask your agent.
+          </EmptyState>
+          {showSetup ? <SetupChecklist steps={setupSteps} base={base} roundSlug={round.slug} onDismiss={dismissSetup} /> : null}
+        </>
+      ) : view === "triage" && oStage ? (
+        <div ref={workRef}>
+          <PipelineTriage
+            round={round}
+            stages={stages}
+            rows={participants}
+            matches={matches}
+            extras={extras}
+            agentMarks={agentMarks}
+            today={today}
+            timeZone={tz}
+            client={client}
+            wsSlug={workspace.slug}
+            canWrite={canWrite}
+            openKey={oStage.key}
+            slice={tq}
+            at={get("at") || null}
+            active={activeFilters}
+            filterFields={filterFields}
+            filterActive={active}
+            onFilterChange={(k, v) => setParams({ [k]: v, at: null })}
+            onSlice={(sl) => setParams({ tq: sl === "all" ? null : sl, at: null })}
+            onCursor={setCursor}
+            onOpenFile={openInvestor}
+            onOpenBoard={() => setView("board")}
+            onExit={() => setParams({ view: null, tq: null, at: null })}
+            store={triageStore}
+            keysEnabled={!openId}
+          />
+        </div>
+      ) : phone ? null : (
+        <div ref={workRef}>
+          {view === "board" ? (
+            <PipelineBoard
+              round={round}
+              stages={stages}
+              columns={boardColumns}
+              sorts={boardSorts}
+              onSortChange={setBoardSort}
+              agentMarks={agentMarks}
+              today={today}
+              canWrite={canWrite}
+              showNextStep={showStep}
+              filtered={activeFilters > 0 || Boolean(query)}
+              height={fill}
+              openId={openId}
+              focusReq={focusReq}
+              openKey={oStage?.key ?? null}
+              dominantKey={dominantKey}
+              activePrio={prio}
+              onPrioFilter={(pr) => setParams({ prio: pr })}
+              onTriage={triageOk && openCount > 0 ? () => setView("triage") : undefined}
+              selected={canWrite ? selected : null}
+              onSelectedChange={setSelected}
+              onOpen={openInvestor}
+              onFocusMove={splitOpen ? openInvestor : undefined}
+              onMove={doMove}
+              onMoveMany={(ids, key) => bulkMove(key, ids)}
+            />
+          ) : (
+            <PipelineTable
+              round={round}
+              rows={sortedRows}
+              extras={extras}
+              agentMarks={agentMarks}
+              members={props.members}
+              visible={visible}
+              density={tableDensity}
+              sort={sortCol}
+              dir={sortDir}
+              onSort={(c) =>
+                setParams({
+                  sort: c,
+                  order: c === sortCol ? (sortDir === "asc" ? "desc" : "asc") : DEFAULT_DIR[c],
+                })
+              }
+              onOpen={openInvestor}
+              onFocusMove={splitOpen ? openInvestor : undefined}
+              openId={openId}
+              selected={canWrite ? selected : null}
+              onSelectedChange={setSelected}
+              height={fill}
+              focusReq={focusReq}
+              today={today}
+              timeZone={tz}
+            />
+          )}
+        </div>
       )}
+
+      {bulkBar}
 
       <p className="sr-only" aria-live="polite">
         {announce}
@@ -1423,9 +1668,9 @@ export function Pipeline(props: PipelineProps) {
         today={today}
         timeZone={tz}
         canWrite={canWrite}
-        order={navOrder}
+        order={view === "triage" ? undefined : navOrder}
         onNavigate={openInvestor}
-        modal={!split}
+        modal={!split || view === "triage"}
         top={stickyTop}
         onClose={closeSheet}
         onParticipantChange={(p) => {
@@ -1525,6 +1770,7 @@ export function Pipeline(props: PipelineProps) {
 function ViewTabs({
   views,
   activeId,
+  dueCount = 0,
   onSelect,
   onSave,
   onRename,
@@ -1532,6 +1778,8 @@ function ViewTabs({
 }: {
   views: SavedView[];
   activeId: string | null;
+  /** "Due now 5": mono bad-ink, hidden at 0. */
+  dueCount?: number;
   onSelect: (v: SavedView) => void;
   onSave: () => void;
   onRename: (id: string) => void;
@@ -1558,6 +1806,7 @@ function ViewTabs({
               )}
             >
               {v.name}
+              {v.id === "due" && dueCount > 0 ? <span className="ml-6 font-mono text-[11.5px] text-bad">{num(dueCount)}</span> : null}
             </button>
           );
         })}
@@ -1705,7 +1954,64 @@ function SetupChecklist({
   );
 }
 
-/* ---------- bulk bar ---------- */
+/* ---------- "SET UP 2/4" in the title row (DECISION §5.1) ---------- */
+
+function SetupMenu({
+  steps,
+  base,
+  roundSlug,
+  onDismiss,
+  onFollowUps,
+}: {
+  steps: { key: string; label: string; done: boolean; unknown?: boolean }[];
+  base: string;
+  roundSlug: string;
+  onDismiss: () => void;
+  onFollowUps: () => void;
+}) {
+  const router = useRouter();
+  const href: Record<string, string> = {
+    import: `${base}/import?round=${encodeURIComponent(roundSlug)}`,
+    invite: `${base}/settings/members`,
+    agent: `${base}/settings/mcp`,
+  };
+  const done = steps.filter((x) => x.done).length;
+  const next = steps.find((x) => !x.done);
+  const go = (key: string) => (key === "followups" ? onFollowUps() : href[key] ? router.push(href[key]!) : undefined);
+  return (
+    <span className="inline-flex items-center gap-8 whitespace-nowrap">
+      <Menu
+        label="Get set up"
+        align="end"
+        minWidth={240}
+        trigger={
+          <span className="t-label">
+            Set up {done}/{steps.length}
+          </span>
+        }
+        triggerClassName="inline-flex h-28 items-center rounded-sm border-0 bg-transparent px-4 hover:bg-sunk"
+        items={[
+          { type: "label", label: `Get set up · ${done}/${steps.length}` },
+          ...steps.map((x) => ({
+            label: x.label,
+            icon: <span aria-hidden className={cn("inline-flex w-14 justify-center text-[11px]", x.done ? "text-good-ink" : "text-faint")}>{x.done ? "✓" : "○"}</span>,
+            disabled: x.done,
+            onSelect: () => go(x.key),
+          })),
+          { type: "separator" },
+          { label: "Dismiss", onSelect: onDismiss },
+        ]}
+      />
+      {next ? (
+        <button type="button" onClick={() => go(next.key)} className="link t-body-s border-0 bg-transparent p-0 max-2xl:hidden">
+          {next.label}
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
+/* ---------- bulk bar (DECISION §5.6): pinned to the bottom of the work surface ---------- */
 
 function BulkBar({
   count,
@@ -1713,6 +2019,8 @@ function BulkBar({
   stages,
   members,
   today,
+  openMenu,
+  onMenuChange,
   onMove,
   onFollowUp,
   onOwner,
@@ -1727,6 +2035,8 @@ function BulkBar({
   stages: Round["stages"];
   members: Member[];
   today: string;
+  openMenu: null | "move" | "follow";
+  onMenuChange: (m: null | "move" | "follow") => void;
   onMove: (key: string) => void;
   onFollowUp: (iso: string | null) => void;
   onOwner: (userId: string | null) => void;
@@ -1736,85 +2046,113 @@ function BulkBar({
   onExport: () => void;
   onClear: () => void;
 }) {
-  const trigger = "inline-flex h-28 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-sm text-fg hover:border-muted";
-  const menu = (label: string, items: MenuEntry[], text: ReactNode = label) => (
-    <Menu label={label} trigger={text} triggerClassName={trigger} items={items} />
-  );
+  const ref = useRef<HTMLDivElement>(null);
+  useToastLift(ref, true);
+  const trigger = "inline-flex h-30 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-sm text-fg hover:border-muted";
+  const keys = new Map(triageTargets(stages).map((t) => [t.stage.key, t.key]));
   return (
-    <div
-      role="toolbar"
-      aria-label={`Bulk actions for ${count} selected`}
-      className="flex flex-wrap items-center gap-6 rounded-md border border-accent bg-accent-soft px-10 py-6"
-    >
-      <span className="t-body-s mr-4 font-semibold text-fg">
-        {num(count)} selected
-        {hiddenCount ? <span className="font-normal text-muted"> ({num(hiddenCount)} hidden by filters)</span> : null}
-      </span>
-      {menu(
-        "Move to stage",
-        [
-          { type: "label", label: "Move to" },
-          ...sortedStages(stages).map((s) => ({ label: s.label, icon: <StageDot color={s.color} />, onSelect: () => onMove(s.key) })),
-        ],
-        "Move to…",
-      )}
-      {menu(
-        "Set follow-up",
-        [
-          ...quickPicks("followup", today).map((p) => ({
-            label: p.label,
-            hint: formatDate(p.iso, today),
-            onSelect: () => onFollowUp(p.iso),
-          })),
-          { type: "separator" },
-          { label: "Clear follow-up", onSelect: () => onFollowUp(null) },
-        ],
-        "Follow-up…",
-      )}
-      {menu(
-        "Assign owner",
-        [
-          ...members.map((m) => ({
-            label: m.is_you ? `${personName(m)} (you)` : personName(m),
-            icon: <Avatar name={personName(m)} />,
-            onSelect: () => onOwner(m.user_id),
-          })),
-          { type: "separator" },
-          { label: "No owner", onSelect: () => onOwner(null) },
-        ],
-        "Owner…",
-      )}
-      {menu(
-        "Set fit",
-        [5, 4, 3, 2, 1, 0].map((f) => ({
-          label: `${f}/5 · ${PRIORITY_LABEL[priorityFromFit(f)]}`,
-          onSelect: () => onFit(f),
-        })),
-        "Fit…",
-      )}
-      {menu(
-        "Tags",
-        [
-          { label: "Add a tag…", onSelect: () => onTag("add") },
-          { label: "Remove a tag…", onSelect: () => onTag("remove") },
-        ],
-        "Tag…",
-      )}
-      <button type="button" className={trigger} onClick={onExport}>
-        Export CSV
-      </button>
-      <button type="button" className={`${trigger} text-bad`} onClick={onRemove}>
-        Remove from round…
-      </button>
-      <button
-        type="button"
-        onClick={onClear}
-        className="t-body-s ml-auto border-0 bg-transparent px-4 text-muted hover:text-fg"
-        aria-label="Clear selection"
-        title="Clear selection (Esc)"
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(16px+env(safe-area-inset-bottom))] z-30 flex justify-center px-16">
+      <div
+        ref={ref}
+        role="toolbar"
+        aria-label={`Bulk actions for ${count} selected`}
+        className="pointer-events-auto flex min-h-48 w-full max-w-[960px] flex-wrap items-center gap-6 rounded-md border border-line bg-surface px-12 py-8 shadow-menu"
       >
-        Clear ✕
-      </button>
+        <span className="t-body-s mr-6 font-semibold whitespace-nowrap text-fg">
+          {num(count)} selected
+          {hiddenCount ? <span className="font-normal text-muted"> ({num(hiddenCount)} hidden by filters)</span> : null}
+        </span>
+        <Menu
+          label="Move to stage"
+          trigger={
+            <>
+              Move to… <Kbd>M</Kbd>
+            </>
+          }
+          triggerClassName={trigger}
+          open={openMenu === "move"}
+          onOpenChange={(o) => onMenuChange(o ? "move" : null)}
+          items={[
+            { type: "label", label: "Move to" },
+            ...sortedStages(stages).map((s) => ({
+              label: s.label,
+              icon: <StageDot color={s.color} />,
+              accel: keys.get(s.key) ?? undefined,
+              onSelect: () => onMove(s.key),
+            })),
+          ]}
+        />
+        <Menu
+          label="Set follow-up"
+          trigger={
+            <>
+              Follow up <Kbd>D</Kbd>
+            </>
+          }
+          triggerClassName={trigger}
+          open={openMenu === "follow"}
+          onOpenChange={(o) => onMenuChange(o ? "follow" : null)}
+          items={[
+            ...quickPicks("followup", today).map((p) => ({
+              label: p.label,
+              hint: formatDate(p.iso, today),
+              accel: p.kbd,
+              onSelect: () => onFollowUp(p.iso),
+            })),
+            { type: "separator" },
+            { label: "Clear follow-up", onSelect: () => onFollowUp(null) },
+          ]}
+        />
+        <Menu
+          label="Assign owner"
+          trigger="Owner"
+          triggerClassName={trigger}
+          items={[
+            ...members.map((m) => ({
+              label: m.is_you ? `${personName(m)} (you)` : personName(m),
+              icon: <Avatar name={personName(m)} />,
+              onSelect: () => onOwner(m.user_id),
+            })),
+            { type: "separator" },
+            { label: "No owner", onSelect: () => onOwner(null) },
+          ]}
+        />
+        <Menu
+          label="Set fit"
+          trigger="Fit"
+          triggerClassName={trigger}
+          items={[5, 4, 3, 2, 1, 0].map((f) => ({
+            label: `${f}/5 · ${PRIORITY_LABEL[priorityFromFit(f)]}`,
+            onSelect: () => onFit(f),
+          }))}
+        />
+        <Menu
+          label="Tags"
+          trigger="Tag"
+          triggerClassName={trigger}
+          items={[
+            { label: "Add a tag…", onSelect: () => onTag("add") },
+            { label: "Remove a tag…", onSelect: () => onTag("remove") },
+          ]}
+        />
+        <Menu
+          label="More bulk actions"
+          trigger="⋯"
+          triggerClassName={trigger}
+          items={[
+            { label: "Export CSV", onSelect: onExport },
+            { label: "Remove from round…", danger: true, onSelect: onRemove },
+          ]}
+        />
+        <button
+          type="button"
+          onClick={onClear}
+          className="t-body-s ml-auto inline-flex items-center gap-6 border-0 bg-transparent px-4 text-muted hover:text-fg"
+          aria-label="Clear selection"
+        >
+          <Kbd>Esc</Kbd> Clear
+        </button>
+      </div>
     </div>
   );
 }

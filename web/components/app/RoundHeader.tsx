@@ -31,7 +31,15 @@ export function RoundHeader({
   const { canWrite } = useWorkspace();
   const base = `/w/${encodeURIComponent(wsSlug)}/r/${encodeURIComponent(round.slug)}`;
   return (
-    <div className={cn("mb-14 flex flex-wrap items-baseline gap-x-12 gap-y-4", className)}>
+    <div
+      className={cn(
+        "flex flex-wrap gap-x-12 gap-y-4",
+        // Callers may set their own margin and alignment (the pipeline's title row is centered).
+        /\bmb-/.test(className ?? "") ? null : "mb-14",
+        /\bitems-/.test(className ?? "") ? null : "items-baseline",
+        className,
+      )}
+    >
       <h1 className="t-display-s">
         {round.name}
         {active === "settings" ? <span className="text-muted"> · Round settings</span> : null}

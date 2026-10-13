@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seed triage</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  body { height: 900px; overflow: hidden; }
+  .work { display: grid; grid-template-columns: 372px minmax(0, 1fr) 288px; gap: 14px; margin-top: 14px; height: calc(900px - 56px - 14px - 40px - 14px - 18px); }
+
+  /* Queue */
+  .queue { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .qhead { padding: 12px 14px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .qhead .top { display: flex; align-items: center; gap: 8px; }
+  .prog { height: 4px; background: var(--sunk); border-radius: 999px; overflow: hidden; }
+  .prog i { display: block; height: 100%; background: var(--fg); }
+  .pills { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill { height: 26px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+  .pill b { font: 500 11.5px var(--f-mono); color: var(--fg); }
+  .pill.on { background: var(--fg); border-color: var(--fg); color: var(--canvas); }
+  .pill.on b { color: var(--canvas); }
+  .qlist { flex: 1; overflow: hidden; border-top: 1px solid var(--line); }
+  .grp { position: sticky; top: 0; background: var(--canvas); padding: 6px 14px; display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); }
+  .row { height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 12px; border-bottom: 1px solid color-mix(in oklab, var(--line) 60%, transparent); }
+  .row .cb { width: 14px; height: 14px; border: 1px solid var(--line); border-radius: 3px; flex: none; background: var(--surface); }
+  .row .nm { font-weight: 500; }
+  .row .fm { color: var(--muted); font-size: 12.5px; }
+  .row .ty { font: 400 11px var(--f-mono); color: var(--muted); width: 34px; text-align: right; flex: none; }
+  .row.cur { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  .row.done .nm { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+  .row.done .st { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .qfoot { border-top: 1px solid var(--line); background: var(--sunk); padding: 10px 14px; display: flex; align-items: center; gap: 10px; border-radius: 0 0 8px 8px; }
+
+  /* File */
+  .file { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .fhead { height: 40px; padding: 0 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+  .fbody { padding: 20px 24px 0; flex: 1; overflow: hidden; }
+  .name { font: 700 28px/1.1 var(--f-display); letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin-top: 4px; font-size: 14.5px; }
+  .chips { display: flex; gap: 6px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .links { display: flex; gap: 6px; margin-top: 14px; }
+  .lb { height: 28px; border: 1px solid var(--line); border-radius: 6px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 13px; font-weight: 500; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 20px; }
+  .facts { display: grid; grid-template-columns: 104px 1fr; gap: 7px 10px; font-size: 13px; margin-top: 8px; }
+  .facts dt { color: var(--muted); }
+  .note { margin-top: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--canvas); padding: 9px 10px; font-size: 13px; min-height: 104px; color: var(--fg); }
+  .decide { border-top: 1px solid var(--line); background: var(--sunk); padding: 16px 24px 14px; display: flex; flex-direction: column; gap: 12px; }
+  .moves { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .mv { height: 44px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; display: flex; align-items: center; gap: 9px; padding: 0 12px; font-weight: 600; font-size: 14px; }
+  .mv .kbd { margin-left: auto; font-size: 11.5px; padding: 3px 6px; }
+  .mv.focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .moves2 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .mv.s { height: 32px; font-weight: 500; font-size: 13px; }
+  .mv.s .kbd { font-size: 10.5px; padding: 2px 4px; }
+  .fu { white-space: nowrap; display: flex; gap: 6px; align-items: center; }
+  .qp { height: 28px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0 8px; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; }
+  .qp.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .keys { display: flex; gap: 14px; align-items: center; }
+  .keys span { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--muted); }
+
+  /* Rail */
+  .rail { display: flex; flex-direction: column; gap: 18px; min-height: 0; overflow: hidden; }
+  .sec { display: flex; flex-direction: column; gap: 8px; }
+  .sec .hd { display: flex; justify-content: space-between; align-items: baseline; }
+  .where { display: flex; flex-direction: column; }
+  .wr { height: 30px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .wr:first-child { border-top: 1px solid var(--line); }
+  .wr .c { margin-left: auto; font: 500 12.5px var(--f-mono); }
+  .wr .c.z { color: var(--muted); font-weight: 400; }
+  .wr .d { font: 500 11.5px var(--f-mono); color: var(--good-ink); width: 28px; text-align: right; }
+  .wr .kbd { width: 20px; }
+  .wr.newrow { font-weight: 600; }
+  .roundbox { font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+  .roundbox .amt { font: 700 20px/1.1 var(--f-display); }
+  .roundbox .amt span { font: 500 14px var(--f-display); color: var(--muted); }
+  .chk { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .chk div { display: flex; gap: 8px; align-items: center; }
+  .chk .o { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--line); flex: none; }
+  .chk .x { width: 14px; height: 14px; border-radius: 50%; background: var(--good-soft); border: 1px solid var(--good); flex: none; position: relative; }
+  .tip { border: 1px dashed var(--line); border-radius: 8px; padding: 12px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+  .tip b { color: var(--fg); font-weight: 600; }
+</style>
+</head>
+<body>
+<script src="data.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  if (q.has("dark")) document.documentElement.dataset.theme = "dark";
+  const DONE = +(q.get("done") || 0);
+</script>
+
+<header class="topbar">
+  <span class="wordmark">Raisebook</span>
+  <span class="ws">Lumen Health <i class="caret"></i></span>
+  <span class="roundpick"><span class="on">Seed</span><span>+ Round</span></span>
+  <nav class="nav"><span class="on">Pipeline</span><span>Overview</span><span>Investors</span><span>Settings</span>
+    <span class="search-btn">Search <span class="kbd">⌘K</span></span><span class="avatar">F</span></nav>
+</header>
+
+<main class="page">
+  <div class="titlerow">
+    <span class="title">Seed</span><span class="label" style="letter-spacing:.06em">SAFE</span>
+    <span class="seg" style="margin-left:10px"><span class="on">Triage <span class="cnt" id="tcount">411</span></span><span>Board</span><span>Table</span></span>
+    <span class="micro" style="margin-left:6px">All 411 are New, so the round opens in Triage.</span>
+    <span style="margin-left:auto" class="micro"><span style="color:var(--fg)">$0</span> of $2,000,000 · 95 days to close · nothing due</span>
+    <span class="btn sm">Add investor <span class="kbd">C</span></span>
+  </div>
+
+  <div class="work">
+    <!-- Queue -->
+    <section class="panel queue">
+      <div class="qhead">
+        <div class="top"><span class="label">Triage queue</span><span class="micro" style="margin-left:auto" id="progtxt"></span><span class="pill" style="height:24px;margin-left:6px">Filter <span class="kbd" style="padding:1px 3px">F</span></span></div>
+        <div class="prog"><i id="progbar"></i></div>
+        <div class="pills">
+          <span class="pill on">All <b id="pall">411</b></span><span class="pill">Fit 4–5 <b id="p45">40</b></span><span class="pill">Fit 3 <b>95</b></span><span class="pill">Fit 0–2 <b>276</b></span>
+        </div>
+      </div>
+      <div class="qlist" id="qlist"></div>
+      <div class="qfoot">
+        <div style="font-size:12.5px;line-height:1.35"><b style="font-weight:600">Clear the long tail.</b> <span class="muted">86 have fit 0. Select them all and pass or park them in one move.</span></div>
+        <span class="btn sm" style="margin-left:auto">Select 86</span>
+      </div>
+    </section>
+
+    <!-- Current investor -->
+    <section class="panel file" id="file"></section>
+
+    <!-- Rail -->
+    <aside class="rail">
+      <div class="sec">
+        <div class="hd"><span class="label">Where they go</span><span class="micro">key</span></div>
+        <div class="where" id="where"></div>
+      </div>
+      <div class="sec" id="pace"></div>
+      <div class="sec">
+        <span class="label">The round</span>
+        <div class="roundbox">
+          <div class="amt num">$0 <span>of $2,000,000</span></div>
+          <div class="muted">SAFE · $16M cap · closes Jan 15 · 95 days</div>
+          <div class="muted" style="font-size:12.5px">The full ledger comes back once someone soft-circles.</div>
+        </div>
+      </div>
+      <div class="sec">
+        <div class="hd"><span class="label">Get set up · 1/4</span><span class="micro">Dismiss</span></div>
+        <div class="chk">
+          <div><i class="x"></i><span class="muted">Bring in your investor list</span></div>
+          <div><i class="o"></i><span class="link">Invite a co-founder</span></div>
+          <div><i class="o"></i><span class="link">Connect an agent</span></div>
+          <div><i class="o"></i><span class="link">Set your first follow-ups</span></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<script>
+  const inv = INV;
+  const decided = [["res","Researching","violet"],["pas","Passed","gray"],["con","Contacted","cobalt"],["res","Researching","violet"],["pas","Passed","gray"],["res","Researching","violet"],["con","Contacted","cobalt"],["skip","Skipped",""],["res","Researching","violet"],["pas","Passed","gray"],["con","Contacted","cobalt"],["res","Researching","violet"],["pas","Passed","gray"],["skip","Skipped",""],["res","Researching","violet"],["pas","Passed","gray"]].slice(0, DONE);
+  const cur = inv[DONE];
+  const tally = { res: 0, con: 0, pas: 0, skip: 0 };
+  decided.forEach((d) => tally[d[0]]++);
+  const moved = decided.filter((d) => d[0] !== "skip").length;
+  document.getElementById("tcount").textContent = 411 - moved;
+  document.getElementById("pall").textContent = 411 - moved;
+  document.getElementById("progtxt").textContent = DONE ? `${DONE}/411 · ${tally.skip} skipped` : "0/411 done";
+  document.getElementById("p45").textContent = 40 - DONE;
+  document.getElementById("progbar").style.width = (DONE / 411 * 100) + "%";
+
+  // queue
+  const groups = [[5, "Fit 5"], [4, "Fit 4"], [3, "Fit 3"]];
+  let html = "";
+  for (const [f, lab] of groups) {
+    const items = inv.map((x, i) => [x, i]).filter(([x]) => x.fit === f);
+    const left = items.filter(([, i]) => i >= DONE).length;
+    html += `<div class="grp"><span class="label">${lab}</span><span class="micro">${left} left</span></div>`;
+    for (const [x, i] of items.slice(0, 26)) {
+      const d = decided[i];
+      const cls = i === DONE ? "row cur" : d ? "row done" : "row";
+      const tail = d ? `<span class="st">${d[2] ? `<i class="dot s-${d[2]}"></i>` : ""}${d[1]}</span>` : `<span class="ty">${x.type === "Family office" ? "FO" : x.type}</span>${pips(x.fit, true)}`;
+      html += `<div class="${cls}"><span class="cb"></span><span class="ell" style="flex:1"><span class="nm">${x.name}</span>&nbsp;&nbsp;<span class="fm">${x.firm || "Angel"}</span></span>${tail}</div>`;
+    }
+  }
+  document.getElementById("qlist").innerHTML = html;
+  // scroll so the current row is in view during a session
+  if (DONE > 8) document.getElementById("qlist").scrollTop = (DONE - 6) * 34;
+
+  // current file
+  const first = cur.name.split(" ")[0];
+  const ind = cur.ind === "Other" ? "" : `<span class="chip tag">${cur.ind}</span>`;
+  document.getElementById("file").innerHTML = `
+    <div class="fhead">
+      <span class="micro"><span style="color:var(--fg)">${DONE + 1}</span> of ${411 - moved} in New · highest fit first</span>
+      <span class="kbd">↑</span><span class="kbd">↓</span>
+      <span style="margin-left:auto" class="link" >Open full page ↗</span>
+    </div>
+    <div class="fbody">
+      <div class="name">${cur.name}</div>
+      <div class="sub">${cur.title} · ${cur.firm || "Angel investor"}</div>
+      <div class="chips">${prioChip(cur.fit)}${pips(cur.fit)}<span class="micro" style="margin-right:4px">${cur.fit}/5</span><span class="chip type">${cur.type}</span>${ind}<span class="chip tag">SF Tech Week</span></div>
+      <div class="links"><span class="lb">${cur.name.toLowerCase().replace(" ", ".")}@example.com · copy</span><span class="lb">LinkedIn ↗</span><span class="lb">Website ↗</span></div>
+      <div class="two">
+        <div><span class="label">Facts</span>
+          <dl class="facts"><dt>Invests at</dt><dd>Pre-seed, Seed</dd><dt>Check size</dt><dd class="mono" style="font-size:12.5px">$100k–$500k</dd><dt>Location</dt><dd>San Francisco</dd><dt>Source</dt><dd>SF Tech Week · imported Oct 11</dd><dt>Other rounds</dt><dd class="muted">None</dd></dl>
+        </div>
+        <div><span class="label">Notes</span><div class="note">Talked at the health-infra dinner on Thursday. Wants to see the pilot numbers before a first call. Knows Harper from the Juniper angel group.</div></div>
+      </div>
+      <div style="margin-top:18px;display:grid;grid-template-columns:104px 1fr;gap:10px;align-items:center">
+        <span class="label">Next step</span>
+        <span class="input" style="font-size:13.5px">Optional, e.g. ask Harper for an intro <span class="kbd" style="margin-left:auto">N</span></span>
+        <span class="label">History</span>
+        <span style="font-size:13px" class="muted"><span class="mono" style="font-size:11.5px">Oct 11</span>&nbsp; <span style="color:var(--fg);font-weight:500">You</span> imported ${first} from sf-tech-week-411.csv with 410 others</span>
+      </div>
+    </div>
+    <div class="decide">
+      <div style="display:flex;align-items:baseline;gap:10px"><span class="label">Where does ${first} go?</span><span class="micro">one key, then the next investor opens</span></div>
+      <div class="moves">
+        <span class="mv focus"><i class="dot s-violet"></i>Researching<span class="kbd">1</span></span>
+        <span class="mv"><i class="dot s-cobalt"></i>Contacted<span class="kbd">2</span></span>
+        <span class="mv"><i class="dot s-gray"></i>Passed<span class="kbd">7</span></span>
+      </div>
+      <div class="moves2">
+        <span class="mv s"><i class="dot s-teal"></i>Replied<span class="kbd">3</span></span>
+        <span class="mv s"><i class="dot s-amber"></i>Meeting<span class="kbd">4</span></span>
+        <span class="mv s"><i class="dot s-orange"></i>Diligence<span class="kbd">5</span></span>
+        <span class="mv s"><i class="dot s-green"></i>Committed<span class="kbd">6</span></span>
+      </div>
+      <div class="fu">
+        <span class="label" style="width:84px">Follow up</span>
+        <span class="qp on">None</span><span class="qp">Tomorrow <span class="kbd">T</span></span><span class="qp">Next Mon <span class="kbd">M</span></span><span class="qp">In 1 week <span class="kbd">W</span></span><span class="qp">Pick… <span class="kbd">D</span></span>
+      </div>
+      <div class="keys">
+        <span><span class="kbd">S</span> Skip for now</span><span><span class="kbd">U</span> Undo</span><span><span class="kbd">F</span> Change fit</span><span><span class="kbd">X</span> Select</span><span><span class="kbd">↵</span> Open file</span>
+        <span style="margin-left:auto">Moves save instantly, with Undo</span>
+      </div>
+    </div>`;
+
+  // where they go
+  const counts = { new: 411 - moved, res: tally.res, con: tally.con, pas: tally.pas };
+  const keys = { res: 1, con: 2, rep: 3, mtg: 4, dd: 5, com: 6, pas: 7 };
+  document.getElementById("where").innerHTML = STAGES.map((s) => {
+    const n = counts[s.k] || 0;
+    const k = keys[s.k] ? `<span class="kbd">${keys[s.k]}</span>` : `<span class="kbd" style="visibility:hidden">0</span>`;
+    const delta = n && s.k !== "new" ? `<span class="d">+${n}</span>` : `<span class="d"></span>`;
+    return `<div class="wr${s.k === "new" ? " newrow" : ""}">${k}<i class="dot s-${s.c}"></i>${s.label}<span class="c${n ? "" : " z"}">${n}</span>${delta}</div>`;
+  }).join("");
+
+  document.getElementById("pace").innerHTML = DONE
+    ? `<div class="hd"><span class="label">This session</span><span class="micro">Undo last <span class="kbd">U</span></span></div>
+       <div style="font-size:13px"><span class="mono" style="font-size:13px">${DONE}</span> decided in 6 min. At this pace the rest of New takes about <b style="font-weight:600">2h 40m</b>. The 24 left at fit 4–5 take about 10 min.</div>`
+    : `<div class="hd"><span class="label">Start here</span></div>
+       <div style="font-size:13px;color:var(--muted)"><b style="color:var(--fg);font-weight:600">40 investors are fit 4–5.</b> Deciding those first takes about 15 minutes; the board fills in as you go.</div>`;
+</script>
+</body>
+</html>

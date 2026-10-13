@@ -1,0 +1,328 @@
+"use client";
+
+import type { ReactNode } from "react";
+
+import { Button, StageDot } from "@/components/ui";
+import type { Participant, Round } from "@/lib/api/types";
+import { cn } from "@/lib/cn";
+import { daysBetween, formatDate, money, moneyCompact, num } from "@/lib/format";
+import { nextUpBuckets, type NextUpBucket } from "@/lib/pipeline";
+
+/** The due list (overdue first, then today), most overdue first. */
+export function dueRows(rows: readonly Participant[]): Participant[] {
+  return rows
+    .filter((p) => p.follow_up_on && (p.follow_up_state === "overdue" || p.follow_up_state === "today"))
+    .sort((a, b) => (a.follow_up_on! < b.follow_up_on! ? -1 : a.follow_up_on! > b.follow_up_on! ? 1 : a.investor.name.localeCompare(b.investor.name)));
+}
+
+export function dueText(p: Participant, today: string): string {
+  if (p.follow_up_state === "today") return "Today";
+  const late = p.follow_up_on ? daysBetween(p.follow_up_on, today) : 0;
+  return late > 0 ? `Overdue ${late}d` : "Overdue";
+}
+
+export interface LedgerFacts {
+  total: number;
+  openCount: number;
+  /** Hot + Warm still in `O`. */
+  hwOpen: number;
+  committed: number;
+  soft: number;
+  committedCount: number;
+  talking: number;
+  daysToClose: number | null;
+  dueCount: number;
+}
+
+export function ledgerFacts(rows: readonly Participant[], openKey: string | null, today: string, closeOn?: string | null): LedgerFacts {
+  let openCount = 0;
+  let hwOpen = 0;
+  let committed = 0;
+  let soft = 0;
+  let committedCount = 0;
+  let talking = 0;
+  let dueCount = 0;
+  for (const p of rows) {
+    if (openKey && p.stage.key === openKey) {
+      openCount++;
+      if (p.fit >= 4) hwOpen++;
+    }
+    committed += p.amount_committed ?? 0;
+    if (p.stage.kind !== "won" && p.stage.kind !== "lost") soft += p.amount_soft ?? 0;
+    if (p.stage.kind === "won") committedCount++;
+    if (p.stage.kind === "active") talking++;
+    if (p.follow_up_state === "overdue" || p.follow_up_state === "today") dueCount++;
+  }
+  return {
+    total: rows.length,
+    openCount,
+    hwOpen,
+    committed,
+    soft,
+    committedCount,
+    talking,
+    daysToClose: closeOn ? daysBetween(today, closeOn) : null,
+    dueCount,
+  };
+}
+
+/** "40 Hot and Warm are still New. Start with them." and its siblings (DECISION §5.1). */
+export function stripMessage(f: LedgerFacts, openLabel: string, phone = false): { text: ReactNode; triage: boolean } {
+  if (f.hwOpen > 0) {
+    return {
+      text: phone ? (
+        <>
+          <b className="font-semibold text-fg">{num(f.hwOpen)} Hot and Warm</b> are waiting. Start with them.
+        </>
+      ) : (
+        <>
+          <b className="font-semibold text-fg">{num(f.hwOpen)} Hot and Warm</b> are still {openLabel}. Start with them.
+        </>
+      ),
+      triage: true,
+    };
+  }
+  if (f.openCount > 0) {
+    return {
+      text: (
+        <>
+          <b className="font-semibold text-fg">{num(f.openCount)}</b> are still {openLabel}, highest fit first.
+        </>
+      ),
+      triage: true,
+    };
+  }
+  return {
+    text:
+      f.dueCount > 0 ? (
+        <>
+          Everyone is sorted. <b className="font-semibold text-fg">{num(f.dueCount)}</b>{" "}
+          {f.dueCount === 1 ? "follow-up" : "follow-ups"} due now.
+        </>
+      ) : (
+        "Everyone is sorted. Nothing due."
+      ),
+    triage: false,
+  };
+}
+
+const cell = "flex min-w-0 items-center gap-10 px-16";
+
+/** The 52px strip before money exists: target, Sorted progress, what to do, Start triage. */
+export function LedgerStrip({
+  round,
+  facts,
+  openLabel,
+  today,
+  canWrite,
+  onStartTriage,
+}: {
+  round: Round;
+  facts: LedgerFacts;
+  openLabel: string;
+  today: string;
+  canWrite: boolean;
+  onStartTriage: () => void;
+}) {
+  const sorted = facts.total - facts.openCount;
+  const msg = stripMessage(facts, openLabel);
+  const closes = round.target_close_on
+    ? `closes ${formatDate(round.target_close_on, today)}${facts.daysToClose !== null && facts.daysToClose >= 0 ? `, ${num(facts.daysToClose)} days` : ""}`
+    : null;
+  return (
+    <section
+      aria-label={`${round.name} progress`}
+      className="flex h-52 min-w-0 items-stretch overflow-hidden rounded-md border border-line bg-surface max-xl:h-auto max-xl:flex-wrap max-xl:py-6 [&>*+*]:border-l [&>*+*]:border-line"
+    >
+      <div className={cn(cell, "shrink-0")}>
+        <span className="t-label">Target</span>
+        <b className="font-display text-[16px] font-bold tnum">{money(round.target_amount, round.currency)}</b>
+        {closes ? <span className="t-body-s whitespace-nowrap text-muted max-2xl:hidden">· {closes}</span> : null}
+      </div>
+      <div className={cn(cell, "shrink-0")}>
+        <span className="t-label">Sorted</span>
+        <span
+          role="meter"
+          aria-label="Sorted out of New"
+          aria-valuemin={0}
+          aria-valuemax={facts.total}
+          aria-valuenow={sorted}
+          className="h-6 w-160 overflow-hidden rounded-pill bg-sunk max-2xl:w-100"
+        >
+          <i className="block h-full bg-good not-italic transition-[width] duration-[400ms]" style={{ width: `${facts.total ? (sorted / facts.total) * 100 : 0}%` }} />
+        </span>
+        <span className="t-body-s whitespace-nowrap text-muted">
+          <b className="font-semibold text-fg tnum">{num(sorted)}</b> of {num(facts.total)}
+        </span>
+      </div>
+      <p className={cn(cell, "t-body flex-1 text-muted max-xl:basis-full max-xl:border-l-0! max-xl:py-4")}>
+        <span className="truncate">{msg.text}</span>
+      </p>
+      <div className={cn(cell, "shrink-0 pr-8")}>
+        <span className="t-label whitespace-nowrap max-2xl:hidden">{moneyCompact(0, round.currency)} committed</span>
+        {msg.triage && canWrite ? (
+          <Button variant="primary" onClick={onStartTriage} kbd="T" aria-keyshortcuts="T" title="Start triage (T)">
+            Start triage
+          </Button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/** Next up sentences and their links. */
+export function bucketCopy(b: NextUpBucket, openLabel: string): { text: string; link: string } {
+  switch (b.id) {
+    case "hw":
+      return { text: `Hot or Warm still ${openLabel}`, link: "Triage →" };
+    case "quiet":
+      return { text: "gone quiet, 14+ days with no activity", link: "Show →" };
+    case "nofollow":
+      return { text: "talking with no follow-up set", link: "Show →" };
+    default:
+      return { text: `still ${openLabel}`, link: "Triage →" };
+  }
+}
+
+/**
+ * The full ledger once money exists (DECISION §5.1): committed with the soft tint, Follow up
+ * now (overdue first, then today) and the Next up buckets. No funnel bar.
+ */
+export function LedgerDesk({
+  round,
+  rows,
+  facts,
+  openKey,
+  openLabel,
+  today,
+  nowMs,
+  canWrite,
+  onOpen,
+  onDueAll,
+  onBucket,
+}: {
+  round: Round;
+  rows: readonly Participant[];
+  facts: LedgerFacts;
+  openKey: string | null;
+  openLabel: string;
+  today: string;
+  nowMs: number;
+  canWrite: boolean;
+  onOpen: (investorId: string) => void;
+  onDueAll: () => void;
+  onBucket: (b: NextUpBucket) => void;
+}) {
+  const due = dueRows(rows);
+  const next = rows
+    .filter((p) => p.follow_up_on && p.follow_up_on > today)
+    .sort((a, b) => (a.follow_up_on! < b.follow_up_on! ? -1 : 1))[0];
+  const buckets = nextUpBuckets(rows, openKey, today, nowMs).filter((b) => canWrite || (b.id !== "hw" && b.id !== "new"));
+  const target = round.target_amount;
+  const pctC = target > 0 ? Math.min(100, (facts.committed / target) * 100) : 0;
+  const pctS = target > 0 ? Math.min(100 - pctC, (facts.soft / target) * 100) : 0;
+  const stats: [string, string][] = [
+    [moneyCompact(facts.soft, round.currency), "soft"],
+    [num(facts.talking), "talking"],
+    [num(facts.committedCount), "committed"],
+  ];
+  if (facts.daysToClose !== null) stats.push([num(Math.abs(facts.daysToClose)), facts.daysToClose >= 0 ? "days left" : "days past close"]);
+  return (
+    <section
+      aria-label={`${round.name} summary`}
+      className="grid min-w-0 grid-cols-1 overflow-hidden rounded-md border border-line bg-surface min-[1100px]:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)]"
+    >
+      <div className="min-w-0 border-line p-14 max-[1099px]:grid max-[1099px]:grid-cols-[auto_minmax(0,1fr)] max-[1099px]:items-end max-[1099px]:gap-x-24 max-[1099px]:border-b max-[1099px]:py-10 min-[1100px]:border-r">
+        <div className="min-w-0">
+          <p className="t-label">Committed toward {round.name}</p>
+          <p className="t-amount mt-4 max-[1099px]:text-[24px]">
+            <span className="text-good-ink">{money(facts.committed, round.currency)}</span>{" "}
+            <span className="text-[18px] font-medium whitespace-nowrap text-muted max-[1099px]:text-[15px]">of {money(target, round.currency)}</span>
+          </p>
+        </div>
+        <div className="min-w-0">
+          <div
+            role="meter"
+            aria-label={`Committed toward ${round.name}`}
+            aria-valuemin={0}
+            aria-valuemax={target}
+            aria-valuenow={facts.committed}
+            className="mt-10 flex h-8 overflow-hidden rounded-pill bg-sunk max-[1099px]:mt-0"
+          >
+            <i className="block h-full bg-good not-italic" style={{ width: `${pctC}%` }} />
+            {pctS > 0 ? (
+              <i
+                className="block h-full not-italic"
+                title={`${moneyCompact(facts.soft, round.currency)} soft`}
+                style={{ width: `${pctS}%`, background: "color-mix(in oklab, var(--good) 30%, var(--sunk))" }}
+              />
+            ) : null}
+          </div>
+          <p className="t-body-s mt-8 flex flex-wrap gap-x-6 text-muted">
+            {stats.map(([n, l], i) => (
+              <span key={l}>
+                {i > 0 ? <span className="mr-6">·</span> : null}
+                <b className="font-semibold text-fg tnum">{n}</b> {l}
+              </span>
+            ))}
+          </p>
+        </div>
+      </div>
+      <div className="grid min-w-0 grid-cols-1 min-[700px]:grid-cols-2">
+        <div className="min-w-0 border-line p-14 max-[699px]:border-b min-[700px]:border-r">
+          <p className="t-label mb-6 flex items-center">
+            Follow up now
+            {due.length ? (
+              <button type="button" onClick={onDueAll} className="link t-body-s ml-auto border-0 bg-transparent p-0 normal-case tracking-normal">
+                All {num(due.length)} →
+              </button>
+            ) : null}
+          </p>
+          {due.length ? (
+            <ul className="m-0 flex list-none flex-col p-0 max-[1099px]:[&>li:nth-child(n+4)]:hidden">
+              {due.slice(0, 4).map((p) => (
+                <li key={p.investor.id}>
+                  <button
+                    type="button"
+                    onClick={() => onOpen(p.investor.id)}
+                    className="flex h-28 w-full min-w-0 items-center gap-8 border-0 bg-transparent px-0 text-left hover:text-accent"
+                  >
+                    <StageDot color={p.stage.color} />
+                    <span className="shrink-0 font-medium">{p.investor.name}</span>
+                    <span className="t-body-s min-w-0 flex-1 truncate text-muted">{p.next_step || p.follow_up_note || ""}</span>
+                    <span className="shrink-0 font-mono text-[12px] text-bad">{dueText(p, today)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="t-body-s text-muted">
+              {next ? `Nothing due. Next: ${next.investor.name}, ${formatDate(next.follow_up_on, today)}.` : "Nothing due."}
+            </p>
+          )}
+        </div>
+        <div className="min-w-0 p-14">
+          <p className="t-label mb-6">Next up</p>
+          {buckets.length ? (
+            <ul className="m-0 flex list-none flex-col p-0 max-[1099px]:[&>li:nth-child(n+4)]:hidden">
+              {buckets.slice(0, 4).map((b) => {
+                const c = bucketCopy(b, openLabel);
+                return (
+                  <li key={b.id} className="flex h-28 min-w-0 items-center gap-8">
+                    <span className="w-40 shrink-0 text-right font-mono text-[12.5px] font-medium text-fg tnum">{num(b.count)}</span>
+                    <span className="t-body-s min-w-0 flex-1 truncate">{c.text}</span>
+                    <button type="button" onClick={() => onBucket(b)} className="link t-body-s shrink-0 border-0 bg-transparent p-0">
+                      {c.link}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="t-body-s text-muted">Nothing waiting on you.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

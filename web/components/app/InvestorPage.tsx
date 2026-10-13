@@ -37,6 +37,7 @@ import {
 import type { Activity, Investor, Member, Participant, Round } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { formatDate, isoDate, plural, stageFocusLabel } from "@/lib/format";
+import { visibleIndustries } from "@/lib/pipeline";
 import { useSession, useWorkspace } from "@/lib/session";
 
 import { NotesEditor } from "./InvestorSheet";
@@ -371,7 +372,7 @@ export function InvestorPage({
                   {stageFocusLabel(st)}
                 </Chip>
               ))}
-              {inv.industries.map((i) => (
+              {visibleIndustries(inv.industries).map((i) => (
                 <Chip key={i} tone="industry">
                   {i}
                 </Chip>

@@ -30,6 +30,8 @@ export type MenuEntry =
       danger?: boolean;
       /** Left slot (a StageDot). */
       icon?: ReactNode;
+      /** One key that picks this item while the menu is open ("7" in Move to…); shown as the hint. */
+      accel?: string;
     }
   | { type: "separator" }
   | { type: "label"; label: ReactNode };
@@ -98,16 +100,18 @@ export function Menu({
     els[(i + els.length) % els.length]?.focus();
   };
 
-  // Focus the selected (or first) item when opening.
+  // Fixed positioning from the wrapper's rect, so scroll containers never clip the menu.
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  const placed = pos !== null;
+
+  // Focus the selected (or first) item once the menu is placed (an invisible list cannot
+  // take focus, so a menu opened by a key would otherwise miss its first keystroke).
   useEffect(() => {
-    if (!open) return;
+    if (!open || !placed) return;
     const els = menuItems(list.current);
     const sel = els.findIndex((el) => el.getAttribute("aria-checked") === "true");
     (els[sel >= 0 ? sel : 0] ?? list.current)?.focus();
-  }, [open]);
-
-  // Fixed positioning from the wrapper's rect, so scroll containers never clip the menu.
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  }, [open, placed]);
   useLayoutEffect(() => {
     if (!open) {
       setPos(null);
@@ -173,6 +177,14 @@ export function Menu({
       case "Tab":
         close(false);
         return;
+    }
+    if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const hit = els.find((el) => el.dataset.accel === e.key.toLowerCase());
+      if (hit) {
+        e.preventDefault();
+        hit.click();
+        return;
+      }
     }
     if (e.key.length === 1 && /\S/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const now = Date.now();
@@ -244,6 +256,11 @@ export function Menu({
                 {entry.icon}
                 <span className={cn("min-w-0 flex-1 truncate", entry.selected && "font-semibold")}>{entry.label}</span>
                 {entry.hint ? <span className="t-micro text-muted">{entry.hint}</span> : null}
+                {entry.accel && !entry.hint ? (
+                  <kbd className="inline-flex h-18 min-w-18 items-center justify-center rounded-kbd border border-line px-4 font-mono text-xs text-muted">
+                    {entry.accel}
+                  </kbd>
+                ) : null}
               </>
             );
             const common = {
@@ -252,6 +269,7 @@ export function Menu({
               "aria-checked": entry.selected,
               "aria-disabled": entry.disabled || undefined,
               "data-text": text,
+              "data-accel": entry.accel?.toLowerCase(),
               className: cls,
             } as const;
             if (entry.href && !entry.disabled) {

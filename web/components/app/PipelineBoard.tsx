@@ -8,18 +8,20 @@ import {
   useState,
   type DragEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 
 import { Board, BoardCard, BoardColumn, Menu, StageDot } from "@/components/ui";
-import { boardCardHeight, boardCardLines, CARD_GAP, COMPACT_CARD_GAP } from "@/components/ui/Board";
+import { CARD_GAP, CARD_H, CARD_H_STEP } from "@/components/ui/Board";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
-import type { PipelineExtra } from "@/lib/api/rounds";
-import type { Participant, Round, Stage } from "@/lib/api/types";
-import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
+import type { Participant, Priority, Round, Stage } from "@/lib/api/types";
+import { PRIORITY_LABEL } from "@/lib/api/types";
+import { cn } from "@/lib/cn";
+import { moneyCompact, num, priorityFromFit } from "@/lib/format";
+import { cardSlot, GROUP_LABEL, PRIORITY_ORDER, STAGE_MEANING, triageTargets } from "@/lib/pipeline";
 
-import type { Density } from "./PipelineTable";
-import { byFit, useMediaQuery } from "./util";
+import { byFit } from "./util";
 
 export interface AgentMark {
   label: string;
@@ -47,9 +49,7 @@ export function sortCards(cards: Participant[], sort: BoardSort): Participant[] 
           (a.follow_up_on ?? FAR).localeCompare(b.follow_up_on ?? FAR) || b.fit - a.fit || a.investor.name.localeCompare(b.investor.name),
       );
     case "activity":
-      return out.sort(
-        (a, b) => (b.last_activity_at ?? "").localeCompare(a.last_activity_at ?? "") || byFit(a, b),
-      );
+      return out.sort((a, b) => (b.last_activity_at ?? "").localeCompare(a.last_activity_at ?? "") || byFit(a, b));
     case "name":
       return out.sort((a, b) => a.investor.name.localeCompare(b.investor.name));
     default:
@@ -57,16 +57,24 @@ export function sortCards(cards: Participant[], sort: BoardSort): Participant[] 
   }
 }
 
+/** The fill per priority group (the bar under the dominant New column). */
+const PRIO_FILL: Record<Priority, string> = { hot: "bg-hot", warm: "bg-warm", maybe: "bg-maybe", low: "bg-faint" };
+
 interface ColumnApi {
-  scrollToIndex: (i: number) => boolean;
+  scrollToIndex: (cardIndex: number) => boolean;
 }
 
 /**
- * The pipeline board (SYSTEM §4.2, §4.3; UX pass 1 P1-3). One column per stage; empty
- * columns and the lost stage fold into 44px rails. The board fills the viewport and only the
- * columns scroll, each windowed (cards have exact heights). Pointer users drag cards; the
- * board is one tab stop for the keyboard: arrows move between cards and columns, Enter opens,
- * Alt+→ / Alt+← moves a card one stage (skipping the lost stage), M opens "Move to…".
+ * The pipeline board (DECISION §5.2–§5.5). One column per stage and never a rail: the
+ * dominant stage gets at least 352px, a stage with cards 232px, an empty one 136px with a
+ * "Drop here" zone, so the 411-in-New round shows all 8 columns at 1440 and a mature round
+ * scrolls sideways (a pill at the bottom right reaches the end stages). The board fills the
+ * viewport and only the columns scroll, each windowed (cards are 52px). The dominant New
+ * column adds a priority bar and groups its cards by priority with "Select N".
+ *
+ * Keyboard (one tab stop): arrows or J/K move, Enter opens, Alt+→ / Alt+← moves a card one
+ * stage (skipping the lost stage), M opens "Move to…" (digits pick a stage), X selects,
+ * Shift+↑/↓ extends the selection. Bare digits never write on the board.
  */
 export function PipelineBoard({
   round,
@@ -74,18 +82,25 @@ export function PipelineBoard({
   columns,
   sorts,
   onSortChange,
-  extras,
   agentMarks,
   today,
   canWrite,
-  density,
+  showNextStep,
   filtered,
   height,
   openId,
   focusReq,
+  openKey,
+  dominantKey,
+  activePrio,
+  onPrioFilter,
+  onTriage,
+  selected,
+  onSelectedChange,
   onOpen,
   onFocusMove,
   onMove,
+  onMoveMany,
 }: {
   round: Round;
   stages: Stage[];
@@ -93,69 +108,83 @@ export function PipelineBoard({
   columns: { stage: Stage; cards: Participant[] }[];
   sorts: Record<string, BoardSort>;
   onSortChange: (stageKey: string, sort: BoardSort) => void;
-  extras: Record<string, PipelineExtra>;
   agentMarks: Record<string, AgentMark>;
   today: string;
   canWrite: boolean;
-  density: Density;
+  showNextStep: boolean;
   /** Filters or search are applied (the empty-column copy changes). */
   filtered: boolean;
   /** Fill height in px. */
   height: number | null;
   openId?: string | null;
   focusReq: { id: string; n: number } | null;
+  /** The open stage `O` (New). */
+  openKey: string | null;
+  /** The stage holding most of the round (over all investors, not the filtered view). */
+  dominantKey: string | null;
+  activePrio?: Priority | "";
+  onPrioFilter?: (p: Priority | null) => void;
+  /** "Triage →" in the New header (writers, while New has investors). */
+  onTriage?: () => void;
+  selected: Set<string> | null;
+  onSelectedChange: (next: Set<string>) => void;
   onOpen: (investorId: string) => void;
   /** With the split sheet open, keyboard moves open the card they land on. */
   onFocusMove?: (investorId: string) => void;
   /** Returns false when the move failed (the card snaps back). */
   onMove: (investorId: string, stageKey: string) => Promise<boolean>;
+  /** One bulk request (dragging or "Move to…" with several selected). */
+  onMoveMany: (investorIds: string[], stageKey: string) => void;
 }) {
-  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragIds, setDragIds] = useState<string[] | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const anchor = useRef<string | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const apis = useRef<Record<string, ColumnApi>>({});
-  const wide = useMediaQuery("(min-width: 640px)") ?? true;
-  const variant = density === "compact" ? "compact" : "standard";
+  const sel = selected ?? EMPTY;
+  const anySelected = sel.size > 0;
 
-  // The lost stage and empty columns start as rails from 640px up, so the stages that matter
-  // get the width. A rail opens on click (and stays open while this board is mounted).
-  const [opened, setOpened] = useState<Set<string>>(new Set());
-  const [lostClosed, setLostClosed] = useState(true);
-  const collapsed = useCallback(
-    (s: Stage, count: number) => {
-      if (!wide || opened.has(s.key)) return false;
-      if (s.kind === "lost") return lostClosed;
-      return count === 0;
-    },
-    [wide, opened, lostClosed],
-  );
-  const template = wide
-    ? columns.map((c) => (collapsed(c.stage, c.cards.length) ? "44px" : "minmax(var(--col-min), 1fr)")).join(" ")
-    : undefined;
+  const template = columns
+    .map((c) =>
+      c.stage.key === dominantKey
+        ? "minmax(352px, 2.5fr)"
+        : c.cards.length > 0
+          ? "minmax(232px, 1fr)"
+          : "minmax(136px, .6fr)",
+    )
+    .join(" ");
 
+  /* ---------- the right edge: fade and the end-stage pill ---------- */
   const [fade, setFade] = useState(false);
-  const updateFade = useCallback(() => {
+  const [offEnds, setOffEnds] = useState<string[]>([]);
+  const endKeys = useMemo(
+    () => columns.filter((c) => c.stage.kind === "won" || c.stage.kind === "lost").map((c) => c.stage.key),
+    [columns],
+  );
+  const updateEdge = useCallback(() => {
     const el = boardRef.current;
     if (!el) return;
-    setFade(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
-  }, []);
+    const right = el.scrollLeft + el.clientWidth;
+    setFade(el.scrollWidth - right > 4);
+    const off: string[] = [];
+    for (const key of endKeys) {
+      const col = el.querySelector<HTMLElement>(`[data-stage="${CSS.escape(key)}"]`);
+      if (col && col.offsetLeft + 40 > right) off.push(key);
+    }
+    setOffEnds((prev) => (prev.join() === off.join() ? prev : off));
+  }, [endKeys]);
   useEffect(() => {
-    updateFade();
-    window.addEventListener("resize", updateFade);
-    return () => window.removeEventListener("resize", updateFade);
-  }, [updateFade, template]);
-
-  // Phones: open on the first column that has cards.
-  const scrolledOnce = useRef(false);
-  useEffect(() => {
-    if (wide || scrolledOnce.current) return;
-    scrolledOnce.current = true;
-    const i = columns.findIndex((c) => c.cards.length > 0);
-    const el = boardRef.current?.children[i] as HTMLElement | undefined;
-    if (el && i > 0) boardRef.current!.scrollLeft = el.offsetLeft - 16;
-  }, [wide, columns]);
+    updateEdge();
+    window.addEventListener("resize", updateEdge);
+    const ro = typeof ResizeObserver !== "undefined" && boardRef.current ? new ResizeObserver(updateEdge) : null;
+    if (ro && boardRef.current) ro.observe(boardRef.current);
+    return () => {
+      window.removeEventListener("resize", updateEdge);
+      ro?.disconnect();
+    };
+  }, [updateEdge, template]);
 
   const where = useMemo(() => {
     const m = new Map<string, { col: number; idx: number }>();
@@ -173,8 +202,10 @@ export function PipelineBoard({
       const tryFocus = (n: number) =>
         requestAnimationFrame(() => {
           const el = boardRef.current?.querySelector<HTMLButtonElement>(`[data-investor="${CSS.escape(investorId)}"]`);
-          if (el) el.focus({ preventScroll: true });
-          else if (n > 0) tryFocus(n - 1);
+          if (el) {
+            el.focus({ preventScroll: true });
+            el.scrollIntoView({ block: "nearest", inline: "nearest" });
+          } else if (n > 0) tryFocus(n - 1);
         });
       tryFocus(3);
     },
@@ -191,15 +222,47 @@ export function PipelineBoard({
       const at = where.get(investorId);
       const p = at ? columns[at.col]!.cards[at.idx] : undefined;
       if (!p || p.stage.key === key) return;
-      setOpened((o) => (o.has(key) ? o : new Set(o).add(key)));
       await onMove(investorId, key);
       focusCard(investorId);
     },
     [where, columns, onMove, focusCard],
   );
 
+  /* ---------- selection ---------- */
+  const toggle = (id: string) => {
+    const next = new Set(sel);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    anchor.current = id;
+    onSelectedChange(next);
+  };
+  const extendTo = (id: string) => {
+    const a = anchor.current && where.get(anchor.current);
+    const b = where.get(id);
+    if (!a || !b || a.col !== b.col) return toggle(id);
+    const cards = columns[b.col]!.cards;
+    const [lo, hi] = a.idx < b.idx ? [a.idx, b.idx] : [b.idx, a.idx];
+    const next = new Set(sel);
+    for (let i = lo; i <= hi; i++) next.add(cards[i]!.investor.id);
+    onSelectedChange(next);
+  };
+  const selectMany = (ids: string[]) => {
+    const next = new Set(sel);
+    const all = ids.every((id) => next.has(id));
+    for (const id of ids) {
+      if (all) next.delete(id);
+      else next.add(id);
+    }
+    onSelectedChange(next);
+  };
+
   // Keyboard path skips the lost stage (reachable only through the menu).
   const keyPath = useMemo(() => stages.filter((s) => s.kind !== "lost"), [stages]);
+  const accel = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const t of triageTargets(stages)) if (t.key) m[t.stage.key] = t.key;
+    return m;
+  }, [stages]);
 
   const onCardKey = (e: KeyboardEvent<HTMLButtonElement>, p: Participant) => {
     const at = where.get(p.investor.id);
@@ -215,28 +278,34 @@ export function PipelineBoard({
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const col = columns[at.col]!;
-    const go = (colIdx: number, idx: number) => {
+    const go = (colIdx: number, idx: number, extend = false) => {
       const c = columns[colIdx];
       const target = c?.cards[Math.max(0, Math.min(c.cards.length - 1, idx))];
       if (target) {
         e.preventDefault();
+        if (extend && canWrite && selected) {
+          if (!anchor.current) anchor.current = p.investor.id;
+          const next = new Set(sel).add(p.investor.id).add(target.investor.id);
+          onSelectedChange(next);
+        }
         focusCard(target.investor.id);
         onFocusMove?.(target.investor.id);
       }
     };
     const sideways = (dir: 1 | -1) => {
       for (let c = at.col + dir; c >= 0 && c < columns.length; c += dir) {
-        const cc = columns[c]!;
-        if (cc.cards.length && !collapsed(cc.stage, cc.cards.length)) return go(c, at.idx);
+        if (columns[c]!.cards.length) return go(c, Math.min(at.idx, columns[c]!.cards.length - 1));
       }
     };
     switch (e.key) {
       case "ArrowDown":
       case "j":
-        return go(at.col, at.idx + 1);
+      case "J":
+        return go(at.col, at.idx + 1, e.shiftKey);
       case "ArrowUp":
       case "k":
-        return go(at.col, at.idx - 1);
+      case "K":
+        return go(at.col, at.idx - 1, e.shiftKey);
       case "ArrowRight":
         return sideways(1);
       case "ArrowLeft":
@@ -249,6 +318,12 @@ export function PipelineBoard({
         return go(at.col, at.idx + 8);
       case "PageUp":
         return go(at.col, at.idx - 8);
+      case "x":
+      case "X":
+        if (!canWrite || !selected) return;
+        e.preventDefault();
+        toggle(p.investor.id);
+        return;
       case "m":
       case "M":
         if (!canWrite) return;
@@ -260,15 +335,22 @@ export function PipelineBoard({
 
   const drop = (e: DragEvent, key: string) => {
     e.preventDefault();
-    const id = e.dataTransfer.getData("text/plain") || dragId;
+    const ids = dragIds ?? [e.dataTransfer.getData("text/plain")].filter(Boolean);
     setOverKey(null);
-    setDragId(null);
-    if (id) void move(id, key);
+    setDragIds(null);
+    if (ids.length > 1) onMoveMany(ids, key);
+    else if (ids[0]) void move(ids[0], key);
   };
 
   // One tab stop: the active card, else the first card on the board.
-  const firstId = columns.find((c) => c.cards.length && !collapsed(c.stage, c.cards.length))?.cards[0]?.investor.id ?? null;
+  const firstId = columns.find((c) => c.cards.length)?.cards[0]?.investor.id ?? null;
   const tabStop = activeId && where.has(activeId) ? activeId : firstId;
+
+  const scrollToEnds = () => {
+    const el = boardRef.current;
+    if (el) el.scrollTo({ left: el.scrollWidth, behavior: "smooth" });
+  };
+  const endCols = columns.filter((c) => offEnds.includes(c.stage.key));
 
   return (
     <div className="relative">
@@ -276,51 +358,53 @@ export function PipelineBoard({
         ref={boardRef}
         role="group"
         aria-label={`${round.name} board`}
-        aria-keyshortcuts={canWrite ? "ArrowUp ArrowDown ArrowLeft ArrowRight Enter Alt+ArrowRight Alt+ArrowLeft M" : undefined}
+        aria-keyshortcuts={canWrite ? "ArrowUp ArrowDown ArrowLeft ArrowRight Enter Alt+ArrowRight Alt+ArrowLeft M X" : undefined}
         columns={template}
-        onScroll={updateFade}
+        onScroll={updateEdge}
         className="min-h-0! grid-rows-[100%] pb-6!"
         style={{ height: height ?? "70vh" }}
       >
         {columns.map(({ stage: s, cards }) => {
-          const isCollapsed = collapsed(s, cards.length);
           const sort = sorts[s.key] ?? "fit";
+          const isOpen = s.key === openKey;
+          const grouped = isOpen && s.key === dominantKey;
           return (
             <StageColumn
               key={s.key}
               stage={s}
               cards={cards}
-              collapsed={isCollapsed}
-              onExpand={() => {
-                if (s.kind === "lost") setLostClosed(false);
-                setOpened((o) => new Set(o).add(s.key));
-              }}
-              onCollapse={
-                wide && !isCollapsed && (s.kind === "lost" || cards.length === 0)
-                  ? () => {
-                      if (s.kind === "lost") setLostClosed(true);
-                      setOpened((o) => {
-                        const n = new Set(o);
-                        n.delete(s.key);
-                        return n;
-                      });
-                    }
-                  : undefined
-              }
+              grouped={grouped}
               sort={sort}
               onSortChange={(v) => onSortChange(s.key, v)}
               currency={round.currency}
               readOnly={!canWrite}
               filtered={filtered}
-              variant={variant}
-              extras={extras}
+              showNextStep={showNextStep}
               agentMarks={agentMarks}
               today={today}
               canWrite={canWrite}
+              selectable={canWrite && Boolean(selected)}
+              anySelected={anySelected}
+              selected={sel}
               tabStop={tabStop}
               openId={openId ?? null}
-              dragId={dragId}
-              isDropTarget={overKey === s.key && dragId !== null}
+              dragIds={dragIds}
+              isDropTarget={dragIds !== null && canWrite}
+              activePrio={activePrio ?? ""}
+              onPrioFilter={grouped ? onPrioFilter : undefined}
+              onSelectGroup={canWrite && selected ? selectMany : undefined}
+              headerAction={
+                isOpen && onTriage && cards.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={onTriage}
+                    className="t-body-s ml-4 shrink-0 border-0 bg-transparent p-0 font-medium whitespace-nowrap text-accent hover:underline"
+                    title="Sort New one investor at a time (T)"
+                  >
+                    Triage →
+                  </button>
+                ) : null
+              }
               registerApi={(api) => {
                 if (api) apis.current[s.key] = api;
                 else delete apis.current[s.key];
@@ -338,10 +422,12 @@ export function PipelineBoard({
                 if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverKey((k) => (k === s.key ? null : k));
               }}
               onDrop={canWrite ? (e) => drop(e, s.key) : undefined}
-              renderMenu={(p) =>
-                menuFor === p.investor.id ? (
+              renderMenu={(p) => {
+                if (menuFor !== p.investor.id) return null;
+                const many = sel.has(p.investor.id) && sel.size > 1;
+                return (
                   <Menu
-                    label={`Move ${p.investor.name} to`}
+                    label={many ? `Move ${num(sel.size)} selected to` : `Move ${p.investor.name} to`}
                     open
                     onOpenChange={(o) => {
                       if (!o) {
@@ -351,26 +437,37 @@ export function PipelineBoard({
                     }}
                     className="absolute! inset-x-0 top-full h-0"
                     items={[
-                      { type: "label", label: "Move to" },
+                      { type: "label", label: many ? `Move ${num(sel.size)} to` : "Move to" },
                       ...stages.map((st) => ({
                         label: st.label,
                         icon: <StageDot color={st.color} />,
-                        selected: st.key === p.stage.key,
+                        selected: !many && st.key === p.stage.key,
+                        accel: accel[st.key],
                         onSelect: () => {
                           setMenuFor(null);
-                          void move(p.investor.id, st.key);
+                          if (many) onMoveMany([...sel], st.key);
+                          else void move(p.investor.id, st.key);
                         },
                       })),
                     ]}
                   />
-                ) : null
-              }
+                );
+              }}
               onCardFocus={setActiveId}
               onCardKey={onCardKey}
-              onOpen={onOpen}
-              onDragStart={(id) => setDragId(id)}
+              onCardClick={(e, id) => {
+                if (canWrite && selected && e.shiftKey) {
+                  e.preventDefault();
+                  extendTo(id);
+                } else if (canWrite && selected && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  toggle(id);
+                } else onOpen(id);
+              }}
+              onToggle={toggle}
+              onDragStart={(id) => setDragIds(sel.has(id) && sel.size > 1 ? [...sel] : [id])}
               onDragEnd={() => {
-                setDragId(null);
+                setDragIds(null);
                 setOverKey(null);
               }}
             />
@@ -378,41 +475,70 @@ export function PipelineBoard({
         })}
       </Board>
       {fade ? (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute top-0 right-0 bottom-8 w-48 bg-linear-to-l from-canvas to-transparent"
-        />
+        <div aria-hidden className="pointer-events-none absolute top-0 right-0 bottom-8 w-48 bg-linear-to-l from-canvas to-transparent" />
+      ) : null}
+      {endCols.length ? (
+        <button
+          type="button"
+          onClick={scrollToEnds}
+          className="absolute right-12 bottom-20 z-10 inline-flex h-32 items-center gap-8 rounded-pill border border-line bg-surface px-12 text-13 shadow-menu hover:border-accent"
+        >
+          {endCols.map((c, i) => {
+            const amount = c.stage.kind === "won" ? c.cards.reduce((n, p) => n + (p.amount_committed ?? 0), 0) : 0;
+            return (
+              <span key={c.stage.key} className="inline-flex items-center gap-6">
+                {i > 0 ? <span className="text-muted">·</span> : null}
+                <StageDot color={c.stage.color} />
+                <span className="font-medium">{c.stage.label}</span>
+                {amount > 0 ? <span className="font-mono text-[12px] text-good-ink">{moneyCompact(amount, round.currency)}</span> : null}
+                <span className="font-mono text-[12px] text-muted">{num(c.cards.length)}</span>
+              </span>
+            );
+          })}
+          <span aria-hidden className="text-accent">
+            →
+          </span>
+        </button>
       ) : null}
       {canWrite ? (
         <p className="sr-only">
           Use the arrow keys to move between cards and columns, Enter to open a file, Alt with the left or right arrow to
-          move a card one stage, and M for Move to.
+          move a card one stage, M for Move to, and X to select.
         </p>
       ) : null}
     </div>
   );
 }
 
+const EMPTY = new Set<string>();
+const GROUP_H = 30;
+
+type Row = { kind: "group"; priority: Priority; ids: string[] } | { kind: "card"; p: Participant; idx: number };
+
 function StageColumn({
   stage: s,
   cards,
-  collapsed,
-  onExpand,
-  onCollapse,
+  grouped,
   sort,
   onSortChange,
   currency,
   readOnly,
   filtered,
-  variant,
-  extras,
+  showNextStep,
   agentMarks,
   today,
   canWrite,
+  selectable,
+  anySelected,
+  selected,
   tabStop,
   openId,
-  dragId,
+  dragIds,
   isDropTarget,
+  activePrio,
+  onPrioFilter,
+  onSelectGroup,
+  headerAction,
   registerApi,
   onDragOver,
   onDragLeave,
@@ -420,29 +546,34 @@ function StageColumn({
   renderMenu,
   onCardFocus,
   onCardKey,
-  onOpen,
+  onCardClick,
+  onToggle,
   onDragStart,
   onDragEnd,
 }: {
   stage: Stage;
   cards: Participant[];
-  collapsed: boolean;
-  onExpand: () => void;
-  onCollapse?: () => void;
+  grouped: boolean;
   sort: BoardSort;
   onSortChange: (s: BoardSort) => void;
   currency: string;
   readOnly: boolean;
   filtered: boolean;
-  variant: "standard" | "compact";
-  extras: Record<string, PipelineExtra>;
+  showNextStep: boolean;
   agentMarks: Record<string, AgentMark>;
   today: string;
   canWrite: boolean;
+  selectable: boolean;
+  anySelected: boolean;
+  selected: Set<string>;
   tabStop: string | null;
   openId: string | null;
-  dragId: string | null;
+  dragIds: string[] | null;
   isDropTarget: boolean;
+  activePrio: Priority | "";
+  onPrioFilter?: (p: Priority | null) => void;
+  onSelectGroup?: (ids: string[]) => void;
+  headerAction?: ReactNode;
   registerApi: (api: ColumnApi | null) => void;
   onDragOver?: (e: DragEvent<HTMLElement>) => void;
   onDragLeave: (e: DragEvent<HTMLElement>) => void;
@@ -450,68 +581,158 @@ function StageColumn({
   renderMenu: (p: Participant) => ReactNode;
   onCardFocus: (id: string) => void;
   onCardKey: (e: KeyboardEvent<HTMLButtonElement>, p: Participant) => void;
-  onOpen: (id: string) => void;
+  onCardClick: (e: MouseEvent, id: string) => void;
+  onToggle: (id: string) => void;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
 }) {
   const body = useRef<HTMLDivElement>(null);
   const won = s.kind === "won";
-  const props = useMemo(
-    () =>
-      cards.map((p) => {
-        const industries = extras[p.investor.id]?.industries ?? [];
-        const amount =
-          won && p.amount_committed
-            ? { value: p.amount_committed, currency }
-            : p.amount_soft
-              ? { value: p.amount_soft, currency, soft: true }
-              : null;
-        const c = {
-          title: p.investor.title,
-          firm: p.investor.firm,
-          nextStep: p.next_step,
-          won,
-          typeLabel: p.investor.type === "other" ? null : INVESTOR_TYPE_LABEL[p.investor.type],
-          industry: industries[0] ?? null,
-          extraTagCount: Math.max(0, industries.length - 1 + (p.investor.tags?.length ?? 0)),
-          followUpOn: p.follow_up_on,
-          followUpState: p.follow_up_state,
-          amount,
-        };
-        const h = variant === "compact" ? boardCardHeight("compact", boardCardLines(c)) : boardCardHeight("standard", boardCardLines(c));
-        return { c, slot: h + (variant === "compact" ? COMPACT_CARD_GAP : CARD_GAP) };
-      }),
-    [cards, extras, won, currency, variant],
-  );
-  const heightAt = useCallback((i: number) => props[i]?.slot ?? 0, [props]);
-  const v = useVirtualRows({ scrollRef: body, count: cards.length, height: heightAt, offset: 2, initial: 14 });
-  const { scrollToIndex } = v;
+  const cardH = (showNextStep ? CARD_H_STEP : CARD_H) + CARD_GAP;
+
+  // Grouped (the dominant New column): cards partitioned by priority, keeping the column sort.
+  const { rows, groupCounts } = useMemo(() => {
+    const counts: Record<Priority, number> = { hot: 0, warm: 0, maybe: 0, low: 0 };
+    for (const p of cards) counts[priorityFromFit(p.fit)]++;
+    if (!grouped) {
+      return {
+        rows: cards.map((p, idx) => ({ kind: "card", p, idx }) as Row),
+        groupCounts: counts,
+      };
+    }
+    const by: Record<Priority, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
+    for (const p of cards) by[priorityFromFit(p.fit)].push(p);
+    // The parent passes this column already partitioned by priority (keyboard order = rows).
+    const out: Row[] = [];
+    let idx = 0;
+    for (const pr of PRIORITY_ORDER) {
+      if (!by[pr].length) continue;
+      out.push({ kind: "group", priority: pr, ids: by[pr].map((p) => p.investor.id) });
+      for (const p of by[pr]) out.push({ kind: "card", p, idx: idx++ });
+    }
+    return { rows: out, groupCounts: counts };
+  }, [cards, grouped]);
+
+  const heightAt = useCallback((i: number) => (rows[i]?.kind === "group" ? GROUP_H : cardH), [rows, cardH]);
+  const v = useVirtualRows({ scrollRef: body, count: rows.length, height: heightAt, offset: 2, initial: 16 });
+  const rowOfCard = useMemo(() => {
+    const m: number[] = [];
+    rows.forEach((r, i) => {
+      if (r.kind === "card") m[r.idx] = i;
+    });
+    return m;
+  }, [rows]);
+  const { scrollToIndex, topOf } = v;
   useEffect(() => {
-    registerApi({ scrollToIndex });
+    registerApi({ scrollToIndex: (i) => scrollToIndex(rowOfCard[i] ?? i) });
     return () => registerApi(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollToIndex]);
+  }, [scrollToIndex, rowOfCard]);
+
+  // The sticky group header: the last group that starts at or above the scroll position.
+  const [scrollTop, setScrollTop] = useState(0);
+  useEffect(() => {
+    if (!grouped) return;
+    const el = body.current;
+    if (!el) return;
+    const on = () => setScrollTop(el.scrollTop);
+    el.addEventListener("scroll", on, { passive: true });
+    return () => el.removeEventListener("scroll", on);
+  }, [grouped]);
+  const stuck = useMemo(() => {
+    if (!grouped || scrollTop <= 2) return null;
+    let cur: Extract<Row, { kind: "group" }> | null = null;
+    rows.forEach((r, i) => {
+      if (r.kind === "group" && topOf(i) <= scrollTop) cur = r;
+    });
+    return cur as Extract<Row, { kind: "group" }> | null;
+  }, [grouped, scrollTop, rows, topOf]);
 
   const total = won ? cards.reduce((sum, p) => sum + (p.amount_committed ?? 0), 0) : 0;
   const due = cards.filter((p) => p.follow_up_state === "overdue" || p.follow_up_state === "today").length;
 
+  const groupHeader = (g: Extract<Row, { kind: "group" }>, sticky = false) => {
+    const all = g.ids.every((id) => selected.has(id));
+    return (
+      <div
+        className={cn(
+          "group/gh flex h-28 items-center gap-6 px-4",
+          sticky && "rounded-sm bg-sunk shadow-[0_1px_0_var(--line)]",
+        )}
+      >
+        <span aria-hidden className={cn("inline-block size-7 rounded-pill", PRIO_FILL[g.priority])} />
+        <span className="t-label">{GROUP_LABEL[g.priority]}</span>
+        <span className="font-mono text-[11.5px] text-muted">{num(g.ids.length)}</span>
+        {onSelectGroup ? (
+          <button
+            type="button"
+            onClick={() => onSelectGroup(g.ids)}
+            className={cn(
+              "t-body-s ml-auto border-0 bg-transparent p-0 text-accent hover:underline",
+              !anySelected && "opacity-0 group-hover/gh:opacity-100 focus-visible:opacity-100",
+            )}
+          >
+            {all ? "Clear" : `Select ${num(g.ids.length)}`}
+          </button>
+        ) : null}
+      </div>
+    );
+  };
+
+  const prioBar =
+    grouped && cards.length ? (
+      <div className="flex shrink-0 flex-col gap-5 px-10 pb-2">
+        <div className="flex h-6 overflow-hidden rounded-pill bg-surface" aria-hidden>
+          {PRIORITY_ORDER.map((pr) =>
+            groupCounts[pr] ? (
+              <i
+                key={pr}
+                className={cn("block h-full not-italic", PRIO_FILL[pr])}
+                style={{ width: `${(groupCounts[pr] / cards.length) * 100}%` }}
+              />
+            ) : null,
+          )}
+        </div>
+        <div className="flex flex-wrap gap-x-10 gap-y-2" role="group" aria-label="Filter New by fit">
+          {PRIORITY_ORDER.filter((pr) => groupCounts[pr] > 0 || activePrio === pr).map((pr) => (
+            <button
+              key={pr}
+              type="button"
+              aria-pressed={activePrio === pr}
+              onClick={() => onPrioFilter?.(activePrio === pr ? null : pr)}
+              className={cn(
+                "t-body-s inline-flex items-center gap-4 rounded-pill border-0 bg-transparent px-0 hover:text-fg",
+                activePrio === pr ? "font-semibold text-fg" : "text-muted",
+              )}
+            >
+              <span aria-hidden className={cn("inline-block h-6 w-12 rounded-pill", PRIO_FILL[pr])} />
+              {PRIORITY_LABEL[pr]} <span className="font-mono text-[11.5px]">{num(groupCounts[pr])}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    ) : null;
+
   return (
     <BoardColumn
       fill
-      collapsed={collapsed}
-      onExpand={onExpand}
-      onCollapse={onCollapse}
+      data-stage={s.key}
       label={s.label}
       color={s.color}
       count={cards.length}
       dueCount={s.kind === "lost" || won ? 0 : due}
       total={won ? { amount: total, currency } : null}
-      readOnly={readOnly || filtered}
+      readOnly={readOnly}
+      filtered={filtered}
+      meaning={STAGE_MEANING[s.key] ?? null}
+      dragCount={isDropTarget ? (dragIds?.length ?? 0) : 0}
       isDropTarget={isDropTarget}
       bodyRef={body}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
+      headerAction={headerAction}
+      headerExtra={prioBar}
       headerAside={
         cards.length > 1 ? (
           <Menu
@@ -528,34 +749,57 @@ function StageColumn({
         ) : null
       }
     >
+      {stuck ? <div className="sticky top-0 z-10 -mx-2 h-0 overflow-visible px-2">{groupHeader(stuck, true)}</div> : null}
       {v.padTop > 0 ? <div aria-hidden className="shrink-0" style={{ height: v.padTop }} /> : null}
-      {cards.slice(v.start, v.end).map((p, k) => {
-        const i = v.start + k;
+      {rows.slice(v.start, v.end).map((r) => {
+        if (r.kind === "group") {
+          return (
+            <div key={`g-${r.priority}`} className="shrink-0 pt-2" style={{ height: GROUP_H }}>
+              {groupHeader(r)}
+            </div>
+          );
+        }
+        const p = r.p;
         const id = p.investor.id;
-        const { c, slot } = props[i]!;
+        const isSel = selected.has(id);
         return (
-          <div
-            key={id}
-            className="relative shrink-0"
-            style={{ height: slot, paddingBottom: variant === "compact" ? COMPACT_CARD_GAP : CARD_GAP }}
-          >
+          <div key={id} className="group/card relative shrink-0" style={{ height: cardH, paddingBottom: CARD_GAP }}>
+            {selectable ? (
+              <input
+                type="checkbox"
+                tabIndex={-1}
+                checked={isSel}
+                onChange={() => onToggle(id)}
+                aria-label={`Select ${p.investor.name}`}
+                className={cn(
+                  "absolute top-[11px] left-10 z-[1] size-14 accent-[var(--accent)]",
+                  !anySelected && "opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100",
+                )}
+              />
+            ) : null}
             <BoardCard
               data-investor={id}
               name={p.investor.name}
+              title={p.investor.title}
+              firm={p.investor.firm}
               fit={p.fit}
-              {...c}
-              today={today}
-              variant={variant}
+              rightSlot={cardSlot(p, today, currency)}
+              nextStep={p.next_step}
+              showNextStep={showNextStep}
+              won={won}
               current={openId === id}
+              selected={isSel}
+              inset={anySelected}
+              className={selectable && !anySelected ? "group-hover/card:pl-32 group-focus-within/card:pl-32" : undefined}
               tabIndex={tabStop === id ? 0 : -1}
               agentMark={agentMarks[id] ? { tip: agentMarks[id].tip } : null}
-              dragging={dragId === id}
+              dragging={dragIds?.includes(id)}
               draggable={canWrite}
               hint={canWrite ? undefined : "View only"}
               aria-current={openId === id || undefined}
-              aria-label={`${p.investor.name}${p.investor.firm ? `, ${p.investor.firm}` : ""}. ${s.label}.`}
+              aria-label={`${p.investor.name}${p.investor.firm ? `, ${p.investor.firm}` : ""}. ${s.label}.${isSel ? " Selected." : ""}`}
               onFocus={() => onCardFocus(id)}
-              onClick={() => onOpen(id)}
+              onClick={(e) => onCardClick(e, id)}
               onKeyDown={(e) => onCardKey(e, p)}
               onDragStart={(e) => {
                 e.dataTransfer.setData("text/plain", id);

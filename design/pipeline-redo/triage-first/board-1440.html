@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seed board</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  body { height: 900px; overflow: hidden; }
+  .ledger { margin-top: 14px; display: grid; grid-template-columns: 1.05fr 1.25fr 1.35fr; }
+  .ledger > div { padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .ledger > div + div { border-left: 1px solid var(--line); }
+  .amount { font: 700 30px/1.1 var(--f-display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .amount span { font: 500 18px var(--f-display); color: var(--muted); }
+  .stats { font-size: 13px; color: var(--muted); }
+  .stats b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .funnel { display: flex; height: 22px; border-radius: 6px; overflow: hidden; gap: 1px; background: var(--line); }
+  .funnel i { display: flex; align-items: center; justify-content: center; font: 500 11px var(--f-mono); color: var(--on-stage); font-style: normal; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .nx { display: grid; grid-template-columns: 86px minmax(0,1fr) auto; align-items: center; gap: 8px; height: 28px; font-size: 13px; border-top: 1px solid var(--line); }
+  .nx:first-of-type { border-top: 0; }
+  .toolbar { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
+  .views { display: flex; gap: 2px; margin-left: 10px; }
+  .views span { padding: 5px 10px; border-radius: 6px; color: var(--muted); font-weight: 500; font-size: 13.5px; }
+  .views span.on { color: var(--fg); background: var(--sunk); }
+  .views b { font: 500 11px var(--f-mono); color: var(--bad); margin-left: 4px; }
+
+  .boardwrap { position: relative; margin-top: 14px; height: calc(900px - 56px - 14px - 40px - 14px - 134px - 14px - 32px - 14px - 16px); }
+  .board { display: grid; grid-auto-flow: column; grid-auto-columns: 214px; gap: 10px; height: 100%; overflow: hidden; }
+  .col { background: var(--sunk); border-radius: 8px; display: flex; flex-direction: column; min-height: 0; }
+  .ch { padding: 9px 10px 8px; display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; border-radius: 8px 8px 0 0; }
+  .ch .n { font: 400 12px var(--f-mono); color: var(--muted); }
+  .ch .aside { margin-left: auto; display: flex; gap: 8px; align-items: center; font: 400 11.5px var(--f-mono); color: var(--muted); }
+  .cb { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; flex: 1; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; position: relative; }
+  .card .l1, .card .l2 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .card .nm { font-weight: 600; font-size: 13.5px; }
+  .card .l2 { font-size: 12.5px; color: var(--muted); }
+  .card .chip { margin-left: auto; font-size: 11px; line-height: 1.55; padding: 0 6px; }
+  .card .pips { margin-left: auto; }
+  .card.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .card .tick { width: 13px; height: 13px; border-radius: 3px; background: var(--accent); flex: none; position: relative; }
+  .card .tick::after { content: ""; position: absolute; left: 4px; top: 1.5px; width: 3px; height: 7px; border: solid var(--accent-ink); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+  .drop { flex: 1; margin: 0 8px 8px; border: 1.5px dashed var(--line); border-radius: 7px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; padding: 16px; color: var(--muted); font-size: 13px; }
+  .drop b { color: var(--fg); font-weight: 600; }
+  .more { font: 400 11.5px var(--f-mono); color: var(--muted); text-align: center; padding: 4px 0 0; }
+  .fade { position: absolute; right: 0; top: 0; bottom: 0; width: 64px; background: linear-gradient(to right, transparent, var(--canvas) 70%); pointer-events: none; }
+  .peek { position: absolute; right: 0; bottom: 14px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .peek .btn { box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
+  .bulk { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); background: var(--fg); color: var(--canvas); border-radius: 8px; height: 44px; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 14px; box-shadow: 0 8px 24px rgb(10 15 25 / .14); font-size: 13.5px; }
+  .bulk .b { padding: 0 10px; height: 32px; display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; font-weight: 500; }
+  .bulk .kbd { background: transparent; color: var(--canvas); border-color: color-mix(in oklab, var(--canvas) 35%, transparent); }
+  .bulk .sep { width: 1px; height: 20px; background: color-mix(in oklab, var(--canvas) 25%, transparent); margin: 0 4px; }
+</style>
+</head>
+<body>
+<script src="data.js"></script>
+<header class="topbar">
+  <span class="wordmark">Raisebook</span>
+  <span class="ws">Lumen Health <i class="caret"></i></span>
+  <span class="roundpick"><span class="on">Seed</span><span>+ Round</span></span>
+  <nav class="nav"><span class="on">Pipeline</span><span>Overview</span><span>Investors</span><span>Settings</span>
+    <span class="search-btn">Search <span class="kbd">⌘K</span></span><span class="avatar">F</span></nav>
+</header>
+<main class="page">
+  <div class="titlerow">
+    <span class="title">Seed</span><span class="label" style="letter-spacing:.06em">SAFE</span>
+    <span class="seg" style="margin-left:10px"><span>Triage <span class="cnt">38</span></span><span class="on">Board</span><span>Table</span></span>
+    <span class="views"><span class="on">All</span><span>Due now<b>5</b></span><span>My investors</span><span>Hot</span></span>
+    <span style="margin-left:auto" class="link">Edit round</span>
+  </div>
+
+  <section class="panel ledger">
+    <div>
+      <span class="label">Committed toward Seed</span>
+      <div class="amount">$650,000 <span>of $2,000,000</span></div>
+      <div class="meter"><i style="width:32.5%"></i></div>
+      <div class="stats"><b>$400k</b> soft · <b>23</b> talking · <b>4</b> committed · <b>41</b> days left</div>
+    </div>
+    <div>
+      <div style="display:flex;justify-content:space-between"><span class="label">Pipeline</span><span class="micro">181 active · 230 passed</span></div>
+      <div class="funnel" id="funnel"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div style="gap:2px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="label">Next up</span><span class="link" style="font-size:13px">All 12 →</span></div>
+      <div class="nx"><span class="chip due" style="justify-self:start">Overdue 4d</span><span class="ell"><b style="font-weight:600">Harper Lockwood</b> <span class="muted">· Send the data room</span></span><span class="kbd">1</span></div>
+      <div class="nx"><span class="chip due" style="justify-self:start">Today</span><span class="ell"><b style="font-weight:600">Kai Merriman</b> <span class="muted">· Call about allocation</span></span><span class="kbd">2</span></div>
+      <div class="nx"><span class="chip hot" style="justify-self:start">Fit 5 · new</span><span class="ell"><b style="font-weight:600">Rhea Calloway</b> <span class="muted">· Granite Ventures, not contacted</span></span><span class="kbd">3</span></div>
+    </div>
+  </section>
+
+  <div class="toolbar">
+    <span class="input" style="flex:1 1 220px">Search name, firm, focus, notes… <span class="kbd" style="margin-left:auto">/</span></span>
+    <span class="btn sm">Filter <span class="kbd">F</span></span>
+    <span class="btn sm">Display</span>
+    <span class="micro">411 of 411</span>
+    <span class="btn primary">Add investor <span class="kbd">C</span></span>
+  </div>
+
+  <div class="boardwrap">
+    <div class="board" id="board"></div>
+    <div class="fade"></div>
+    <div class="peek">
+      <span class="btn sm">Committed, Passed →</span>
+    </div>
+    <div class="bulk">
+      <b style="font-weight:600">2 selected</b><span class="sep"></span>
+      <span class="b">Move to… <span class="kbd">M</span></span><span class="b">Follow up <span class="kbd">D</span></span><span class="b">Owner</span><span class="b">Fit</span><span class="sep"></span><span class="b" style="opacity:.75">Clear <span class="kbd">Esc</span></span>
+    </div>
+  </div>
+</main>
+<script>
+  const COUNTS = { new: 38, res: 64, con: 52, rep: 14, mtg: 9, dd: 0, com: 4, pas: 230 };
+  // funnel (active stages only; Passed is the archive)
+  const active = STAGES.filter((s) => s.k !== "pas" && COUNTS[s.k]);
+  const tot = active.reduce((a, s) => a + COUNTS[s.k], 0);
+  document.getElementById("funnel").innerHTML = active.map((s) => `<i class="s-${s.c}" style="flex:${COUNTS[s.k]}">${COUNTS[s.k] / tot > .06 ? COUNTS[s.k] : ""}</i>`).join("");
+  document.getElementById("legend").innerHTML = STAGES.map((s) => `<span><i class="dot s-${s.c}"></i>${s.label} <b>${COUNTS[s.k]}</b></span>`).join("");
+
+  // spread fits like a real pipeline: later stages lean higher, but not all Hot
+  let h = 7; const r = () => ((h = (h * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const pool = INV.map((x) => [x, r()]).sort((a, b) => a[1] - b[1]).map((a) => a[0]);
+  const used = new Set();
+  const takeF = (n, ok) => { const out = []; for (const x of pool) { if (out.length >= n) break; if (!used.has(x) && ok(x.fit)) { used.add(x); out.push(x); } } return out.sort((a, b) => b.fit - a.fit); };
+  const firmLine = (x) => x.firm || "Angel";
+  const card = (x, right, opts = {}) => `
+    <div class="card${opts.sel ? " sel" : ""}">
+      <div class="l1">${opts.sel ? '<i class="tick"></i>' : x.fit >= 5 ? '<i class="prio hot" title="Hot"></i>' : x.fit === 4 ? '<i class="prio warm" title="Warm"></i>' : ""}<span class="nm ell">${x.name}</span>${opts.agent ? '<i class="agentmark" title="Moved by claude-code 2h ago" style="margin-left:2px"></i>' : ""}${right || ""}</div>
+      <div class="l2"><span class="ell">${firmLine(x)}</span>${pips(x.fit, true)}</div>
+    </div>`;
+  const cols = {
+    mtg: [["Overdue 4d", "due"], ["Today", "due"], ["Oct 14", "soon"], ["Oct 16", "soon"], ["Oct 21", ""], ["$150k soft", "money"], ["", ""], ["", ""], ["", ""]],
+    rep: [["Today", "due"], ["Oct 13", "soon"], ["Oct 15", "soon"], ["", ""], ["Oct 20", ""], ["", ""], ["", ""], ["", ""], ["", ""], ["", ""], ["", ""]],
+    con: [["Overdue 2d", "due"], ["Oct 14", "soon"], ["Oct 14", "soon"], ["Oct 17", "soon"], ["", ""], ["", ""], ["", ""], ["", ""], ["", ""], ["", ""], ["", ""]],
+  };
+  const rightChip = ([t, k]) => !t ? "" : k ? `<span class="chip ${k}">${t}</span>` : `<span class="micro" style="margin-left:auto">${t}</span>`;
+  const mtg = takeF(9, (f) => f >= 3), rep = takeF(11, (f) => f >= 2), con = takeF(11, (f) => f >= 2), res = takeF(11, (f) => f >= 1), nw = takeF(11, () => true);
+  const H = (s, extra = "") => `<div class="ch" style="box-shadow: inset 0 3px 0 var(--stage-${s.c})"><i class="dot s-${s.c}"></i>${s.label}<span class="n">${COUNTS[s.k]}</span><span class="aside">${extra}</span></div>`;
+  const S = Object.fromEntries(STAGES.map((s) => [s.k, s]));
+  let b = "";
+  b += `<section class="col">${H(S.new, '<span class="link" style="font:500 12px var(--f-body)">Triage →</span>')}<div class="cb">${nw.map((x) => card(x)).join("")}</div></section>`;
+  b += `<section class="col">${H(S.res, "Fit ↓")}<div class="cb">${res.map((x, i) => card(x, "", { agent: i === 1 })).join("")}</div></section>`;
+  b += `<section class="col">${H(S.con, '<span style="color:var(--bad)">1 due</span> Fit ↓')}<div class="cb">${con.map((x, i) => card(x, rightChip(cols.con[i]), { sel: i === 2 || i === 3 })).join("")}</div></section>`;
+  b += `<section class="col">${H(S.rep, '<span style="color:var(--bad)">1 due</span> Due ↓')}<div class="cb">${rep.map((x, i) => card(x, rightChip(cols.rep[i]))).join("")}</div></section>`;
+  b += `<section class="col">${H(S.mtg, '<span style="color:var(--bad)">2 due</span> Due ↓')}<div class="cb">${mtg.map((x, i) => card(x, rightChip(cols.mtg[i]), { agent: i === 3 })).join("")}</div></section>`;
+  b += `<section class="col">${H(S.dd)}<div class="drop"><b>No one in Diligence yet</b><span>Drag a card here, press <span class="kbd">5</span> in Triage, or <span class="kbd">Alt</span> <span class="kbd">→</span> on a card.</span></div></section>`;
+  b += `<section class="col">${H(S.com, '<span style="color:var(--good-ink)">$650k</span>')}<div class="cb"></div></section>`;
+  document.getElementById("board").innerHTML = b;
+</script>
+</body>
+</html>
