@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { AgentTranscript } from "@/components/marketing/AgentTranscript";
 import { Faq } from "@/components/marketing/Faq";
@@ -16,6 +17,7 @@ import {
   TableVignette,
 } from "@/components/marketing/Vignettes";
 import { ButtonLink, CodeBlock, TextLink } from "@/components/ui";
+import { getSession } from "@/lib/api/server";
 
 export const metadata: Metadata = {
   title: { absolute: "Raisebook · The free fundraising CRM, built for founders and their agents" },
@@ -141,7 +143,9 @@ const FAQ = [
   },
 ];
 
-export default function Landing() {
+export default async function Landing() {
+  // Signed in: the product, not the pitch.
+  if ((await getSession()).status === "ok") redirect("/app");
   return (
     <>
       {/* ---------------- Hero ---------------- */}
