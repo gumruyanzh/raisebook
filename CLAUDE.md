@@ -159,8 +159,7 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
 - Critique 1 (`DECISION.md` §10): Triage counts are "left" (New and not skipped); U undoes the
   last change of any kind; a bulk move never skips the current undecided row; `restore` writes
   `data.undo` and timelines drop undone pairs (`dropUndone`). Fit pips are neutral ink, one
-  encoding per place. Runs of 2+ empty stages share one "Drop to file" track; the end-stage
-  pill lives in the toolbar. The title row, ledger and table size to the page's measured width
+  encoding per place. The end-stage pill lives in the toolbar. The title row, ledger and table size to the page's measured width
   (the split sheet reflows them), never to viewport breakpoints alone.
 - Critique 2 (`DECISION.md` §11): fit pips are quiet (`faint`) and absent inside single-fit
   groups; the type chip is neutral; a value every queued investor shares (source, the import
@@ -171,8 +170,7 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
 - Critique 3 (`DECISION.md` §12): Triage has no rail and one population for every count
   (skipped ones are still New); the pace uses only real single-decision gaps (`paceEstimate`)
   and desktop Triage reports changes in the decision panel, not toasts. The open file follows
-  the queue. Pips only in not-contacted stages (`hiddenPipFit`); fit-sorted not-contacted
-  columns of 12+ are grouped. Add investor lives in the title row in every view. Long dialogs
+  the queue. Pips only in not-contacted stages (`hiddenPipFit`). Add investor lives in the title row in every view. Long dialogs
   use `Dialog scrollBody`; the Filter menu never scrolls an ancestor.
 - Critique 4 (`DECISION.md` §13): the Triage pane is full height with the decision panel pinned
   (it never moves between investors); one Triage entry per screen besides the segment
@@ -181,3 +179,9 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   (`components/app/ReachOut.tsx`, `introFitLine`) in Triage, the sheet, phone and the investor
   page. Talking columns sort by follow-up (`defaultColumnSort`). The Triage file is a split pane
   from 1024px.
+
+## Kanban board (`DECISION.md` §14; keep it)
+- The Board view is a classic kanban: one equal-width column per stage (`boardTrack`), empty
+  ones included with "Drag investors here"; no rails, no shared "Drop to file" track, no fit
+  groups on the board. Columns are windowed and sorted by `defaultColumnSort` (fit, follow-up,
+  amount, recency by stage kind). Drag a card onto a column to move it; §5.5 keys still work.

@@ -240,12 +240,21 @@ export function hiddenPipFit(
 }
 
 /**
- * A board column's default order (critique 4): talking stages put the next follow-up first
- * (overdue, then the soonest date), as the table does; the rest sort by fit, where fit decides
- * who to contact next.
+ * A board column's default order (critique 4, kanban): not-contacted stages by fit (fit decides
+ * who to contact next), talking stages by the next follow-up (overdue, then the soonest date),
+ * the won stage by the amount committed, and the lost stage by the most recent move.
  */
-export function defaultColumnSort(stage: Pick<Stage, "kind">): "due" | "fit" {
-  return stage.kind === "active" ? "due" : "fit";
+export function defaultColumnSort(stage: Pick<Stage, "kind">): "fit" | "due" | "amount" | "recent" {
+  switch (stage.kind) {
+    case "active":
+      return "due";
+    case "won":
+      return "amount";
+    case "lost":
+      return "recent";
+    default:
+      return "fit";
+  }
 }
 
 /* ---------- priority groups and the triage queue (§4.2) ---------- */
@@ -506,43 +515,23 @@ export function queuePosition(
   return { pos, left: n };
 }
 
-/* ---------- board tracks (§5.2, critique 1) ---------- */
+/* ---------- the kanban's column width (DECISION §14) ---------- */
 
-export type BoardSegment = { kind: "stage"; key: string; empty: boolean } | { kind: "empty"; keys: string[] };
-
-/**
- * The board's tracks: one per stage, except that a run of two or more consecutive empty
- * stages shares one narrow track of stacked drop zones. A round that just moved its first
- * few investors out of New then fits 1440px without sideways scrolling.
- */
-export function boardSegments(columns: readonly { key: string; count: number }[]): BoardSegment[] {
-  const out: BoardSegment[] = [];
-  let run: string[] = [];
-  const flush = () => {
-    if (run.length === 1) out.push({ kind: "stage", key: run[0]!, empty: true });
-    else if (run.length > 1) out.push({ kind: "empty", keys: run });
-    run = [];
-  };
-  for (const c of columns) {
-    if (c.count === 0) run.push(c.key);
-    else {
-      flush();
-      out.push({ kind: "stage", key: c.key, empty: false });
-    }
-  }
-  flush();
-  return out;
-}
+const COL_MIN = 250;
+const COL_GAP = 12;
+const PEEK = 60;
 
 /**
- * The grid track for a segment. The lost stage (Passed) is the least useful place to work, so
- * it never takes a full working width next to Researching and Contacted (critique 2).
+ * The board's `grid-auto-columns` for a board `w` px wide holding `n` stages: equal columns
+ * that share the width when all fit at 250px, else as many whole columns as fit with the next
+ * one peeking 60px out at the right edge (never a sliver that reads as the board's end).
+ * Null under 640px (phones use the list).
  */
-export function segmentTrack(seg: BoardSegment, dominantKey: string | null, lostKey: string | null = null): string {
-  if (seg.kind === "empty") return "minmax(184px, .7fr)";
-  if (seg.key === dominantKey) return "minmax(352px, 3fr)";
-  if (seg.empty) return "minmax(136px, .6fr)";
-  return seg.key === lostKey ? "minmax(208px, .7fr)" : "minmax(232px, 1fr)";
+export function boardTrack(w: number, n: number): string | null {
+  if (w < 640 || n === 0) return null;
+  if (n * COL_MIN + (n - 1) * COL_GAP <= w) return "minmax(0, 1fr)";
+  const whole = Math.max(1, Math.floor((w - PEEK + COL_GAP) / (COL_MIN + COL_GAP)));
+  return `${Math.floor((w - PEEK - whole * COL_GAP) / whole)}px`;
 }
 
 /* ---------- table columns that fit (critique 1) ---------- */

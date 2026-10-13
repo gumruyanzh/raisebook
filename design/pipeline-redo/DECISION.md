@@ -767,3 +767,37 @@ drift. These rules now win over §3–§12. Screenshots: `after-critique-4/`.
   and save state trail at the end; the Filter button's focus is one ring on its border.
 - Not changed: Researching cards show pips on line 1 and a follow-up on line 2. §5.3 defines the
   pips as line 1 and the one right slot as line 2; the pips are not a second slot item.
+
+---
+
+## 14. The board is a kanban again (2026-10-13, owner request)
+
+The owner wants the Board view to look like the first prototype's board. This replaces the
+board parts of §5.2, §5.4, §10 ("Drop to file", the grid of cards in New), §11, §12 (fit groups
+on the board) and §13 (group headers). Triage, Table, the sheet, the ledger and phone are
+unchanged.
+
+- **Columns**: every stage (New, Researching, Contacted, Replied, Meeting, Diligence,
+  Committed, Passed) is its own column side by side, `grid-auto-flow: column`, **equal width**.
+  `boardTrack(width, n)` (`lib/pipeline.ts`): all columns share the width when they fit at
+  250px; otherwise as many whole columns as fit at ≥ 250px, with the next one peeking 60px out
+  under the right fade (at 1440: five of 254px and a peek of Diligence), so the board never
+  ends on a 2px sliver. The board scrolls sideways; the end-stage pill stays in the toolbar.
+- **Column**: a soft `sunk` panel, radius 8, no colored top rule; a sticky 40px header with the
+  stage dot, the label, and right-aligned mono "N due" · won total · count, then the `⋯` sort
+  menu. The body scrolls on its own inside the viewport-filling board and is **windowed**
+  (`useVirtualRows`), so the 411-card New column mounts about 20 cards and no "Show more" is
+  needed. Cards are stacked one per row (the two-line card of §5.3, unchanged).
+- **Order** (`defaultColumnSort`): New and Researching by fit, the talking stages by the next
+  follow-up then fit, Committed by amount, Passed by most recent move. Per column overrides
+  (Fit, Due first, Amount, Recently moved, Last activity, Name) are saved per round.
+- **Empty columns** stay full columns with a quiet "Drag investors here" (viewers: "Nothing
+  here yet"). No rails, no "Drop to file" strip, no fit groups or group headers on the board.
+- **Drag and drop**: HTML5 drag of a card (or of the whole selection when it is selected) onto
+  any column; the column under the pointer gets the 2px dashed accent outline (an empty one
+  reads "Drop to move here"). The move is optimistic with an Undo toast and persists through
+  the same stage-change and `bulk-update` calls as before. The keyboard alternative (§5.5:
+  arrows/J K, Alt+→/←, M, X, Shift extends) is unchanged; bare digits still never write on the
+  board.
+- Screens: `design/pipeline-redo/kanban/`.
+

@@ -3,14 +3,13 @@ import { test } from "node:test";
 
 import type { Participant, Stage } from "./api/types";
 import {
-  boardSegments,
   cardSlot,
   cursorAfterMove,
   fitColumns,
   followOptions,
   pressedOption,
   queuePosition,
-  segmentTrack,
+  boardTrack,
   defaultColumnSort,
   defaultView,
   introFitLine,
@@ -240,28 +239,6 @@ test("queuePosition: place among the rows left, not among every row seen", () =>
   assert.deepEqual(queuePosition(order, "a", (id) => left.has(id)), { pos: null, left: 3 });
 });
 
-test("boardSegments: runs of 2+ empty stages share one track", () => {
-  const cols = (counts: number[]) => counts.map((count, i) => ({ key: `s${i}`, count }));
-  // After a first session: New, Researching 1, Contacted 3, four empty, Passed 87.
-  const seg = boardSegments(cols([405, 1, 3, 0, 0, 0, 0, 87]));
-  assert.deepEqual(
-    seg.map((x) => (x.kind === "empty" ? x.keys.join("+") : x.key)),
-    ["s0", "s1", "s2", "s3+s4+s5+s6", "s7"],
-  );
-  // A single empty stage keeps its own narrow column.
-  const mature = boardSegments(cols([38, 64, 52, 14, 9, 0, 4, 230]));
-  assert.equal(mature.length, 8);
-  assert.deepEqual(mature[5], { kind: "stage", key: "s5", empty: true });
-  assert.equal(segmentTrack(mature[5]!, null), "minmax(136px, .6fr)");
-  assert.equal(segmentTrack(seg[0]!, "s0"), "minmax(352px, 3fr)");
-  assert.equal(segmentTrack(seg[3]!, "s0"), "minmax(184px, .7fr)");
-  // Passed never takes a full working width.
-  assert.equal(segmentTrack({ kind: "stage", key: "passed", empty: false }, "s0", "passed"), "minmax(208px, .7fr)");
-  assert.equal(segmentTrack({ kind: "stage", key: "contacted", empty: false }, "s0", "passed"), "minmax(232px, 1fr)");
-  // Everyone in New: New plus one stacked track.
-  assert.equal(boardSegments(cols([411, 0, 0, 0, 0, 0, 0, 0])).length, 2);
-});
-
 test("priorityGroups: Hot, Warm, Maybe, Low; fit desc, then import order", () => {
   const rows = [
     row({ fit: 0, name: "Zed" }),
@@ -368,11 +345,11 @@ test("claimsContact: talking and committed stages, not open or lost ones", () =>
   assert.equal(claimsContact({ kind: "lost" }), false);
 });
 
-test("defaultColumnSort: talking stages by the next follow-up, the rest by fit", () => {
+test("defaultColumnSort: fit, then follow-up, amount and recency by stage kind", () => {
   assert.equal(defaultColumnSort({ kind: "active" }), "due");
   assert.equal(defaultColumnSort({ kind: "open" }), "fit");
-  assert.equal(defaultColumnSort({ kind: "won" }), "fit");
-  assert.equal(defaultColumnSort({ kind: "lost" }), "fit");
+  assert.equal(defaultColumnSort({ kind: "won" }), "amount");
+  assert.equal(defaultColumnSort({ kind: "lost" }), "recent");
 });
 
 test("introFitLine: the email claims only the fit the founder gave", () => {
@@ -381,4 +358,13 @@ test("introFitLine: the email claims only the fit the founder gave", () => {
   assert.equal(introFitLine("Halyard Fund", 0), "I wanted to reach out to you at Halyard Fund directly.");
   assert.doesNotMatch(introFitLine("Halyard Fund", 2), /fit/);
   assert.equal(introFitLine(null, 5), "");
+});
+
+test("boardTrack: equal columns; whole ones plus a peek when they do not fit", () => {
+  assert.equal(boardTrack(390, 8), null);
+  assert.equal(boardTrack(2200, 8), "minmax(0, 1fr)");
+  // 1440 page: 5 whole columns of 254px and 60px of the sixth.
+  assert.equal(boardTrack(1392, 8), "254px");
+  const w = parseInt(boardTrack(1232, 8)!, 10);
+  assert.ok(w >= 250 && w <= 290);
 });

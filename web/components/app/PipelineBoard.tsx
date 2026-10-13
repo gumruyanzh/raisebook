@@ -13,23 +13,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { Board, BoardCard, BoardColumn, EmptyStages, Menu, StageDot } from "@/components/ui";
+import { Board, BoardCard, BoardColumn, Menu, StageDot } from "@/components/ui";
 import { CARD_GAP, CARD_H, CARD_H_STEP } from "@/components/ui/Board";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
-import type { Participant, Priority, Round, Stage } from "@/lib/api/types";
+import type { Participant, Round, Stage } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
-import { moneyCompact, num, priorityFromFit } from "@/lib/format";
-import {
-  boardSegments,
-  cardSlot,
-  GROUP_LABEL,
-  defaultColumnSort,
-  hiddenPipFit,
-  PRIORITY_ORDER,
-  segmentTrack,
-  STAGE_MEANING,
-  triageTargets,
-} from "@/lib/pipeline";
+import { moneyCompact, num } from "@/lib/format";
+import { boardTrack, cardSlot, defaultColumnSort, hiddenPipFit, triageTargets } from "@/lib/pipeline";
 
 import { byFit } from "./util";
 
@@ -38,11 +28,13 @@ export interface AgentMark {
   tip: string;
 }
 
-export type BoardSort = "fit" | "due" | "activity" | "name";
+export type BoardSort = "fit" | "due" | "amount" | "recent" | "activity" | "name";
 
 export const BOARD_SORTS: { value: BoardSort; label: string }[] = [
   { value: "fit", label: "Fit" },
   { value: "due", label: "Due first" },
+  { value: "amount", label: "Amount" },
+  { value: "recent", label: "Recently moved" },
   { value: "activity", label: "Last activity" },
   { value: "name", label: "Name" },
 ];
@@ -58,6 +50,13 @@ export function sortCards(cards: Participant[], sort: BoardSort): Participant[] 
         (a, b) =>
           (a.follow_up_on ?? FAR).localeCompare(b.follow_up_on ?? FAR) || b.fit - a.fit || a.investor.name.localeCompare(b.investor.name),
       );
+    case "amount":
+      return out.sort(
+        (a, b) =>
+          (b.amount_committed ?? 0) - (a.amount_committed ?? 0) || (b.amount_soft ?? 0) - (a.amount_soft ?? 0) || byFit(a, b),
+      );
+    case "recent":
+      return out.sort((a, b) => (b.stage_changed_at ?? "").localeCompare(a.stage_changed_at ?? "") || byFit(a, b));
     case "activity":
       return out.sort((a, b) => (b.last_activity_at ?? "").localeCompare(a.last_activity_at ?? "") || byFit(a, b));
     case "name":
@@ -70,23 +69,14 @@ export function sortCards(cards: Participant[], sort: BoardSort): Participant[] 
 
 interface ColumnApi {
   scrollToIndex: (cardIndex: number) => boolean;
-  /**
-   * The card next to `idx` in a direction, for columns laid out as a grid (the wide New
-   * column): undefined when the column is a plain list (the board's default moves apply),
-   * null when there is nothing that way inside the column.
-   */
-  neighbor: (idx: number, dir: "up" | "down" | "left" | "right") => number | null | undefined;
 }
 
 /**
- * The pipeline board (DECISION §5.2–§5.5, critique 1). One column per stage and never a rail:
- * the dominant stage gets at least 352px and lays its cards out in as many columns as fit, a
- * stage with cards 232px, a lone empty stage 136px with a "Drop here" zone, and a run of two
- * or more empty stages shares one narrow track of stacked drop zones. So the 411-in-New round
- * and the round after its first session both fit 1440px, and a mature round scrolls sideways
- * (a pill in the toolbar reaches the end stages). The board fills the viewport and only the
- * columns scroll, each windowed (cards are 52px). The dominant New column adds a priority
- * bar and groups its cards by priority with "Select N".
+ * The pipeline board as a classic kanban (DECISION §14, the prototype's board): every stage is
+ * its own equal-width column side by side, empty ones included, and the board scrolls sideways
+ * when they do not fit (a pill in the toolbar reaches the end stages). The board fills the
+ * viewport and only the columns scroll, each windowed (cards are 52px), so 411 cards in New
+ * cost about 20 mounted cards. Drag a card (or the selection) onto another column to move it.
  *
  * Keyboard (one tab stop): arrows or J/K move, Enter opens, Alt+→ / Alt+← moves a card one
  * stage (skipping the lost stage), M opens "Move to…" (digits pick a stage), X selects,
@@ -107,7 +97,6 @@ export function PipelineBoard({
   openId,
   focusReq,
   openKey,
-  dominantKey,
   onTriage,
   selected,
   onSelectedChange,
@@ -135,8 +124,6 @@ export function PipelineBoard({
   focusReq: { id: string; n: number } | null;
   /** The open stage `O` (New). */
   openKey: string | null;
-  /** The stage holding most of the round (over all investors, not the filtered view). */
-  dominantKey: string | null;
   /** "Triage →" in the New header (writers, while New has investors and no other way in shows). */
   onTriage?: () => void;
   selected: Set<string> | null;
@@ -180,9 +167,6 @@ export function PipelineBoard({
     };
   }, [sheetOpen]);
 
-  const segments = useMemo(() => boardSegments(columns.map((c) => ({ key: c.stage.key, count: c.cards.length }))), [columns]);
-  const lostKey = useMemo(() => columns.find((c) => c.stage.kind === "lost")?.stage.key ?? null, [columns]);
-  const template = segments.map((g) => segmentTrack(g, dominantKey, lostKey)).join(" ");
   const colByKey = useMemo(() => new Map(columns.map((c, i) => [c.stage.key, { c, i }])), [columns]);
 
   /* ---------- the right edge: fade and the end-stage pill ---------- */
@@ -192,9 +176,17 @@ export function PipelineBoard({
     () => columns.filter((c) => c.stage.kind === "won" || c.stage.kind === "lost").map((c) => c.stage.key),
     [columns],
   );
+  // Equal-width columns: all of them when they fit at COL_MIN, else as many whole columns as
+  // fit with the next one peeking out at the right edge (never a 2px sliver that reads as the
+  // board's end).
+  const [colW, setColW] = useState<string | null>(null);
+  const n = columns.length;
   const updateEdge = useCallback(() => {
     const el = boardRef.current;
     if (!el) return;
+    const w = el.clientWidth;
+    const next = boardTrack(w, n);
+    setColW((prev) => (prev === next ? prev : next));
     const right = el.scrollLeft + el.clientWidth;
     setFade(el.scrollWidth - right > 4);
     const off: string[] = [];
@@ -204,7 +196,7 @@ export function PipelineBoard({
       if (col && col.offsetLeft + 40 > right) off.push(key);
     }
     setOffEnds((prev) => (prev.join() === off.join() ? prev : off));
-  }, [endKeys, colByKey]);
+  }, [endKeys, colByKey, n]);
   useEffect(() => {
     updateEdge();
     window.addEventListener("resize", updateEdge);
@@ -214,7 +206,7 @@ export function PipelineBoard({
       window.removeEventListener("resize", updateEdge);
       ro?.disconnect();
     };
-  }, [updateEdge, template]);
+  }, [updateEdge, columns.length]);
 
   const where = useMemo(() => {
     const m = new Map<string, { col: number; idx: number }>();
@@ -320,15 +312,7 @@ export function PipelineBoard({
     for (let i = lo; i <= hi; i++) next.add(cards[i]!.investor.id);
     onSelectedChange(next);
   };
-  const selectMany = (ids: string[]) => {
-    const next = new Set(sel);
-    const all = ids.every((id) => next.has(id));
-    for (const id of ids) {
-      if (all) next.delete(id);
-      else next.add(id);
-    }
-    onSelectedChange(next);
-  };
+
 
   // Keyboard path skips the lost stage (reachable only through the menu).
   const keyPath = useMemo(() => stages.filter((s) => s.kind !== "lost"), [stages]);
@@ -367,17 +351,11 @@ export function PipelineBoard({
       }
     };
     const sideways = (dir: 1 | -1) => {
-      const inside = apis.current[col.stage.key]?.neighbor(at.idx, dir === 1 ? "right" : "left");
-      if (typeof inside === "number") return go(at.col, inside);
       for (let c = at.col + dir; c >= 0 && c < columns.length; c += dir) {
         if (columns[c]!.cards.length) return go(c, Math.min(at.idx, columns[c]!.cards.length - 1));
       }
     };
-    const vertical = (dir: 1 | -1) => {
-      const n = apis.current[col.stage.key]?.neighbor(at.idx, dir === 1 ? "down" : "up");
-      if (n === null) return e.preventDefault();
-      return go(at.col, n ?? at.idx + dir, e.shiftKey);
-    };
+    const vertical = (dir: 1 | -1) => go(at.col, at.idx + dir, e.shiftKey);
     switch (e.key) {
       case "ArrowDown":
       case "j":
@@ -441,54 +419,23 @@ export function PipelineBoard({
         role="group"
         aria-label={`${round.name} board`}
         aria-keyshortcuts={canWrite ? "ArrowUp ArrowDown ArrowLeft ArrowRight Enter Alt+ArrowRight Alt+ArrowLeft M X" : undefined}
-        columns={template}
         onScroll={updateEdge}
         className="min-h-0! grid-rows-[100%] pb-6!"
         // No hit-testing (so no :hover) until the pointer moves again.
-        style={{ height: height ?? "70vh", ...(hoverOff ? { pointerEvents: "none" } : null) }}
+        style={{
+          height: height ?? "70vh",
+          ...(colW ? { gridAutoColumns: colW } : null),
+          ...(hoverOff ? { pointerEvents: "none" } : null),
+        }}
       >
-        {segments.map((seg) => {
-          if (seg.kind === "empty") {
-            return (
-              <EmptyStages
-                key={`empty-${seg.keys.join("-")}`}
-                stages={seg.keys.map((k) => {
-                  const st = colByKey.get(k)!.c.stage;
-                  return { key: st.key, label: st.label, color: st.color, meaning: STAGE_MEANING[st.key] ?? null };
-                })}
-                readOnly={!canWrite}
-                filtered={filtered}
-                dragCount={dragIds !== null && canWrite ? dragIds.length : 0}
-                overKey={overKey}
-                onDragOver={
-                  canWrite
-                    ? (k, e) => {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = "move";
-                        if (overKey !== k) setOverKey(k);
-                      }
-                    : undefined
-                }
-                onDragLeave={(k, e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverKey((x) => (x === k ? null : x));
-                }}
-                onDrop={canWrite ? (k, e) => drop(e, k) : undefined}
-              />
-            );
-          }
-          const { stage: s, cards } = colByKey.get(seg.key)!.c;
+        {columns.map(({ stage: s, cards }) => {
           const sort = sorts[s.key] ?? defaultColumnSort(s);
           const isOpen = s.key === openKey;
-          // Fit groups (Hot · Warm · Maybe · Low fit) where fit decides the next step: the
-          // dominant New column always, and any not-contacted column sorted by fit with 12+
-          // cards (critique 3: a Researching column of identical pips said nothing).
-          const grouped = (isOpen && s.key === dominantKey) || (s.kind === "open" && sort === "fit" && cards.length >= 12);
           return (
             <StageColumn
               key={s.key}
               stage={s}
               cards={cards}
-              grouped={grouped}
               sort={sort}
               onSortChange={(v) => onSortChange(s.key, v)}
               currency={round.currency}
@@ -504,8 +451,7 @@ export function PipelineBoard({
               tabStop={tabStop}
               openId={openId ?? null}
               dragIds={dragIds}
-              isDropTarget={dragIds !== null && canWrite}
-              onSelectGroup={canWrite && selected ? selectMany : undefined}
+              isDropTarget={dragIds !== null && canWrite && overKey === s.key}
               headerAction={
                 isOpen && onTriage && cards.length > 0 ? (
                   <button
@@ -525,6 +471,7 @@ export function PipelineBoard({
               onDragOver={
                 canWrite
                   ? (e) => {
+                      if (!dragIds) return;
                       e.preventDefault();
                       e.dataTransfer.dropEffect = "move";
                       if (overKey !== s.key) setOverKey(s.key);
@@ -628,21 +575,12 @@ export function PipelineBoard({
 }
 
 const EMPTY = new Set<string>();
-const GROUP_H = 28;
 
-/** A wide dominant column lays cards out in columns at least this wide. */
-const GRID_MIN_W = 220;
-const GRID_GAP = 8;
 
-type Row =
-  | { kind: "group"; priority: Priority; ids: string[] }
-  /** One line of cards: one card in a plain column, up to `perRow` in the wide New column. */
-  | { kind: "cards"; items: { p: Participant; idx: number }[] };
 
 function StageColumn({
   stage: s,
   cards,
-  grouped,
   sort,
   onSortChange,
   currency,
@@ -659,7 +597,6 @@ function StageColumn({
   openId,
   dragIds,
   isDropTarget,
-  onSelectGroup,
   headerAction,
   registerApi,
   onDragOver,
@@ -675,7 +612,6 @@ function StageColumn({
 }: {
   stage: Stage;
   cards: Participant[];
-  grouped: boolean;
   sort: BoardSort;
   onSortChange: (s: BoardSort) => void;
   currency: string;
@@ -692,7 +628,6 @@ function StageColumn({
   openId: string | null;
   dragIds: string[] | null;
   isDropTarget: boolean;
-  onSelectGroup?: (ids: string[]) => void;
   headerAction?: ReactNode;
   registerApi: (api: ColumnApi | null) => void;
   onDragOver?: (e: DragEvent<HTMLElement>) => void;
@@ -710,129 +645,21 @@ function StageColumn({
   const won = s.kind === "won";
   const cardH = (showNextStep ? CARD_H_STEP : CARD_H) + CARD_GAP;
 
-  // The wide New column fits several cards per line (critique 1: 9 visible of 411 was too few).
-  const [perRow, setPerRow] = useState(1);
+  // Windowed: a 411-card New column mounts only the cards in view (no "Show more").
+  const v = useVirtualRows({ scrollRef: body, count: cards.length, height: cardH, initial: 16 });
+  const { scrollToIndex } = v;
   useEffect(() => {
-    const el = body.current;
-    if (!grouped || !el) {
-      setPerRow(1);
-      return;
-    }
-    const measure = () => setPerRow(Math.max(1, Math.floor((el.clientWidth - 16 + GRID_GAP) / (GRID_MIN_W + GRID_GAP))));
-    measure();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-    ro?.observe(el);
-    return () => ro?.disconnect();
-  }, [grouped]);
-
-  // Grouped (the dominant New column): cards partitioned by priority, keeping the column sort.
-  const { rows } = useMemo(() => {
-    if (!grouped) return { rows: cards.map((p, idx) => ({ kind: "cards", items: [{ p, idx }] }) as Row) };
-    const by: Record<Priority, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
-    for (const p of cards) by[priorityFromFit(p.fit)].push(p);
-    // The parent passes this column already partitioned by priority (keyboard order = rows).
-    const out: Row[] = [];
-    let idx = 0;
-    for (const pr of PRIORITY_ORDER) {
-      if (!by[pr].length) continue;
-      out.push({ kind: "group", priority: pr, ids: by[pr].map((p) => p.investor.id) });
-      for (let i = 0; i < by[pr].length; i += perRow) {
-        out.push({ kind: "cards", items: by[pr].slice(i, i + perRow).map((p) => ({ p, idx: idx++ })) });
-      }
-    }
-    return { rows: out };
-  }, [cards, grouped, perRow]);
-
-  const heightAt = useCallback((i: number) => (rows[i]?.kind === "group" ? GROUP_H : cardH), [rows, cardH]);
-  const v = useVirtualRows({ scrollRef: body, count: rows.length, height: heightAt, offset: 2, initial: 16 });
-  /** card index → [row, place in the row] */
-  const placeOf = useMemo(() => {
-    const m: [number, number][] = [];
-    rows.forEach((r, i) => {
-      if (r.kind === "cards") r.items.forEach((it, c) => (m[it.idx] = [i, c]));
-    });
-    return m;
-  }, [rows]);
-  const { scrollToIndex, topOf } = v;
-  useEffect(() => {
-    const neighbor = (idx: number, dir: "up" | "down" | "left" | "right"): number | null | undefined => {
-      if (perRow === 1 && !grouped) return undefined;
-      const at = placeOf[idx];
-      if (!at) return undefined;
-      const [r, c] = at;
-      const row = rows[r] as Extract<Row, { kind: "cards" }>;
-      if (dir === "left") return c > 0 ? row.items[c - 1]!.idx : null;
-      if (dir === "right") return c < row.items.length - 1 ? row.items[c + 1]!.idx : null;
-      const step = dir === "down" ? 1 : -1;
-      for (let i = r + step; i >= 0 && i < rows.length; i += step) {
-        const x = rows[i]!;
-        if (x.kind === "cards") return x.items[Math.min(c, x.items.length - 1)]!.idx;
-      }
-      return null;
-    };
-    registerApi({ scrollToIndex: (i) => scrollToIndex(placeOf[i]?.[0] ?? i), neighbor });
+    registerApi({ scrollToIndex: (i) => scrollToIndex(i) });
     return () => registerApi(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollToIndex, placeOf, rows, perRow, grouped]);
+  }, [scrollToIndex]);
 
   // Pips help decide who to contact: none past the open stages, and in an open column only on
-  // the cards whose fit differs from the one most share (critique 3: a column of identical
-  // ▮▮▮▮▮). The grouped New column's headers say the fit; its Low fit group varies.
-  const pipHidden = useMemo(() => (grouped ? null : hiddenPipFit(s, cards.map((p) => p.fit))), [grouped, s, cards]);
-  const hidePipsFor = (p: Participant) =>
-    pipHidden === "all" || pipHidden === p.fit || (grouped && priorityFromFit(p.fit) !== "low");
-
-  // The sticky group header: the last group that starts at or above the scroll position.
-  const [scrollTop, setScrollTop] = useState(0);
-  useEffect(() => {
-    if (!grouped) return;
-    const el = body.current;
-    if (!el) return;
-    const on = () => setScrollTop(el.scrollTop);
-    el.addEventListener("scroll", on, { passive: true });
-    return () => el.removeEventListener("scroll", on);
-  }, [grouped]);
-  const stuck = useMemo(() => {
-    if (!grouped || scrollTop <= 2) return null;
-    let cur: Extract<Row, { kind: "group" }> | null = null;
-    rows.forEach((r, i) => {
-      if (r.kind === "group" && topOf(i) <= scrollTop) cur = r;
-    });
-    return cur as Extract<Row, { kind: "group" }> | null;
-  }, [grouped, scrollTop, rows, topOf]);
+  // the cards whose fit differs from the one most share (critique 3).
+  const pipHidden = useMemo(() => hiddenPipFit(s, cards.map((p) => p.fit)), [s, cards]);
 
   const total = won ? cards.reduce((sum, p) => sum + (p.amount_committed ?? 0), 0) : 0;
   const due = cards.filter((p) => p.follow_up_state === "overdue" || p.follow_up_state === "today").length;
-
-  const groupHeader = (g: Extract<Row, { kind: "group" }>, sticky = false) => {
-    const all = g.ids.every((id) => selected.has(id));
-    return (
-      <div
-        className={cn(
-          "group/gh flex h-28 items-center gap-6 px-4",
-          sticky && "rounded-sm bg-sunk shadow-[0_1px_0_var(--line)]",
-        )}
-      >
-        <span className="t-label">{GROUP_LABEL[g.priority]}</span>
-        {/* The count stands apart from "fit 5" (critique 3: "fit 5 12"). */}
-        <span className="ml-auto flex items-center gap-12">
-          {onSelectGroup ? (
-            <button
-              type="button"
-              onClick={() => onSelectGroup(g.ids)}
-              className={cn(
-                "t-body-s border-0 bg-transparent p-0 text-accent hover:underline",
-                !anySelected && "opacity-0 group-hover/gh:opacity-100 focus-visible:opacity-100",
-              )}
-            >
-              {all ? "Clear" : `Select ${num(g.ids.length)}`}
-            </button>
-          ) : null}
-          <span className="font-mono text-[11.5px] text-muted tnum">{num(g.ids.length)}</span>
-        </span>
-      </div>
-    );
-  };
 
   return (
     <BoardColumn
@@ -845,8 +672,6 @@ function StageColumn({
       total={won ? { amount: total, currency } : null}
       readOnly={readOnly}
       filtered={filtered}
-      meaning={STAGE_MEANING[s.key] ?? null}
-      dragCount={isDropTarget ? (dragIds?.length ?? 0) : 0}
       isDropTarget={isDropTarget}
       bodyRef={body}
       onDragOver={onDragOver}
@@ -869,21 +694,12 @@ function StageColumn({
         ) : null
       }
     >
-      {stuck ? <div className="sticky top-0 z-10 -mx-2 h-0 overflow-visible px-2">{groupHeader(stuck, true)}</div> : null}
       {v.padTop > 0 ? <div aria-hidden className="shrink-0" style={{ height: v.padTop }} /> : null}
-      {rows.slice(v.start, v.end).map((r) => {
-        if (r.kind === "group") {
-          return (
-            <div key={`g-${r.priority}`} className="shrink-0 pt-2" style={{ height: GROUP_H }}>
-              {groupHeader(r)}
-            </div>
-          );
-        }
-        const cell = ({ p }: { p: Participant; idx: number }) => {
+      {cards.slice(v.start, v.end).map((p) => {
         const id = p.investor.id;
         const isSel = selected.has(id);
         return (
-          <div key={id} className="group/card relative min-w-0" style={{ height: cardH, paddingBottom: CARD_GAP }}>
+          <div key={id} className="group/card relative min-w-0 shrink-0" style={{ height: cardH, paddingBottom: CARD_GAP }}>
             {selectable ? (
               <input
                 type="checkbox"
@@ -907,7 +723,7 @@ function StageColumn({
               nextStep={p.next_step}
               showNextStep={showNextStep}
               won={won}
-              hidePips={hidePipsFor(p)}
+              hidePips={pipHidden === "all" || pipHidden === p.fit}
               current={openId === id}
               selected={isSel}
               inset={anySelected}
@@ -930,16 +746,6 @@ function StageColumn({
               onDragEnd={onDragEnd}
             />
             {renderMenu(p)}
-          </div>
-        );
-        };
-        return (
-          <div
-            key={`r-${r.items[0]!.p.investor.id}`}
-            className="grid shrink-0"
-            style={{ gridTemplateColumns: `repeat(${grouped ? perRow : 1}, minmax(0, 1fr))`, columnGap: GRID_GAP }}
-          >
-            {r.items.map(cell)}
           </div>
         );
       })}

@@ -60,7 +60,6 @@ import {
   isQuiet,
   moneyExists as hasMoney,
   openStage as findOpenStage,
-  PRIORITY_ORDER,
   triageTargets,
   type NextUpBucket,
   type PipelineView,
@@ -842,14 +841,9 @@ export function Pipeline(props: PipelineProps) {
     for (const s of stages) m[s.key] = [];
     for (const p of filtered) (m[p.stage.key] ??= []).push(p);
     return stages.map((s) => {
-      const cards = sortCards(m[s.key] ?? [], boardSorts[s.key] ?? defaultColumnSort(s));
-      if (s.key !== oStage?.key || s.key !== dominantKey) return { stage: s, cards };
-      // The dominant New column is grouped by priority (DECISION §5.4); keep the sort inside.
-      const by: Record<string, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
-      for (const p of cards) by[priorityFromFit(p.fit)]!.push(p);
-      return { stage: s, cards: PRIORITY_ORDER.flatMap((pr) => by[pr]!) };
+      return { stage: s, cards: sortCards(m[s.key] ?? [], boardSorts[s.key] ?? defaultColumnSort(s)) };
     });
-  }, [stages, filtered, boardSorts, oStage, dominantKey]);
+  }, [stages, filtered, boardSorts]);
   const order = useMemo(
     () =>
       view === "table"
@@ -1726,7 +1720,6 @@ export function Pipeline(props: PipelineProps) {
               openId={openId}
               focusReq={focusReq}
               openKey={oStage?.key ?? null}
-              dominantKey={dominantKey}
               // One way in per screen (critique 3): the strip's Start triage when it shows, else
               // the New column's "Triage →".
               onTriage={triageOk && openCount > 0 && !startTriageOnScreen && !deskTriageOnScreen ? () => setView("triage") : undefined}
