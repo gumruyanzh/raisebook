@@ -9,7 +9,7 @@ Please **do not open a public issue** for a security problem.
 
 - Use GitHub's private reporting: **Security → Report a vulnerability** on
   [github.com/gumruyanzh/raisebook](https://github.com/gumruyanzh/raisebook/security/advisories/new).
-- Or email **security@raisebook.org** with the details.
+- Or email **0@raisebook.org** with "Security" in the subject.
 
 Include what you found, how to reproduce it, and the impact you expect. Test only against
 your own self-hosted instance or your own account and workspace on raisebook.org. Never

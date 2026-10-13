@@ -5,7 +5,10 @@ startup founders. It tracks every investor through every round (stages, fit, fol
 notes and commitments) and ships an MCP server, so Claude Code, Codex, Cursor or any MCP
 client can work the pipeline with you.
 
-Hosted at [raisebook.org](https://raisebook.org). Licensed under AGPL-3.0.
+**[Start your raise at raisebook.org](https://raisebook.org)**, free, or self-host it.
+Licensed under AGPL-3.0.
+
+![A round in Raisebook: the ledger strip, and investors on a kanban board by stage](docs/img/board.png)
 
 ## Free forever
 
@@ -13,8 +16,8 @@ Raisebook costs $0, and that will not change.
 
 - There is no paid tier, no seat price and no feature behind a paywall. Every workspace gets
   every feature, with the same limits.
-- Donations will be optional. They pay for hosting and never buy features, priority or a
-  different deal on your data.
+- The maintainer pays the running costs today. Donations, once they open, will be optional;
+  they will pay for hosting and never buy features, priority or a different deal on your data.
 - The code is AGPL-3.0, so anyone who runs a modified copy as a service has to publish their
   changes. A hosted fork cannot quietly turn into a closed, paid product.
 
@@ -39,15 +42,18 @@ The details are on [raisebook.org/privacy](https://raisebook.org/privacy).
 
 - **Rounds** with a target, instrument (SAFE, priced, convertible note), cap or pre-money,
   target close date, and stages you can rename, recolor and reorder.
-- **A pipeline page**: a ledger strip with committed against target, the funnel and due
-  follow-ups; a board you can drag (or drive with Alt+← / Alt+→); a sortable, filterable
-  table; and an investor sheet with the full timeline.
+- **A pipeline page** with three views: **Triage** to decide on new investors one at a time
+  (number keys, undo), a kanban **Board** you can drag (or drive with Alt+← / Alt+→), and a
+  sortable, filterable **Table**. Above them, a ledger strip with committed against target,
+  the funnel and due follow-ups; beside them, an investor sheet with the full timeline.
 - **Investor contacts** shared across rounds, with dedupe on email, LinkedIn, name + firm
   and (when it is unambiguous) the name alone. An agent adding someone you already have fills
   in what is missing instead of creating a duplicate or dropping its notes.
 - **An append-only timeline** that records who did what, people and agents alike. Agent
   actions are marked in their own color, with the agent's name and model.
-- **Co-founders and advisors** as owners, editors and viewers.
+- **Co-founders and advisors** as owners, editors and viewers. Sign in with an emailed link
+  or with Google.
+- **A sample workspace** with fictional investors, to try everything before your own data.
 - **CSV import** with column mapping, preview and dedupe. **CSV and JSON export** of a round,
   all investors or the whole workspace. Hard delete of anything, at any time.
 - **A REST API** under `/v1` and **an MCP server** at `/mcp` with 17 tools (no deletes).
@@ -138,7 +144,7 @@ cd web && npm run lint && npm run typecheck && npm run build
 One Docker Compose file runs Postgres, the API, the web app and Caddy for TLS:
 
 ```bash
-cp deploy/.env.example deploy/.env   # fill in the hosts and secrets
+cp deploy/.env.example deploy/.env   # set your hosts and secrets
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
 

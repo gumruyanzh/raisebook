@@ -28,7 +28,7 @@ Maintainers may edit or remove comments, commits, issues and pull requests that 
 code, and may warn, temporarily ban or permanently ban anyone who breaks it, depending on what
 happened and whether it happened before.
 
-Report a problem to [conduct contact email]. Reports are handled privately, and the reporter's
+Report a problem to 0@raisebook.org. Reports are handled privately, and the reporter's
 identity is not shared without their consent. Maintainers who are involved in a report step
 away from handling it.
 
