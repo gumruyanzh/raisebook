@@ -10,7 +10,6 @@ import {
   Kbd,
   LinkButtons,
   Loading,
-  PriorityChip,
   SaveState,
   SectionLabel,
   Sheet,
@@ -303,7 +302,6 @@ export function InvestorSheet({
       subline={who || undefined}
       chips={
         <>
-          {p ? <PriorityChip fit={p.fit} /> : null}
           {type && type !== "other" ? <Chip tone="type">{INVESTOR_TYPE_LABEL[type]}</Chip> : null}
           {industries.slice(0, 3).map((i) => (
             <Chip key={i} tone="industry">
@@ -319,7 +317,7 @@ export function InvestorSheet({
               Open full page ↗
             </Link>
             {order && pos >= 0 && order.length > 1 ? (
-              <span className="flex items-center gap-4">
+              <span className="flex items-center gap-4 max-sm:hidden">
                 <span className="t-micro mr-2 text-muted" aria-live="polite">
                   {pos + 1} of {order.length}
                 </span>

@@ -78,9 +78,59 @@ export interface ActivityQuery {
   cursor?: string;
 }
 
-/** Newest `occurred_at` first. */
-export const listActivities = (c: ApiClient, q: ActivityQuery = {}, opts?: { signal?: AbortSignal }) =>
-  c.get<Page<FeedActivity>>("/v1/activities", { ...q }, opts);
+/** An Undo within this long of the change it reverts hides both from a timeline. */
+export const UNDO_PAIR_MS = 10 * 60_000;
+
+const keyOf = (v: unknown): string => {
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return str(o.key) || str(o.label);
+  }
+  return v === null || v === undefined ? "" : String(v);
+};
+
+/**
+ * Drop each Undo (`data.undo`, written by a bulk `restore`) together with the change it
+ * reverted: the newest earlier activity on the same investor, of the same kind, by the same
+ * actor, at most 10 minutes before, whose result the Undo starts from (a stage move New →
+ * Contacted and its undo Contacted → New). The log keeps both; a timeline shows neither.
+ * `acts` is newest first, as the API returns them.
+ */
+export function dropUndone<T extends Activity>(acts: readonly T[]): T[] {
+  const gone = new Set<number>();
+  for (let i = 0; i < acts.length; i++) {
+    const u = acts[i]!;
+    if (u.data?.undo !== true || gone.has(i)) continue;
+    const at = Date.parse(u.occurred_at);
+    for (let j = i + 1; j < acts.length; j++) {
+      const a = acts[j]!;
+      if (gone.has(j) || a.data?.undo === true) continue;
+      if (at - Date.parse(a.occurred_at) > UNDO_PAIR_MS) break;
+      if (a.investor_id !== u.investor_id || a.kind !== u.kind) continue;
+      if (a.actor.type !== u.actor.type || a.actor.label !== u.actor.label) continue;
+      const reverses =
+        a.kind === "stage_change" || a.kind === "follow_up_set"
+          ? keyOf(a.data?.to) === keyOf(u.data?.from)
+          : a.kind === "participant_updated"
+            ? Object.keys((a.data?.changes as object) ?? {}).sort().join() ===
+              Object.keys((u.data?.changes as object) ?? {}).sort().join()
+            : false;
+      if (!reverses) continue;
+      gone.add(i).add(j);
+      break;
+    }
+  }
+  return gone.size ? acts.filter((_, i) => !gone.has(i)) : [...acts];
+}
+
+/**
+ * Newest `occurred_at` first. One investor's timeline (`investor_id`, not a run or a
+ * collapsed feed) leaves out undone pairs ({@link dropUndone}).
+ */
+export const listActivities = async (c: ApiClient, q: ActivityQuery = {}, opts?: { signal?: AbortSignal }) => {
+  const page = await c.get<Page<FeedActivity>>("/v1/activities", { ...q }, opts);
+  return q.investor_id && !q.run && !q.collapse_runs ? { ...page, data: dropUndone(page.data) } : page;
+};
 
 export interface LogActivityInput {
   investor_id: UUID;

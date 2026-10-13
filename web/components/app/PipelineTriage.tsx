@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 
 import {
   Button,
@@ -13,7 +13,6 @@ import {
   Kbd,
   LinkButtons,
   Menu,
-  PriorityChip,
   Sheet,
   Skeleton,
   StageDot,
@@ -42,19 +41,24 @@ import { cn } from "@/lib/cn";
 import { quickPicks } from "@/lib/dates";
 import { followUpState, formatDate, isoDate, money, moneyCompact, num, priorityFromFit, stageFocusLabel } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
+import { useWorkspace } from "@/lib/session";
 import {
+  cursorAfterMove,
+  followOptions,
   formatDuration,
   formatElapsed,
   GROUP_LABEL,
   inSlice,
   nextCursor,
   paceEstimate,
+  pressedOption,
   PRIORITY_ORDER,
-  shortType,
+  queuePosition,
   SLICE_LABEL,
   START_SECONDS,
   triageTargets,
   visibleIndustries,
+  type FollowOption,
   type TriageSlice,
   type TriageTarget,
 } from "@/lib/pipeline";
@@ -82,11 +86,21 @@ interface Snapshot {
   next_step: string | null;
 }
 
+/**
+ * One entry on the Undo stack. `move`: a stage decision (one investor or a bulk selection);
+ * Undo restores the snapshot taken when the investor's turn began (stage, fit, follow-up,
+ * next step) and goes back to them. `edit`: a follow-up, fit or next-step change that did not
+ * advance; Undo puts that value back. U always undoes the latest entry.
+ */
 interface Decision {
+  kind: "move" | "edit";
   ids: string[];
   snaps: Snapshot[];
-  to: string;
+  /** The stage moved to (moves only). */
+  to: string | null;
   at: number;
+  /** What an edit changed ("follow-up", "fit", "next step"). */
+  what?: string;
 }
 
 interface FullInvestor {
@@ -98,11 +112,6 @@ interface FullInvestor {
 const LRU = 10;
 const ROW_H = 38;
 const GROUP_H = 32;
-const FOLLOW_KEYS = [
-  { kbd: "1", label: "Tomorrow" },
-  { kbd: "m", label: "Next Mon" },
-  { kbd: "7", label: "In 1 week" },
-];
 
 function snap(p: Participant): Snapshot {
   return {
@@ -181,6 +190,8 @@ export function PipelineTriage({
   keysEnabled: boolean;
 }) {
   const toast = useToast();
+  const { workspace } = useWorkspace();
+  const workspaceName = workspace.name;
   const phone = useMediaQuery("(max-width: 639px)") === true;
   const wide = useMediaQuery("(min-width: 1024px)") !== false;
   const railOn = useMediaQuery("(min-width: 1280px)") !== false;
@@ -196,6 +207,12 @@ export function PipelineTriage({
   const [decided, setDecided] = useState<Map<string, string>>(new Map());
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** The queue shows only the selection ("86 selected" with none of them on screen read as broken). */
+  const [showSel, setShowSel] = useState(false);
+  const [scrollReq, setScrollReq] = useState<{ id: string; n: number } | null>(null);
+  useEffect(() => {
+    if (!selected.size) setShowSel(false);
+  }, [selected.size]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [times, setTimes] = useState<number[]>([]);
   const sessionStart = useRef(Date.now());
@@ -217,7 +234,11 @@ export function PipelineTriage({
   const fitAtSeen = (p: Participant) => seen.current.get(p.investor.id) ?? p.fit;
   const isOpen = useCallback((p: Participant) => p.stage.key === openKey, [openKey]);
 
-  const sliceRows = useMemo(() => queue.filter((p) => inSlice(fitAtSeen(p), slice)), [queue, slice]);
+  const sliceRows = useMemo(
+    () => (showSel && selected.size ? queue.filter((p) => selected.has(p.investor.id)) : queue.filter((p) => inSlice(fitAtSeen(p), slice))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [queue, slice, showSel, showSel ? selected : null],
+  );
   const order = useMemo(() => sliceRows.map((p) => p.investor.id), [sliceRows]);
   const rowById = useMemo(() => new Map(queue.map((p) => [p.investor.id, p])), [queue]);
   const done = useCallback(
@@ -227,8 +248,9 @@ export function PipelineTriage({
     },
     [rowById, isOpen, skipped],
   );
-  const undecided = (list: Participant[]) => list.filter((p) => isOpen(p)).length;
-  const sliceCount = (s: TriageSlice) => queue.filter((p) => isOpen(p) && inSlice(fitAtSeen(p), s)).length;
+  // "Left" everywhere (pills, group headers, the investor header) = still New and not skipped.
+  const isLeft = (p: Participant) => isOpen(p) && !skipped.has(p.investor.id);
+  const sliceCount = (s: TriageSlice) => queue.filter((p) => isLeft(p) && inSlice(fitAtSeen(p), s)).length;
   const openCount = allRows.filter((p) => p.stage.key === openKey).length;
   const total = allRows.length;
   const sorted = total - openCount;
@@ -328,19 +350,27 @@ export function PipelineTriage({
           next_step: s.next_step,
         };
       });
-      setDecided((m) => {
-        const n = new Map(m);
-        for (const id of entry.ids) n.delete(id);
-        return n;
-      });
-      setCounts((c) => ({ ...c, [entry.to]: Math.max(0, (c[entry.to] ?? 0) - entry.ids.length) }));
-      setTimes((t) => t.slice(0, Math.max(0, t.length - 1)));
+      if (entry.kind === "move") {
+        setDecided((m) => {
+          const n = new Map(m);
+          for (const id of entry.ids) n.delete(id);
+          return n;
+        });
+        if (entry.to) setCounts((c) => ({ ...c, [entry.to!]: Math.max(0, (c[entry.to!] ?? 0) - entry.ids.length) }));
+        setTimes((t) => t.slice(0, Math.max(0, t.length - 1)));
+      }
       go(entry.ids[0]!);
       try {
         const r = await bulkUpdateParticipants(client, round.id, { op: "restore", items });
         store.commit(r.participants);
         for (const id of entry.ids) refreshFull(id);
-        const msg = entry.ids.length === 1 ? `${entry.snaps[0]!.name} is back in ${openStage.label}.` : `${num(entry.ids.length)} investors are back in ${openStage.label}.`;
+        const who = entry.snaps[0]!.name;
+        const msg =
+          entry.kind === "edit"
+            ? `Undid the ${entry.what ?? "change"} for ${who}.`
+            : entry.ids.length === 1
+              ? `${who} is back in ${openStage.label}.`
+              : `${num(entry.ids.length)} investors are back in ${openStage.label}.`;
         store.announce(msg);
         toast.show(msg);
         store.afterWrite();
@@ -353,6 +383,14 @@ export function PipelineTriage({
     [rowById, byKey, client, round.id, store, toast, today, openStage.label],
   );
 
+  /** Push onto the Undo stack (20 kept). A move replaces this investor's earlier edits: its
+   * snapshot already puts them back. */
+  const pushUndo = (entry: Decision) => {
+    const ids = new Set(entry.ids);
+    const keep = entry.kind === "move" ? undoStack.current.filter((x) => !(x.kind === "edit" && x.ids.some((id) => ids.has(id)))) : undoStack.current;
+    undoStack.current = [...keep.slice(-19), entry];
+  };
+
   const decideOne = async (p: Participant, to: Stage) => {
     if (!canWrite || p.stage.key === to.key) {
       if (p.stage.key === to.key) go(advanceFrom(p.investor.id));
@@ -360,13 +398,13 @@ export function PipelineTriage({
     }
     const id = p.investor.id;
     const snapshot = turnSnap.current.get(id) ?? snap(p);
-    const entry: Decision = { ids: [id], snaps: [snapshot], to: to.key, at: Date.now() };
+    const entry: Decision = { kind: "move", ids: [id], snaps: [snapshot], to: to.key, at: Date.now() };
     const prev = p;
     store.apply([id], (x) => ({ ...x, stage: to }));
     setDecided((m) => new Map(m).set(id, to.key));
     setCounts((c) => ({ ...c, [to.key]: (c[to.key] ?? 0) + 1 }));
     setTimes((t) => [...t, entry.at]);
-    undoStack.current = [...undoStack.current.slice(-19), entry];
+    pushUndo(entry);
     go(advanceFrom(id, new Set([id])));
     try {
       const res = await moveStage(client, round.id, id, to.key);
@@ -395,7 +433,7 @@ export function PipelineTriage({
   const decideMany = async (ids: string[], to: Stage) => {
     const rows = ids.map((id) => rowById.get(id)).filter(Boolean) as Participant[];
     if (!rows.length || !canWrite) return;
-    const entry: Decision = { ids: rows.map((p) => p.investor.id), snaps: rows.map(snap), to: to.key, at: Date.now() };
+    const entry: Decision = { kind: "move", ids: rows.map((p) => p.investor.id), snaps: rows.map(snap), to: to.key, at: Date.now() };
     const set = new Set(entry.ids);
     store.apply(entry.ids, (x) => ({ ...x, stage: to }));
     setDecided((m) => {
@@ -406,8 +444,14 @@ export function PipelineTriage({
     setCounts((c) => ({ ...c, [to.key]: (c[to.key] ?? 0) + entry.ids.length }));
     setTimes((t) => [...t, entry.at]);
     setSelected(new Set());
-    undoStack.current = [...undoStack.current.slice(-19), entry];
-    go(advanceFrom(cursor ?? entry.ids[0]!, set));
+    setShowSel(false);
+    pushUndo(entry);
+    // The cursor stays on an undecided row the selection did not include (critique 1: a bulk
+    // move must never skip Ada).
+    const nextId = cursorAfterMove(order, cursor, set, done);
+    go(nextId);
+    // Bring the cursor back into view (the list may still show the moved selection).
+    if (nextId) setScrollReq((r) => ({ id: nextId, n: (r?.n ?? 0) + 1 }));
     const pick = followPick;
     setFollowPick(undefined);
     try {
@@ -457,15 +501,18 @@ export function PipelineTriage({
     if (!current || !canWrite) return;
     const p = current;
     if ((p.follow_up_on ?? null) === iso) return;
+    const entry: Decision = { kind: "edit", ids: [p.investor.id], snaps: [snap(p)], to: null, at: Date.now(), what: "follow-up" };
     store.apply([p.investor.id], (x) => ({ ...x, follow_up_on: iso, follow_up_state: followUpState(iso, today) }));
+    pushUndo(entry);
     try {
       const r = await setFollowUp(client, round.id, p.investor.id, iso ? { on: iso } : { clear: true });
       store.commit([r.participant]);
       const msg = iso ? `Follow up with ${p.investor.name} ${formatDate(iso, today)}.` : `Follow-up cleared for ${p.investor.name}.`;
       store.announce(msg);
-      toast.show(msg);
+      toast.show(msg, { label: "Undo", onClick: () => void undo(entry) });
       store.afterWrite();
     } catch (err) {
+      undoStack.current = undoStack.current.filter((x) => x !== entry);
       store.rollback([p]);
       toast.show(`Couldn't set the follow-up. ${errorMessage(err)}`);
     }
@@ -476,12 +523,15 @@ export function PipelineTriage({
     const p = current;
     const fit = Math.max(0, Math.min(5, p.fit + delta));
     if (fit === p.fit) return;
+    const entry: Decision = { kind: "edit", ids: [p.investor.id], snaps: [snap(p)], to: null, at: Date.now(), what: "fit change" };
     store.apply([p.investor.id], (x) => ({ ...x, fit, priority: priorityFromFit(fit) }));
+    pushUndo(entry);
     try {
       const r = await updateParticipant(client, round.id, p.investor.id, { fit });
       store.commit([r]);
       store.announce(`Fit ${fit} of 5 for ${p.investor.name}.`);
     } catch (err) {
+      undoStack.current = undoStack.current.filter((x) => x !== entry);
       store.rollback([p]);
       toast.show(`Couldn't change the fit. ${errorMessage(err)}`);
     }
@@ -492,12 +542,15 @@ export function PipelineTriage({
     const p = current;
     const value = text.trim() || null;
     if ((p.next_step ?? null) === value) return false;
+    const entry: Decision = { kind: "edit", ids: [p.investor.id], snaps: [snap(p)], to: null, at: Date.now(), what: "next step" };
     store.apply([p.investor.id], (x) => ({ ...x, next_step: value }));
+    pushUndo(entry);
     try {
       const r = await updateParticipant(client, round.id, p.investor.id, { next_step: value });
       store.commit([r]);
       return true;
     } catch (err) {
+      undoStack.current = undoStack.current.filter((x) => x !== entry);
       store.rollback([p]);
       toast.show(`Couldn't save the next step. ${errorMessage(err)}`);
       return false;
@@ -512,6 +565,12 @@ export function PipelineTriage({
       return n;
     });
   const selectIds = (ids: string[]) => setSelected((s) => new Set([...s, ...ids]));
+  /** "Select 86": select them and bring the first of them into view. */
+  const selectGroup = (ids: string[]) => {
+    selectIds(ids);
+    const first = order.find((id) => ids.includes(id));
+    if (first) setScrollReq((r) => ({ id: first, n: (r?.n ?? 0) + 1 }));
+  };
 
   const step = (dir: 1 | -1, extend = false) => {
     if (!order.length) return;
@@ -544,7 +603,7 @@ export function PipelineTriage({
     });
   }
   useHotkey("s", skip, { ...hk, enabled: on, description: "Skip for now" });
-  useHotkey("u", () => void undo(), { ...hk, enabled: on, description: "Undo the last decision" });
+  useHotkey("u", () => void undo(), { ...hk, enabled: on, description: "Undo the last change (a move, follow-up, fit or next step)" });
   useHotkey("[", () => void changeFit(-1), { ...hk, enabled: on, description: "Fit −1" });
   useHotkey("]", () => void changeFit(1), { ...hk, enabled: on, description: "Fit +1" });
   useHotkey("n", () => setNextStepFocus((n) => n + 1), { ...hk, enabled: on, description: "Next step" });
@@ -562,9 +621,11 @@ export function PipelineTriage({
   useHotkey("escape", () => setSelected(new Set()), { ...hk, enabled: selected.size > 0 });
   const picks = quickPicks("followup", today);
   const pickIso = (k: string) => picks.find((p) => p.kbd === k)?.iso ?? null;
+  const follows = followOptions(picks);
   useHotkey("f 1", () => void setFollow(pickIso("1")), { ...hk, enabled: on, description: "Follow up tomorrow" });
   useHotkey("f m", () => void setFollow(pickIso("m")), { ...hk, enabled: on, description: "Follow up next Monday" });
   useHotkey("f 7", () => void setFollow(pickIso("7")), { ...hk, enabled: on, description: "Follow up in 1 week" });
+  useHotkey("f 2", () => void setFollow(pickIso("2")), { ...hk, enabled: on, description: "Follow up in 2 weeks" });
   const pickRef = useRef<HTMLDivElement>(null);
   useHotkey(
     "f d",
@@ -589,8 +650,11 @@ export function PipelineTriage({
   }, [phone]);
   const [queueOpen, setQueueOpen] = useState(false);
 
-  const pos = cursor ? order.indexOf(cursor) : -1;
-  const sliceLeft = undecided(sliceRows);
+  const place = queuePosition(order, cursor, (id) => {
+    const p = rowById.get(id);
+    return Boolean(p && isLeft(p));
+  });
+  const sliceLeft = place.left;
   const sliceSkipped = sliceRows.filter((p) => isOpen(p) && skipped.has(p.investor.id)).length;
 
   const pace = paceEstimate(times);
@@ -608,18 +672,53 @@ export function PipelineTriage({
 
   const sel = selected.size ? queue.filter((p) => selected.has(p.investor.id)) : [];
 
+  // Who comes after this one (the pane and the phone show them, so the empty space helps).
+  const upNext = useMemo(() => {
+    const out: Participant[] = [];
+    const seenIds = new Set<string>();
+    let from = cursor;
+    while (from && out.length < 5) {
+      const id = nextCursor(order, from, (x) => x === cursor || seenIds.has(x) || done(x));
+      if (!id) break;
+      seenIds.add(id);
+      out.push(rowById.get(id)!);
+      from = id;
+    }
+    return out;
+  }, [cursor, order, done, rowById]);
+  // Others from the same firm anywhere in the round (a second partner changes the decision).
+  const sameFirm = useMemo(() => {
+    const firm = current?.investor.firm?.trim().toLowerCase();
+    if (!firm) return [];
+    return allRows
+      .filter((p) => p.investor.id !== current!.investor.id && p.investor.firm?.trim().toLowerCase() === firm)
+      .sort((a, b) => b.stage.position - a.stage.position || b.fit - a.fit);
+  }, [allRows, current]);
+  const [drafted, setDrafted] = useState<string | null>(null);
+  const goTo = (id: string) => (order.includes(id) ? go(id) : onOpenFile(id));
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  useToastLift(panelRef, !phone && Boolean(current || sel.length));
+
   const decisionPanel = (
     <DecisionPanel
+      ref={panelRef}
       who={sel.length ? null : current ? firstName(current.investor.name) : null}
+      bulk={sel.length}
       targets={targets}
       currentStage={sel.length ? null : (current?.stage.key ?? null)}
       followUp={sel.length ? (followPick ?? null) : (current?.follow_up_on ?? null)}
+      follows={follows}
       today={today}
       timeZone={timeZone}
       disabled={!canWrite || (!current && !sel.length)}
       focusKey={sel.length ? "sel" : (cursor ?? "")}
       pickRef={pickRef}
-      phone={false}
+      drafted={Boolean(current && drafted === current.investor.id)}
+      contacted={(() => {
+        const t = targets.find((x) => x.stage.kind === "active" && x.key);
+        return t ? { key: t.key!, label: t.stage.label } : null;
+      })()}
       onDecide={decide}
       onFollow={(iso) => void setFollow(iso)}
     />
@@ -635,6 +734,7 @@ export function PipelineTriage({
       runs={runs}
       round={round}
       wsSlug={wsSlug}
+      workspaceName={workspaceName}
       today={today}
       timeZone={timeZone}
       industries={extras[current.investor.id]?.industries ?? []}
@@ -642,6 +742,10 @@ export function PipelineTriage({
       nextStepFocus={nextStepFocus}
       onSaveNextStep={saveNextStep}
       decidedStage={!isOpen(current) ? current.stage : null}
+      upNext={upNext.slice(0, 3)}
+      sameFirm={sameFirm}
+      onGo={goTo}
+      onDrafted={() => setDrafted(current.investor.id)}
     />
   ) : null;
 
@@ -659,7 +763,7 @@ export function PipelineTriage({
           return c && n ? `${num(n)} are ${c.label}.` : null;
         })()}
       </EmptyState>
-    ) : sliceSkipped > 0 && sliceLeft === sliceSkipped ? (
+    ) : sliceSkipped > 0 && sliceLeft === 0 ? (
       <EmptyState
         className="m-24"
         title={`You skipped ${num(sliceSkipped)}.`}
@@ -700,7 +804,6 @@ export function PipelineTriage({
   const queuePanel = (
     <TriageQueue
       rows={sliceRows}
-      all={queue}
       openKey={openKey}
       fitAtSeen={fitAtSeen}
       cursor={cursor}
@@ -711,6 +814,7 @@ export function PipelineTriage({
       agentMarks={agentMarks}
       slice={slice}
       sliceCounts={{ all: sliceCount("all"), hw: hwLeft, maybe: sliceCount("maybe"), low: sliceCount("low") }}
+      compactPills={!railOn}
       sorted={sorted}
       total={total}
       skippedCount={skipped.size}
@@ -719,7 +823,13 @@ export function PipelineTriage({
       canWrite={canWrite}
       filter={<FilterMenu fields={filterFields} active={filterActive} onChange={onFilterChange} />}
       active={active}
-      onSlice={onSlice}
+      showSel={showSel}
+      onShowSel={setShowSel}
+      scrollReq={scrollReq}
+      onSlice={(sl) => {
+        setShowSel(false);
+        onSlice(sl);
+      }}
       onPick={(id, e) => {
         if (e?.shiftKey && canWrite) {
           const a = cursor ? order.indexOf(cursor) : -1;
@@ -730,7 +840,7 @@ export function PipelineTriage({
         setQueueOpen(false);
       }}
       onToggle={toggleSel}
-      onSelectIds={selectIds}
+      onSelectIds={selectGroup}
       height={height}
     />
   );
@@ -746,41 +856,31 @@ export function PipelineTriage({
         timeZone={timeZone}
         targets={targets}
         slice={slice}
-        pos={pos}
-        count={order.length}
+        left={sliceLeft}
         sorted={sorted}
         total={total}
-        upNext={(() => {
-          const out: Participant[] = [];
-          let from = cursor;
-          const seenIds = new Set<string>();
-          while (out.length < 3) {
-            const id = from ? nextCursor(order, from, (x) => x === cursor || seenIds.has(x) || done(x)) : null;
-            if (!id) break;
-            seenIds.add(id);
-            out.push(rowById.get(id)!);
-            from = id;
-          }
-          return out;
-        })()}
+        upNext={upNext}
+        sameFirm={sameFirm}
         doneState={doneState}
         canWrite={canWrite}
         filter={<FilterMenu fields={filterFields} active={filterActive} onChange={onFilterChange} />}
         onExit={onExit}
         onDecide={decide}
         onSkip={skip}
+        onGo={goTo}
         onFollow={(iso) => void setFollow(iso)}
         onSaveNextStep={saveNextStep}
       />
     );
   }
 
+  const where = `${openStage.label}${showSel && sel.length ? " · selection" : slice === "all" ? "" : ` · ${SLICE_LABEL[slice]}`}`;
   return (
     <div
       ref={rootRef}
       className={cn(
         "grid min-h-0 gap-16",
-        wide ? (railOn ? "grid-cols-[360px_minmax(0,1fr)_280px]" : "grid-cols-[320px_minmax(0,1fr)]") : "grid-cols-1",
+        wide ? (railOn ? "grid-cols-[360px_minmax(0,1fr)_260px]" : "grid-cols-[320px_minmax(0,1fr)]") : "grid-cols-1",
       )}
       style={{ height: height ?? "calc(100vh - 200px)" }}
     >
@@ -798,11 +898,13 @@ export function PipelineTriage({
           <span className="t-micro min-w-0 truncate text-muted" aria-live="polite">
             {sel.length
               ? `${num(sel.length)} selected`
-              : pos >= 0
-                ? `${num(pos + 1)} of ${num(order.length)} in ${openStage.label}${slice === "all" ? "" : ` · ${SLICE_LABEL[slice]}`} · highest fit first`
-                : `${num(openCount)} in ${openStage.label}`}
+              : place.pos !== null
+                ? `${num(place.pos)} of ${num(place.left)} left in ${where} · highest fit first`
+                : current && !isOpen(current)
+                  ? `${num(place.left)} left in ${where} · this one is in ${current.stage.label}`
+                  : `${num(place.left)} left in ${where}`}
           </span>
-          <span className="flex items-center gap-4">
+          <span className="flex shrink-0 items-center gap-4">
             <button type="button" className={NAV} onClick={() => step(-1)} aria-label="Previous investor" title="Previous (K)">
               ↑
             </button>
@@ -822,15 +924,17 @@ export function PipelineTriage({
             </Link>
           ) : null}
         </header>
-        {!railOn && wide ? <WhereStrip stages={stages} rows={allRows} counts={counts} /> : null}
-        <div className="min-h-0 flex-1 overflow-y-auto">{doneState ?? pane}</div>
+        <div className="relative min-h-0 flex-1 overflow-y-auto">
+          {doneState ?? pane}
+          {/* A soft edge where the body scrolls under the decision panel. */}
+          {doneState ? null : <div aria-hidden className="pointer-events-none sticky bottom-0 h-16 bg-linear-to-t from-surface to-transparent" />}
+        </div>
         {doneState ? null : decisionPanel}
       </section>
       {railOn && wide ? (
         <TriageRail
           round={round}
           stages={stages}
-          targets={targets}
           rows={allRows}
           counts={counts}
           openKey={openKey}
@@ -838,8 +942,6 @@ export function PipelineTriage({
           sessionLine={sessionLine}
           hwLeft={hwLeft}
           sliceCounts={{ hw: hwLeft, maybe: sliceCount("maybe"), low: sliceCount("low") }}
-          canMove={canWrite && Boolean(current || sel.length)}
-          onDecide={decide}
         />
       ) : null}
       {!wide ? (
@@ -851,6 +953,8 @@ export function PipelineTriage({
   );
 }
 
+const SLICE_SHORT: Record<TriageSlice, string> = { all: "All", hw: "Hot+Warm", maybe: "Maybe", low: "Low" };
+
 const NAV =
   "inline-flex size-24 items-center justify-center rounded-sm border border-line bg-surface text-[12px] text-muted hover:text-fg";
 
@@ -860,7 +964,6 @@ type QRow = { kind: "group"; priority: Priority; left: number; ids: string[] } |
 
 function TriageQueue({
   rows,
-  all,
   openKey,
   fitAtSeen,
   cursor,
@@ -871,6 +974,7 @@ function TriageQueue({
   agentMarks,
   slice,
   sliceCounts,
+  compactPills,
   sorted,
   total,
   skippedCount,
@@ -879,6 +983,9 @@ function TriageQueue({
   canWrite,
   filter,
   active,
+  showSel,
+  onShowSel,
+  scrollReq,
   onSlice,
   onPick,
   onToggle,
@@ -886,7 +993,6 @@ function TriageQueue({
   height,
 }: {
   rows: Participant[];
-  all: Participant[];
   openKey: string;
   fitAtSeen: (p: Participant) => number;
   cursor: string | null;
@@ -897,6 +1003,8 @@ function TriageQueue({
   agentMarks: Record<string, { tip: string }>;
   slice: TriageSlice;
   sliceCounts: Record<TriageSlice, number>;
+  /** A narrower queue (no rail): short pill labels so they stay on one line. */
+  compactPills: boolean;
   sorted: number;
   total: number;
   skippedCount: number;
@@ -905,13 +1013,16 @@ function TriageQueue({
   canWrite: boolean;
   filter: ReactNode;
   active: number;
+  showSel: boolean;
+  onShowSel: (on: boolean) => void;
+  /** Bring this row into view (after "Select 86"). */
+  scrollReq: { id: string; n: number } | null;
   onSlice: (s: TriageSlice) => void;
   onPick: (id: string, e?: { shiftKey: boolean }) => void;
   onToggle: (id: string) => void;
   onSelectIds: (ids: string[]) => void;
   height: number | null;
 }) {
-  void all;
   const body = useRef<HTMLDivElement>(null);
   const list = useMemo(() => {
     const by: Record<Priority, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
@@ -927,11 +1038,34 @@ function TriageQueue({
   }, [rows, fitAtSeen, openKey, skipped]);
   const heightAt = useCallback((i: number) => (list[i]?.kind === "group" ? GROUP_H : ROW_H), [list]);
   const v = useVirtualRows({ scrollRef: body, count: list.length, height: heightAt, initial: 24 });
-  const { scrollToIndex } = v;
+  const { topOf } = v;
+  // Scroll a row into view below the sticky group header (it covers the top 32px).
+  const reveal = useCallback(
+    (i: number, start: boolean) => {
+      const el = body.current;
+      if (!el || i < 0) return;
+      const top = topOf(i);
+      const h = heightAt(i);
+      if (start || top < el.scrollTop + GROUP_H) el.scrollTop = Math.max(0, top - GROUP_H);
+      else if (top + h > el.scrollTop + el.clientHeight) el.scrollTop = top + h - el.clientHeight;
+    },
+    [topOf, heightAt],
+  );
+  const revealRef = useRef(reveal);
+  revealRef.current = reveal;
   const cursorRow = useMemo(() => list.findIndex((r) => r.kind === "row" && r.p.investor.id === cursor), [list, cursor]);
+  // Only when the cursor row changes (not on every render: that would undo "Select 86"'s scroll).
   useEffect(() => {
-    if (cursorRow >= 0) scrollToIndex(cursorRow);
-  }, [cursorRow, scrollToIndex]);
+    if (cursorRow >= 0) revealRef.current(cursorRow, false);
+  }, [cursorRow]);
+  useEffect(() => {
+    if (!scrollReq) return;
+    revealRef.current(
+      list.findIndex((r) => r.kind === "row" && r.p.investor.id === scrollReq.id),
+      true,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollReq]);
   const anySel = selected.size > 0;
   const pills: TriageSlice[] = ["all", "hw", "maybe", "low"];
   const groupRow = (r: Extract<QRow, { kind: "group" }>, stuck = false) => {
@@ -998,26 +1132,48 @@ function TriageQueue({
           </span>
         </div>
         {sessionLine ? <p className="t-body-s text-muted">{sessionLine}</p> : null}
-        <div role="group" aria-label="Slice" className="flex flex-wrap gap-4">
-          {pills.map((s) => {
-            const on = s === slice;
-            return (
-              <button
-                key={s}
-                type="button"
-                aria-pressed={on}
-                onClick={() => onSlice(s)}
-                className={cn(
-                  "inline-flex h-26 shrink-0 items-center gap-4 rounded-pill border px-8 text-[12.5px] whitespace-nowrap",
-                  on ? "border-fg bg-fg text-canvas" : "border-line bg-surface text-fg hover:border-muted",
-                )}
-              >
-                {SLICE_LABEL[s]}
-                <span className={cn("font-mono text-[11px]", on ? "text-canvas" : "text-muted")}>{num(sliceCounts[s])}</span>
+        {selected.size ? (
+          <div className="flex items-center gap-8">
+            <button
+              type="button"
+              aria-pressed={showSel}
+              onClick={() => onShowSel(!showSel)}
+              className={cn(
+                "inline-flex h-26 items-center gap-6 rounded-pill border px-10 text-[12.5px] whitespace-nowrap",
+                showSel ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface text-fg hover:border-muted",
+              )}
+            >
+              {showSel ? "Showing" : "Show"} the {num(selected.size)} selected
+            </button>
+            {showSel ? (
+              <button type="button" className="link t-body-s border-0 bg-transparent p-0" onClick={() => onShowSel(false)}>
+                Back to {SLICE_LABEL[slice]}
               </button>
-            );
-          })}
-        </div>
+            ) : null}
+          </div>
+        ) : (
+          <div role="group" aria-label="Slice" className="flex gap-4">
+            {pills.map((s) => {
+              const on = s === slice;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => onSlice(s)}
+                  title={SLICE_LABEL[s]}
+                  className={cn(
+                    "inline-flex h-26 min-w-0 shrink items-center gap-4 rounded-pill border px-8 text-[12.5px] whitespace-nowrap",
+                    on ? "border-fg bg-fg text-canvas" : "border-line bg-surface text-fg hover:border-muted",
+                  )}
+                >
+                  {compactPills ? SLICE_SHORT[s] : SLICE_LABEL[s]}
+                  <span className={cn("font-mono text-[11px]", on ? "text-canvas" : "text-muted")}>{num(sliceCounts[s])}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div ref={body} className="relative min-h-0 flex-1 overflow-y-auto scrollbar-thin" role="listbox" aria-label="Investors in the queue" aria-multiselectable>
         {v.padTop > 0 ? <div aria-hidden style={{ height: v.padTop }} /> : null}
@@ -1029,7 +1185,6 @@ function TriageQueue({
           const isCur = id === cursor;
           const moved = p.stage.key !== openKey;
           const mine = decided.get(id);
-          const type = shortType(p.investor.type);
           return (
             <div
               key={id}
@@ -1069,10 +1224,7 @@ function TriageQueue({
               ) : skipped.has(id) ? (
                 <span className="t-micro shrink-0 text-muted">Skipped</span>
               ) : (
-                <span className="flex shrink-0 items-center gap-8">
-                  {type ? <span className="font-mono text-[11.5px] text-muted">{type}</span> : null}
-                  <FitMeter value={p.fit} />
-                </span>
+                <FitMeter value={p.fit} className="shrink-0" />
               )}
             </div>
           );
@@ -1122,6 +1274,7 @@ function InvestorPane({
   runs,
   round,
   wsSlug,
+  workspaceName,
   today,
   timeZone,
   industries: rowIndustries,
@@ -1129,12 +1282,17 @@ function InvestorPane({
   nextStepFocus,
   onSaveNextStep,
   decidedStage,
+  upNext,
+  sameFirm,
+  onGo,
+  onDrafted,
 }: {
   p: Participant;
   full: FullInvestor | undefined;
   runs: ImportRun[] | null;
   round: Round;
   wsSlug: string;
+  workspaceName: string;
   today: string;
   timeZone: string;
   industries: string[];
@@ -1142,6 +1300,10 @@ function InvestorPane({
   nextStepFocus: number;
   onSaveNextStep: (text: string) => Promise<boolean>;
   decidedStage: Stage | null;
+  upNext: Participant[];
+  sameFirm: Participant[];
+  onGo: (id: string) => void;
+  onDrafted: () => void;
 }) {
   const inv = full?.investor;
   const [slow, setSlow] = useState(false);
@@ -1152,13 +1314,13 @@ function InvestorPane({
   const industries = visibleIndustries(inv?.industries ?? rowIndustries);
   const type = p.investor.type !== "other" ? INVESTOR_TYPE_LABEL[p.investor.type] : null;
   const otherRounds = (inv?.rounds ?? []).filter((r) => r.round_id !== round.id);
+  // Source is a chip above, so it is not repeated as a fact row.
   const facts: [string, ReactNode][] = inv
     ? (
         [
           ["Invests at", inv.stage_focus.map(stageFocusLabel).join(", ")],
           ["Check size", checkSize(inv, round.currency)],
           ["Location", inv.location],
-          ["Source", inv.source],
           ["Warm intro by", inv.warm_intro_by],
           [
             "Other rounds",
@@ -1173,16 +1335,26 @@ function InvestorPane({
   const [showAll, setShowAll] = useState(false);
   const who = [p.investor.title, p.investor.firm].filter(Boolean).join(" · ");
   const linkedinSearch = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([p.investor.name, p.investor.firm].filter(Boolean).join(" "))}`;
+  const email = inv?.email ?? p.investor.email ?? null;
+  const linkedin = inv?.linkedin_url ?? p.investor.linkedin_url ?? null;
+  const first = firstName(p.investor.name);
+  const draft = email
+    ? `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(`${workspaceName} · ${round.name}`)}&body=${encodeURIComponent(`Hi ${first},\n\n`)}`
+    : null;
+  const btn = "inline-flex h-32 items-center gap-6 rounded-sm border border-line bg-surface px-12 text-base text-fg hover:border-accent";
 
   return (
-    <div className="flex flex-col gap-18 px-32 py-24 max-xl:px-20">
+    <div className="flex flex-col gap-16 px-32 pt-22 pb-8 max-xl:px-20">
       <div>
         <h2 className="font-display text-[28px] leading-[1.1] font-bold tracking-[-0.02em]">{p.investor.name}</h2>
         {who ? <p className="mt-4 text-lg text-muted">{who}</p> : null}
       </div>
       <div className="flex flex-wrap items-center gap-6">
-        <PriorityChip fit={p.fit} />
-        <FitMeter value={p.fit} showLabel />
+        {/* Fit is the pips alone (no Hot chip, no "5/5": one encoding). */}
+        <span className="mr-4 inline-flex items-center gap-6" title={`Fit ${p.fit} of 5 ([ and ] change it)`}>
+          <span className="t-label">Fit</span>
+          <FitMeter value={p.fit} />
+        </span>
         {type ? <Chip tone="type">{type}</Chip> : null}
         {industries.slice(0, 3).map((i) => (
           <Chip key={i} tone="industry">
@@ -1198,20 +1370,21 @@ function InvestorPane({
           </span>
         ) : null}
       </div>
-      {inv ? (
-        <div className="flex flex-wrap gap-6">
-          <LinkButtons linkedin={inv.linkedin_url} website={inv.website_url} x={inv.x_url} email={inv.email} />
-          {!inv.linkedin_url && !inv.website_url ? (
-            <a href={linkedinSearch} target="_blank" rel="noopener noreferrer" className="inline-flex h-28 items-center rounded-sm border border-line bg-surface px-9 text-sm text-accent hover:border-accent">
-              Search LinkedIn <span aria-hidden className="ml-4">↗</span>
-            </a>
-          ) : null}
-        </div>
-      ) : full?.error ? (
-        <p className="t-body-s text-bad">{full.error}</p>
-      ) : (
-        <Skeleton width="45%" />
-      )}
+
+      {/* Reach out: the actions that come before "Contacted". */}
+      <div className="flex flex-wrap items-center gap-6">
+        <a href={linkedin ?? linkedinSearch} target="_blank" rel="noopener noreferrer" className={btn}>
+          {linkedin ? "LinkedIn" : "Search LinkedIn"} <span aria-hidden className="text-muted">↗</span>
+          <Kbd>L</Kbd>
+        </a>
+        {draft ? (
+          <a href={draft} className={btn} onClick={onDrafted}>
+            Draft intro email <span aria-hidden className="text-muted">↗</span>
+          </a>
+        ) : null}
+        {inv ? <LinkButtons website={inv.website_url} x={inv.x_url} email={email} /> : email ? <LinkButtons email={email} /> : null}
+        {full?.error ? <span className="t-body-s text-bad">{full.error}</span> : null}
+      </div>
 
       {inv ? (
         facts.length || notes ? (
@@ -1242,12 +1415,12 @@ function InvestorPane({
             ) : null}
           </div>
         ) : (
-          <p className="text-muted">Only the basics came in with the import. Open LinkedIn to look them up.</p>
+          <p className="t-body-s text-muted">Only the basics came in with the import. LinkedIn is the quickest way to size them up.</p>
         )
       ) : full?.error ? null : (
         <div className="flex flex-col gap-8" aria-hidden>
           {slow ? <p className="t-body-s text-muted">Loading…</p> : null}
-          <Skeleton lines={3} />
+          <Skeleton lines={2} />
         </div>
       )}
 
@@ -1278,12 +1451,57 @@ function InvestorPane({
           <Skeleton width="70%" />
         )}
       </section>
+
+      {sameFirm.length || upNext.length ? (
+        <div className={cn("grid grid-cols-1 gap-x-24 gap-y-14 border-t border-line pt-14", sameFirm.length && upNext.length && "min-[1180px]:grid-cols-2")}>
+          {sameFirm.length ? (
+            <section aria-label={`Also at ${p.investor.firm}`}>
+              <p className="t-label mb-6">
+                Also at {p.investor.firm} <span className="font-mono normal-case">{num(sameFirm.length)}</span>
+              </p>
+              <ul className="m-0 flex list-none flex-col p-0">
+                {sameFirm.slice(0, 3).map((x) => (
+                  <li key={x.investor.id}>
+                    <button type="button" onClick={() => onGo(x.investor.id)} className={ROW_BTN}>
+                      <span className="min-w-0 truncate font-medium">{x.investor.name}</span>
+                      <span className="t-body-s min-w-0 flex-1 truncate text-muted">{x.investor.title ?? ""}</span>
+                      <span className="t-body-s inline-flex shrink-0 items-center gap-6 text-muted">
+                        <StageDot color={x.stage.color} />
+                        {x.stage.label}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {sameFirm.length > 3 ? <p className="t-body-s text-muted">and {num(sameFirm.length - 3)} more</p> : null}
+            </section>
+          ) : null}
+          {upNext.length ? (
+            <section aria-label="Up next">
+              <p className="t-label mb-6">Up next</p>
+              <ul className="m-0 flex list-none flex-col p-0">
+                {upNext.map((x) => (
+                  <li key={x.investor.id}>
+                    <button type="button" onClick={() => onGo(x.investor.id)} className={ROW_BTN}>
+                      <span className="min-w-0 truncate font-medium">{x.investor.name}</span>
+                      <span className="t-body-s min-w-0 flex-1 truncate text-muted">{x.investor.firm ?? ""}</span>
+                      <FitMeter value={x.fit} className="shrink-0" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
       <p className="sr-only">
         Open the full page at /w/{wsSlug}/investors/{p.investor.id}
       </p>
     </div>
   );
 }
+
+const ROW_BTN = "flex h-28 w-full min-w-0 items-center gap-8 border-0 bg-transparent px-0 text-left hover:text-accent";
 
 function NextStepField({
   value,
@@ -1386,28 +1604,40 @@ function SelectionPane({ rows, openLabel, onClear }: { rows: Participant[]; open
 /* ---------- decision panel ---------- */
 
 function DecisionPanel({
+  ref,
   who,
+  bulk,
   targets,
   currentStage,
   followUp,
+  follows,
   today,
   timeZone,
   disabled,
   focusKey,
   pickRef,
+  drafted,
+  contacted,
   onDecide,
   onFollow,
 }: {
+  ref?: Ref<HTMLDivElement>;
   who: string | null;
+  /** How many are selected (0: one investor). */
+  bulk: number;
   targets: TriageTarget[];
   currentStage: string | null;
   followUp: string | null;
+  follows: FollowOption[];
   today: string;
   timeZone: string;
   disabled: boolean;
   focusKey: string;
   pickRef: React.RefObject<HTMLDivElement | null>;
-  phone: boolean;
+  /** "Draft intro email" was clicked for this investor: point at Contacted. */
+  drafted: boolean;
+  /** The first talking stage and its key ("2", Contacted). */
+  contacted: { key: string; label: string } | null;
   onDecide: (s: Stage) => void;
   onFollow: (iso: string | null) => void;
 }) {
@@ -1421,8 +1651,6 @@ function DecisionPanel({
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.closest("[role=dialog]"))) return;
     firstBtn.current?.focus({ preventScroll: true });
   }, [focusKey]);
-  const picks = quickPicks("followup", today);
-  const iso = (k: string) => picks.find((p) => p.kbd === k)!.iso;
   const btn = (t: TriageTarget, big: boolean, i: number) => (
     <button
       key={t.stage.key}
@@ -1433,9 +1661,9 @@ function DecisionPanel({
       aria-pressed={currentStage === t.stage.key || undefined}
       onClick={() => onDecide(t.stage)}
       className={cn(
-        "flex min-w-0 items-center gap-8 rounded-sm border bg-surface px-14 text-left hover:border-accent disabled:opacity-55",
-        currentStage === t.stage.key ? "border-fg" : "border-line",
-        big ? "h-44 text-[15px] font-medium" : "h-36 text-base",
+        "flex min-w-0 items-center gap-8 rounded-sm border bg-surface text-left hover:border-accent disabled:opacity-55",
+        currentStage === t.stage.key || (drafted && t.key === contacted?.key) ? "border-fg" : "border-line",
+        big ? "h-44 px-14 text-[15px] font-medium" : "h-36 px-10 text-base",
       )}
     >
       <StageDot color={t.stage.color} />
@@ -1443,21 +1671,29 @@ function DecisionPanel({
       {t.key ? <Kbd>{t.key}</Kbd> : null}
     </button>
   );
+  // Follow-up picks: None + three different dates; one pressed button per value.
+  const options = [{ label: "None", iso: null as string | null, hint: null as string | null }, ...follows.map((f) => ({ label: f.label, iso: f.iso as string | null, hint: `f ${f.kbd}` }))];
+  const pressed = pressedOption(options, followUp);
+  const sub = bulk
+    ? `one key moves all ${num(bulk)}, with Undo`
+    : drafted && contacted
+      ? `sent it? ${contacted.key} files ${who ?? "them"} in ${contacted.label}`
+      : "one key, then the next investor opens";
   return (
-    <div className="flex shrink-0 flex-col gap-10 border-t border-line bg-sunk px-32 pt-14 pb-12 max-xl:px-20">
-      <p className="flex items-baseline gap-10">
-        <span className="t-label">{who ? `Where does ${who} go?` : "Where do they go?"}</span>
-        <span className="t-micro text-muted max-[1100px]:hidden">one key, then the next investor opens</span>
+    <div ref={ref} className="flex shrink-0 flex-col gap-10 border-t border-line bg-sunk px-32 pt-14 pb-12 max-xl:px-20">
+      <p className="flex min-w-0 items-baseline gap-10">
+        <span className="t-label shrink-0">{who ? `Where does ${who} go?` : `Where do the ${num(bulk)} go?`}</span>
+        <span className={cn("t-micro min-w-0 truncate", drafted ? "text-accent" : "text-muted")}>{sub}</span>
       </p>
       <div className="grid grid-cols-3 gap-8">{primary.map((t, i) => btn(t, true, i))}</div>
       {secondary.length || overflow.length ? (
-        <div className="grid gap-8" style={{ gridTemplateColumns: `repeat(${Math.min(5, secondary.length + (overflow.length ? 1 : 0))}, minmax(0, 1fr))` }}>
+        <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(124px, 1fr))` }}>
           {secondary.map((t, i) => btn(t, false, i))}
           {overflow.length ? (
             <Menu
               label="Other stage"
               trigger="Other stage…"
-              triggerClassName="h-36 w-full rounded-sm border border-line bg-surface px-14 text-left hover:border-accent"
+              triggerClassName="h-36 w-full rounded-sm border border-line bg-surface px-10 text-left hover:border-accent"
               items={overflow.map((t) => ({ label: t.stage.label, icon: <StageDot color={t.stage.color} />, onSelect: () => onDecide(t.stage) }))}
             />
           ) : null}
@@ -1465,28 +1701,25 @@ function DecisionPanel({
       ) : null}
       <div className="flex flex-wrap items-center gap-6" ref={pickRef}>
         <span className="t-label mr-6">Follow up</span>
-        {[
-          { label: "None", value: null as string | null, hint: null as string | null },
-          ...FOLLOW_KEYS.map((f) => ({ label: f.label, value: iso(f.kbd), hint: `f ${f.kbd}` })),
-        ].map((o) => (
+        {options.map((o, i) => (
           <button
             key={o.label}
             type="button"
             disabled={disabled}
-            aria-pressed={followUp === o.value}
-            onClick={() => onFollow(o.value)}
+            aria-pressed={i === pressed}
+            onClick={() => onFollow(o.iso)}
             className={cn(
               "inline-flex h-32 items-center gap-6 rounded-sm border px-10 text-base disabled:opacity-55",
-              followUp === o.value ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface hover:border-muted",
+              i === pressed ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface hover:border-muted",
             )}
-            title={o.value ? formatDate(o.value, today) : "No follow-up"}
+            title={o.iso ? formatDate(o.iso, today) : "No follow-up"}
           >
             {o.label}
-            {o.hint ? <Kbd>{o.hint}</Kbd> : null}
+            {o.hint ? <Kbd className="max-[1279px]:hidden">{o.hint}</Kbd> : null}
           </button>
         ))}
         <DateField
-          value={followUp && !FOLLOW_KEYS.some((f) => iso(f.kbd) === followUp) ? followUp : null}
+          value={followUp && pressed < 0 ? followUp : null}
           onChange={(v) => onFollow(v)}
           timeZone={timeZone}
           quickPicks="followup"
@@ -1514,7 +1747,7 @@ function DecisionPanel({
             {l}
           </span>
         ))}
-        <span className="ml-auto">Moves save instantly, with Undo.</span>
+        <span className="ml-auto max-[1279px]:hidden">Every change saves at once.</span>
       </p>
     </div>
   );
@@ -1522,27 +1755,13 @@ function DecisionPanel({
 
 /* ---------- rail ---------- */
 
-function WhereStrip({ stages, rows, counts }: { stages: Stage[]; rows: Participant[]; counts: Record<string, number> }) {
-  const c: Record<string, number> = {};
-  for (const p of rows) c[p.stage.key] = (c[p.stage.key] ?? 0) + 1;
-  return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-14 gap-y-4 border-b border-line px-16 py-8">
-      {stages.map((s) => (
-        <span key={s.key} className="t-body-s inline-flex items-center gap-5">
-          <StageDot color={s.color} />
-          {s.label}
-          <span className="font-mono text-[11.5px] text-muted">{num(c[s.key] ?? 0)}</span>
-          {counts[s.key] ? <span className="font-mono text-[11.5px] text-good-ink">+{num(counts[s.key]!)}</span> : null}
-        </span>
-      ))}
-    </div>
-  );
-}
-
+/**
+ * The rail: the round in two lines, where everyone is now (with this session's +N), and the
+ * session pace. No keys and no buttons here: the decision panel is the one key map.
+ */
 function TriageRail({
   round,
   stages,
-  targets,
   rows,
   counts,
   openKey,
@@ -1550,12 +1769,9 @@ function TriageRail({
   sessionLine,
   hwLeft,
   sliceCounts,
-  canMove,
-  onDecide,
 }: {
   round: Round;
   stages: Stage[];
-  targets: TriageTarget[];
   rows: Participant[];
   counts: Record<string, number>;
   openKey: string;
@@ -1563,8 +1779,6 @@ function TriageRail({
   sessionLine: string | null;
   hwLeft: number;
   sliceCounts: { hw: number; maybe: number; low: number };
-  canMove: boolean;
-  onDecide: (s: Stage) => void;
 }) {
   const c: Record<string, number> = {};
   let committed = 0;
@@ -1576,7 +1790,6 @@ function TriageRail({
     soft += p.amount_soft ?? 0;
     if (p.follow_up_state === "overdue" || p.follow_up_state === "today") due++;
   }
-  const keyOf = new Map(targets.map((t) => [t.stage.key, t.key]));
   const days = round.target_close_on ? Math.round((Date.parse(round.target_close_on) - Date.parse(today)) / 86_400_000) : null;
   const terms = [
     INSTRUMENT_LABEL[round.instrument],
@@ -1599,28 +1812,19 @@ function TriageRail({
       </section>
       <section>
         <p className="t-label mb-6 flex">
-          Where they go<span className="ml-auto normal-case tracking-normal">key</span>
+          Where they are<span className="ml-auto normal-case tracking-normal">this session</span>
         </p>
         <ul className="m-0 flex list-none flex-col p-0">
           {stages.map((s) => {
-            const k = keyOf.get(s.key);
             const isO = s.key === openKey;
             const add = counts[s.key] ?? 0;
+            const n = c[s.key] ?? 0;
             return (
-              <li key={s.key} className="border-b border-line last:border-b-0">
-                <button
-                  type="button"
-                  disabled={isO || !canMove}
-                  onClick={() => onDecide(s)}
-                  className="flex h-32 w-full items-center gap-8 border-0 bg-transparent px-2 text-left enabled:hover:bg-surface disabled:cursor-default"
-                  aria-keyshortcuts={k ?? undefined}
-                >
-                  <span className="inline-flex w-20 justify-center">{k ? <Kbd>{k}</Kbd> : null}</span>
-                  <StageDot color={s.color} />
-                  <span className={cn("min-w-0 flex-1 truncate", isO && "font-semibold")}>{s.label}</span>
-                  {add ? <span className="font-mono text-[11.5px] text-good-ink">+{num(add)}</span> : null}
-                  <span className="w-36 text-right font-mono text-[12px] text-muted tnum">{num(c[s.key] ?? 0)}</span>
-                </button>
+              <li key={s.key} className="flex h-28 items-center gap-8 border-b border-line px-2 last:border-b-0">
+                <StageDot color={s.color} />
+                <span className={cn("min-w-0 flex-1 truncate", isO ? "font-semibold" : n ? "text-fg" : "text-muted")}>{s.label}</span>
+                <span className={cn("w-40 text-right font-mono text-[12px] tnum", n ? "text-fg" : "text-faint")}>{num(n)}</span>
+                <span className="w-36 text-right font-mono text-[11.5px] text-good-ink">{add ? `+${num(add)}` : ""}</span>
               </li>
             );
           })}
@@ -1664,17 +1868,18 @@ function TriagePhone({
   timeZone,
   targets,
   slice,
-  pos,
-  count,
+  left,
   sorted,
   total,
   upNext,
+  sameFirm,
   doneState,
   canWrite,
   filter,
   onExit,
   onDecide,
   onSkip,
+  onGo,
   onFollow,
   onSaveNextStep,
 }: {
@@ -1686,17 +1891,19 @@ function TriagePhone({
   timeZone: string;
   targets: TriageTarget[];
   slice: TriageSlice;
-  pos: number;
-  count: number;
+  /** Still to decide in this slice. */
+  left: number;
   sorted: number;
   total: number;
   upNext: Participant[];
+  sameFirm: Participant[];
   doneState: ReactNode;
   canWrite: boolean;
   filter: ReactNode;
   onExit: () => void;
   onDecide: (s: Stage) => void;
   onSkip: () => void;
+  onGo: (id: string) => void;
   onFollow: (iso: string | null) => void;
   onSaveNextStep: (text: string) => Promise<boolean>;
 }) {
@@ -1725,15 +1932,25 @@ function TriagePhone({
         <button type="button" onClick={onExit} aria-label="Back to the list" className="inline-flex size-40 items-center justify-center rounded-sm border-0 bg-transparent text-lg">
           ✕
         </button>
-        <span className="font-semibold">Triage</span>
-        <span className="t-micro min-w-0 flex-1 truncate text-muted">
-          {pos >= 0 ? `${num(pos + 1)} of ${num(count)}` : `${num(sorted)} of ${num(total)} sorted`}
-          {slice !== "all" ? ` · ${SLICE_LABEL[slice]}` : ""}
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span className="font-semibold">
+            Triage <span className="font-mono text-[12px] font-normal text-muted">{num(left)} left{slice !== "all" ? ` · ${SLICE_LABEL[slice]}` : ""}</span>
+          </span>
+          <span className="t-micro truncate text-muted">
+            {num(sorted)} of {num(total)} sorted
+          </span>
         </span>
         {filter}
       </header>
-      <div className="h-3 shrink-0 bg-sunk" aria-hidden>
-        <i className="block h-full bg-good not-italic" style={{ width: `${total ? (sorted / total) * 100 : 0}%` }} />
+      <div
+        className="h-4 shrink-0 bg-sunk"
+        role="meter"
+        aria-label="Sorted"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={sorted}
+      >
+        <i className="block h-full min-w-4 bg-good not-italic" style={{ width: `${total ? (sorted / total) * 100 : 0}%` }} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-16 pt-14 pb-[calc(170px+env(safe-area-inset-bottom))]">
         {doneState ??
@@ -1741,8 +1958,8 @@ function TriagePhone({
             <>
               <article className="rounded-md border border-line bg-surface p-16">
                 <div className="flex flex-wrap items-center gap-6">
-                  <PriorityChip fit={p.fit} />
-                  <FitMeter value={p.fit} showLabel />
+                  <span className="t-label">Fit</span>
+                  <FitMeter value={p.fit} />
                   <span className="t-body-s ml-auto inline-flex items-center gap-6 text-muted">
                     <StageDot color={p.stage.color} />
                     {p.stage.label}
@@ -1802,15 +2019,37 @@ function TriagePhone({
                   </button>
                 )}
               </div>
+              {sameFirm.length ? (
+                <section className="mt-18">
+                  <p className="t-label mb-2">
+                    Also at {p.investor.firm} <span className="font-mono normal-case">{num(sameFirm.length)}</span>
+                  </p>
+                  <ul className="m-0 flex list-none flex-col p-0">
+                    {sameFirm.slice(0, 3).map((x) => (
+                      <li key={x.investor.id}>
+                        <button type="button" onClick={() => onGo(x.investor.id)} className="flex h-40 w-full min-w-0 items-center gap-8 border-0 bg-transparent px-0 text-left">
+                          <span className="min-w-0 flex-1 truncate font-medium">{x.investor.name}</span>
+                          <span className="t-body-s inline-flex shrink-0 items-center gap-6 text-muted">
+                            <StageDot color={x.stage.color} />
+                            {x.stage.label}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
               {upNext.length ? (
                 <section className="mt-18">
-                  <p className="t-label mb-6">Up next</p>
-                  <ul className="m-0 flex list-none flex-col gap-4 p-0">
+                  <p className="t-label mb-2">Up next</p>
+                  <ul className="m-0 flex list-none flex-col p-0">
                     {upNext.map((x) => (
-                      <li key={x.investor.id} className="flex min-w-0 items-center gap-8">
-                        <span className="shrink-0 font-medium">{x.investor.name}</span>
-                        <span className="t-body-s min-w-0 flex-1 truncate text-muted">{x.investor.firm}</span>
-                        <FitMeter value={x.fit} />
+                      <li key={x.investor.id}>
+                        <button type="button" onClick={() => onGo(x.investor.id)} className="flex h-40 w-full min-w-0 items-center gap-8 border-0 border-b border-line bg-transparent px-0 text-left">
+                          <span className="shrink-0 font-medium">{x.investor.name}</span>
+                          <span className="t-body-s min-w-0 flex-1 truncate text-muted">{x.investor.firm}</span>
+                          <FitMeter value={x.fit} />
+                        </button>
                       </li>
                     ))}
                   </ul>

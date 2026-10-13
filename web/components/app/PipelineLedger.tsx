@@ -108,13 +108,22 @@ export function stripMessage(f: LedgerFacts, openLabel: string, phone = false): 
 
 const cell = "flex min-w-0 items-center gap-10 px-16";
 
-/** The 52px strip before money exists: target, Sorted progress, what to do, Start triage. */
+/** Width steps for the ledger (the space the page has, not the viewport: the split sheet takes 512px). */
+export const LEDGER_WIDE = 1180;
+export const LEDGER_NARROW = 760;
+
+/**
+ * The 52px strip before money exists: target, Sorted progress, what to do, Start triage. No
+ * "$0 committed" cell: before anyone is talking, $0 says nothing. `width` is the space the
+ * page has; under 1000px the target cell steps aside so it stays one line.
+ */
 export function LedgerStrip({
   round,
   facts,
   openLabel,
   today,
   canWrite,
+  width,
   onStartTriage,
 }: {
   round: Round;
@@ -122,23 +131,30 @@ export function LedgerStrip({
   openLabel: string;
   today: string;
   canWrite: boolean;
+  width: number;
   onStartTriage: () => void;
 }) {
   const sorted = facts.total - facts.openCount;
   const msg = stripMessage(facts, openLabel);
+  const wide = width >= LEDGER_WIDE;
+  // Narrow (1024px, or the split sheet open): the target steps aside so the message and the
+  // button keep one line.
+  const narrow = width < 1000;
   const closes = round.target_close_on
     ? `closes ${formatDate(round.target_close_on, today)}${facts.daysToClose !== null && facts.daysToClose >= 0 ? `, ${num(facts.daysToClose)} days` : ""}`
     : null;
   return (
     <section
       aria-label={`${round.name} progress`}
-      className="flex h-52 min-w-0 items-stretch overflow-hidden rounded-md border border-line bg-surface max-xl:h-auto max-xl:flex-wrap max-xl:py-6 [&>*+*]:border-l [&>*+*]:border-line"
+      className="flex h-52 min-w-0 items-stretch overflow-hidden rounded-md border border-line bg-surface [&>*+*]:border-l [&>*+*]:border-line"
     >
-      <div className={cn(cell, "shrink-0")}>
-        <span className="t-label">Target</span>
-        <b className="font-display text-[16px] font-bold tnum">{money(round.target_amount, round.currency)}</b>
-        {closes ? <span className="t-body-s whitespace-nowrap text-muted max-2xl:hidden">· {closes}</span> : null}
-      </div>
+      {narrow ? null : (
+        <div className={cn(cell, "shrink-0")}>
+          <span className="t-label">Target</span>
+          <b className="font-display text-[16px] font-bold tnum">{money(round.target_amount, round.currency)}</b>
+          {closes && wide ? <span className="t-body-s whitespace-nowrap text-muted">· {closes}</span> : null}
+        </div>
+      )}
       <div className={cn(cell, "shrink-0")}>
         <span className="t-label">Sorted</span>
         <span
@@ -147,7 +163,7 @@ export function LedgerStrip({
           aria-valuemin={0}
           aria-valuemax={facts.total}
           aria-valuenow={sorted}
-          className="h-6 w-160 overflow-hidden rounded-pill bg-sunk max-2xl:w-100"
+          className={cn("h-6 overflow-hidden rounded-pill bg-sunk", wide ? "w-160" : "w-80")}
         >
           <i className="block h-full bg-good not-italic transition-[width] duration-[400ms]" style={{ width: `${facts.total ? (sorted / facts.total) * 100 : 0}%` }} />
         </span>
@@ -155,38 +171,44 @@ export function LedgerStrip({
           <b className="font-semibold text-fg tnum">{num(sorted)}</b> of {num(facts.total)}
         </span>
       </div>
-      <p className={cn(cell, "t-body flex-1 text-muted max-xl:basis-full max-xl:border-l-0! max-xl:py-4")}>
-        <span className="truncate">{msg.text}</span>
+      <p className={cn(cell, "t-body min-w-0 flex-1 text-muted")}>
+        <span className="min-w-0 truncate">{msg.text}</span>
       </p>
-      <div className={cn(cell, "shrink-0 pr-8")}>
-        <span className="t-label whitespace-nowrap max-2xl:hidden">{moneyCompact(0, round.currency)} committed</span>
-        {msg.triage && canWrite ? (
-          <Button variant="primary" onClick={onStartTriage} kbd="T" aria-keyshortcuts="T" title="Start triage (T)">
+      {msg.triage && canWrite ? (
+        <div className={cn(cell, "shrink-0 pr-8")}>
+          <Button variant="primary" onClick={onStartTriage} kbd="T" aria-keyshortcuts="T" title="Start triage (T)" className="shrink-0">
             Start triage
           </Button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 /** Next up sentences and their links. */
-export function bucketCopy(b: NextUpBucket, openLabel: string): { text: string; link: string } {
+export function bucketCopy(b: NextUpBucket, openLabel: string): { text: string; short: string; link: string } {
   switch (b.id) {
-    case "hw":
-      return { text: `Hot or Warm still ${openLabel}`, link: "Triage →" };
+    case "ready":
+      return { text: "researched, not contacted yet", short: "to contact", link: "Show →" };
+    case "new":
+      return {
+        text: b.hw ? `still ${openLabel}, ${num(b.hw)} Hot or Warm` : `still ${openLabel}`,
+        short: `still ${openLabel}`,
+        link: "Triage →",
+      };
     case "quiet":
-      return { text: "gone quiet, 14+ days with no activity", link: "Show →" };
-    case "nofollow":
-      return { text: "talking with no follow-up set", link: "Show →" };
+      return { text: "gone quiet, 14+ days with no activity", short: "gone quiet", link: "Show →" };
     default:
-      return { text: `still ${openLabel}`, link: "Triage →" };
+      return { text: "talking with no follow-up set", short: "with no follow-up", link: "Show →" };
   }
 }
 
 /**
  * The full ledger once money exists (DECISION §5.1): committed with the soft tint, Follow up
- * now (overdue first, then today) and the Next up buckets. No funnel bar.
+ * now (overdue first, then today) and the Next up rows. No funnel bar. `width` is the space
+ * the page has: from 1180px the three blocks sit side by side with up to four rows each;
+ * below that (1024px, or any width with the split sheet open) it is one compact band with
+ * the first item of each list, so the board or table starts high on the screen.
  */
 export function LedgerDesk({
   round,
@@ -197,6 +219,7 @@ export function LedgerDesk({
   today,
   nowMs,
   canWrite,
+  width,
   onOpen,
   onDueAll,
   onBucket,
@@ -209,6 +232,7 @@ export function LedgerDesk({
   today: string;
   nowMs: number;
   canWrite: boolean;
+  width: number;
   onOpen: (investorId: string) => void;
   onDueAll: () => void;
   onBucket: (b: NextUpBucket) => void;
@@ -217,7 +241,7 @@ export function LedgerDesk({
   const next = rows
     .filter((p) => p.follow_up_on && p.follow_up_on > today)
     .sort((a, b) => (a.follow_up_on! < b.follow_up_on! ? -1 : 1))[0];
-  const buckets = nextUpBuckets(rows, openKey, today, nowMs).filter((b) => canWrite || (b.id !== "hw" && b.id !== "new"));
+  const buckets = nextUpBuckets(rows, openKey, today, nowMs).filter((b) => canWrite || b.id !== "new");
   const target = round.target_amount;
   const pctC = target > 0 ? Math.min(100, (facts.committed / target) * 100) : 0;
   const pctS = target > 0 ? Math.min(100 - pctC, (facts.soft / target) * 100) : 0;
@@ -227,50 +251,98 @@ export function LedgerDesk({
     [num(facts.committedCount), "committed"],
   ];
   if (facts.daysToClose !== null) stats.push([num(Math.abs(facts.daysToClose)), facts.daysToClose >= 0 ? "days left" : "days past close"]);
-  return (
-    <section
-      aria-label={`${round.name} summary`}
-      className="grid min-w-0 grid-cols-1 overflow-hidden rounded-md border border-line bg-surface min-[1100px]:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)]"
+  const wide = width >= LEDGER_WIDE;
+
+  const meter = (className: string) => (
+    <div
+      role="meter"
+      aria-label={`Committed toward ${round.name}`}
+      aria-valuemin={0}
+      aria-valuemax={target}
+      aria-valuenow={facts.committed}
+      className={cn("flex h-8 overflow-hidden rounded-pill bg-sunk", className)}
     >
-      <div className="min-w-0 border-line p-14 max-[1099px]:grid max-[1099px]:grid-cols-[auto_minmax(0,1fr)] max-[1099px]:items-end max-[1099px]:gap-x-24 max-[1099px]:border-b max-[1099px]:py-10 min-[1100px]:border-r">
-        <div className="min-w-0">
-          <p className="t-label">Committed toward {round.name}</p>
-          <p className="t-amount mt-4 max-[1099px]:text-[24px]">
-            <span className="text-good-ink">{money(facts.committed, round.currency)}</span>{" "}
-            <span className="text-[18px] font-medium whitespace-nowrap text-muted max-[1099px]:text-[15px]">of {money(target, round.currency)}</span>
-          </p>
+      <i className="block h-full bg-good not-italic" style={{ width: `${pctC}%` }} />
+      {pctS > 0 ? (
+        <i
+          className="block h-full not-italic"
+          title={`${moneyCompact(facts.soft, round.currency)} soft`}
+          style={{ width: `${pctS}%`, background: "color-mix(in oklab, var(--good) 30%, var(--sunk))" }}
+        />
+      ) : null}
+    </div>
+  );
+  const dueRow = (p: Participant, withStep: boolean) => (
+    <button
+      type="button"
+      onClick={() => onOpen(p.investor.id)}
+      className="flex h-28 w-full min-w-0 items-center gap-8 border-0 bg-transparent px-0 text-left hover:text-accent"
+    >
+      <StageDot color={p.stage.color} />
+      <span className="min-w-0 shrink truncate font-medium">{p.investor.name}</span>
+      {withStep ? <span className="t-body-s min-w-0 flex-1 truncate text-muted">{p.next_step || p.follow_up_note || ""}</span> : <span className="flex-1" />}
+      <span className="shrink-0 font-mono text-[12px] text-bad">{dueText(p, today)}</span>
+    </button>
+  );
+  const nothingDue = next ? `Nothing due. Next: ${next.investor.name}, ${formatDate(next.follow_up_on, today)}.` : "Nothing due.";
+  const bucketRow = (b: NextUpBucket, short = false) => {
+    const c = bucketCopy(b, openLabel);
+    return (
+      <li key={b.id} className="flex h-28 min-w-0 items-center gap-8">
+        <span className={cn("shrink-0 text-right font-mono text-[12.5px] font-medium text-fg tnum", short ? "" : "w-36")}>{num(b.count)}</span>
+        <span className="t-body-s min-w-0 flex-1 truncate">
+          {short ? c.short : c.text}
+          {b.id === "ready" && b.next ? (
+            <>
+              {" · next "}
+              <button
+                type="button"
+                onClick={() => onOpen(b.next!.id)}
+                className="border-0 bg-transparent p-0 font-semibold text-fg hover:text-accent hover:underline"
+                title={`Open ${b.next.name} (fit ${b.next.fit})`}
+              >
+                {b.next.name}
+              </button>
+            </>
+          ) : null}
+        </span>
+        <button type="button" onClick={() => onBucket(b)} className="link t-body-s shrink-0 border-0 bg-transparent p-0">
+          {c.link}
+        </button>
+      </li>
+    );
+  };
+
+  if (!wide) {
+    // One compact band: committed · the first due · the first Next up row.
+    const narrow = width < LEDGER_NARROW;
+    return (
+      <section
+        aria-label={`${round.name} summary`}
+        className={cn(
+          "grid min-w-0 overflow-hidden rounded-md border border-line bg-surface",
+          narrow ? "grid-cols-1 [&>*+*]:border-t" : "grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.1fr)] [&>*+*]:border-l",
+          "[&>*+*]:border-line",
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-12 px-14 py-8">
+          <span className="min-w-0 shrink-0">
+            <span className="t-label block">Committed</span>
+            <span className="font-display text-[18px] font-bold tnum">
+              <span className="text-good-ink">{moneyCompact(facts.committed, round.currency)}</span>
+              <span className="text-[13px] font-medium text-muted"> of {moneyCompact(target, round.currency)}</span>
+            </span>
+          </span>
+          <span className="min-w-0 flex-1">
+            {meter("")}
+            <span className="t-body-s mt-4 block truncate text-muted">
+              <b className="font-semibold text-fg tnum">{moneyCompact(facts.soft, round.currency)}</b> soft ·{" "}
+              <b className="font-semibold text-fg tnum">{num(facts.talking)}</b> talking
+            </span>
+          </span>
         </div>
-        <div className="min-w-0">
-          <div
-            role="meter"
-            aria-label={`Committed toward ${round.name}`}
-            aria-valuemin={0}
-            aria-valuemax={target}
-            aria-valuenow={facts.committed}
-            className="mt-10 flex h-8 overflow-hidden rounded-pill bg-sunk max-[1099px]:mt-0"
-          >
-            <i className="block h-full bg-good not-italic" style={{ width: `${pctC}%` }} />
-            {pctS > 0 ? (
-              <i
-                className="block h-full not-italic"
-                title={`${moneyCompact(facts.soft, round.currency)} soft`}
-                style={{ width: `${pctS}%`, background: "color-mix(in oklab, var(--good) 30%, var(--sunk))" }}
-              />
-            ) : null}
-          </div>
-          <p className="t-body-s mt-8 flex flex-wrap gap-x-6 text-muted">
-            {stats.map(([n, l], i) => (
-              <span key={l}>
-                {i > 0 ? <span className="mr-6">·</span> : null}
-                <b className="font-semibold text-fg tnum">{n}</b> {l}
-              </span>
-            ))}
-          </p>
-        </div>
-      </div>
-      <div className="grid min-w-0 grid-cols-1 min-[700px]:grid-cols-2">
-        <div className="min-w-0 border-line p-14 max-[699px]:border-b min-[700px]:border-r">
-          <p className="t-label mb-6 flex items-center">
+        <div className="min-w-0 px-14 py-8">
+          <p className="t-label flex items-center">
             Follow up now
             {due.length ? (
               <button type="button" onClick={onDueAll} className="link t-body-s ml-auto border-0 bg-transparent p-0 normal-case tracking-normal">
@@ -278,50 +350,67 @@ export function LedgerDesk({
               </button>
             ) : null}
           </p>
-          {due.length ? (
-            <ul className="m-0 flex list-none flex-col p-0 max-[1099px]:[&>li:nth-child(n+4)]:hidden">
-              {due.slice(0, 4).map((p) => (
-                <li key={p.investor.id}>
-                  <button
-                    type="button"
-                    onClick={() => onOpen(p.investor.id)}
-                    className="flex h-28 w-full min-w-0 items-center gap-8 border-0 bg-transparent px-0 text-left hover:text-accent"
-                  >
-                    <StageDot color={p.stage.color} />
-                    <span className="shrink-0 font-medium">{p.investor.name}</span>
-                    <span className="t-body-s min-w-0 flex-1 truncate text-muted">{p.next_step || p.follow_up_note || ""}</span>
-                    <span className="shrink-0 font-mono text-[12px] text-bad">{dueText(p, today)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="t-body-s text-muted">
-              {next ? `Nothing due. Next: ${next.investor.name}, ${formatDate(next.follow_up_on, today)}.` : "Nothing due."}
-            </p>
-          )}
+          {due.length ? dueRow(due[0]!, false) : <p className="t-body-s flex h-28 items-center truncate text-muted">{nothingDue}</p>}
         </div>
-        <div className="min-w-0 p-14">
-          <p className="t-label mb-6">Next up</p>
+        <div className="min-w-0 px-14 py-8">
+          <p className="t-label">Next up</p>
           {buckets.length ? (
-            <ul className="m-0 flex list-none flex-col p-0 max-[1099px]:[&>li:nth-child(n+4)]:hidden">
-              {buckets.slice(0, 4).map((b) => {
-                const c = bucketCopy(b, openLabel);
-                return (
-                  <li key={b.id} className="flex h-28 min-w-0 items-center gap-8">
-                    <span className="w-40 shrink-0 text-right font-mono text-[12.5px] font-medium text-fg tnum">{num(b.count)}</span>
-                    <span className="t-body-s min-w-0 flex-1 truncate">{c.text}</span>
-                    <button type="button" onClick={() => onBucket(b)} className="link t-body-s shrink-0 border-0 bg-transparent p-0">
-                      {c.link}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            <ul className="m-0 list-none p-0">{bucketRow(buckets[0]!, true)}</ul>
           ) : (
-            <p className="t-body-s text-muted">Nothing waiting on you.</p>
+            <p className="t-body-s flex h-28 items-center text-muted">Nothing waiting on you.</p>
           )}
         </div>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      aria-label={`${round.name} summary`}
+      className="grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)] overflow-hidden rounded-md border border-line bg-surface [&>*+*]:border-l [&>*+*]:border-line"
+    >
+      <div className="min-w-0 p-14">
+        <p className="t-label">Committed toward {round.name}</p>
+        <p className="t-amount mt-4">
+          <span className="text-good-ink">{money(facts.committed, round.currency)}</span>{" "}
+          <span className="text-[18px] font-medium whitespace-nowrap text-muted">of {money(target, round.currency)}</span>
+        </p>
+        {meter("mt-10")}
+        <p className="t-body-s mt-8 flex flex-wrap gap-x-6 text-muted">
+          {stats.map(([n, l], i) => (
+            <span key={l}>
+              {i > 0 ? <span className="mr-6">·</span> : null}
+              <b className="font-semibold text-fg tnum">{n}</b> {l}
+            </span>
+          ))}
+        </p>
+      </div>
+      <div className="min-w-0 p-14">
+        <p className="t-label mb-6 flex items-center">
+          Follow up now
+          {due.length ? (
+            <button type="button" onClick={onDueAll} className="link t-body-s ml-auto border-0 bg-transparent p-0 normal-case tracking-normal">
+              All {num(due.length)} →
+            </button>
+          ) : null}
+        </p>
+        {due.length ? (
+          <ul className="m-0 flex list-none flex-col p-0">
+            {due.slice(0, 4).map((p) => (
+              <li key={p.investor.id}>{dueRow(p, width >= 1320)}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="t-body-s text-muted">{nothingDue}</p>
+        )}
+      </div>
+      <div className="min-w-0 p-14">
+        <p className="t-label mb-6">Next up</p>
+        {buckets.length ? (
+          <ul className="m-0 flex list-none flex-col p-0">{buckets.slice(0, 4).map((b) => bucketRow(b))}</ul>
+        ) : (
+          <p className="t-body-s text-muted">Nothing waiting on you.</p>
+        )}
       </div>
     </section>
   );

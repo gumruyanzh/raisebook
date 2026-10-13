@@ -228,15 +228,19 @@ async def apply_changes(
     import_run_id: UUID | None = None,
     bulk_id: UUID | None = None,
     known_owners: set[UUID] | None = None,
+    undo: bool = False,
 ) -> list[str]:
     """Apply participant field changes and log one activity per change type. ``bulk_id``
-    goes into every activity's ``data`` so the feed can group a bulk change."""
+    goes into every activity's ``data`` so the feed can group a bulk change; ``undo`` marks
+    them ``data.undo = true`` (an Undo putting values back, so a timeline can drop the pair)."""
     act = actor or ws.actor
     clean = await _clean(db, ws, stages, raw, known_owners=known_owners)
     by_id = {s.id: s for s in stages}
     extra: dict[str, Any] = {"import_run_id": str(import_run_id)} if import_run_id else {}
     if bulk_id:
         extra["bulk_id"] = str(bulk_id)
+    if undo:
+        extra["undo"] = True
     changed: list[str] = []
     body = clean_text(note, "note", max_len=2000, multiline=True)
 
@@ -343,6 +347,7 @@ async def upsert(
     note: str | None = None,
     bulk_id: UUID | None = None,
     known_owners: set[UUID] | None = None,
+    undo: bool = False,
 ) -> UpsertResult:
     """Put ``investor`` on ``rnd`` (first stage unless ``changes["stage"]``), or apply
     ``changes`` to the existing participant (a different stage is a stage change).
@@ -369,6 +374,7 @@ async def upsert(
             import_run_id=import_run_id,
             bulk_id=bulk_id,
             known_owners=known_owners,
+            undo=undo,
         )
         return UpsertResult(existing, False, changed)
 
@@ -683,7 +689,8 @@ async def bulk_update(
     ``None`` clears a follow-up or an owner), ``add_tag`` / ``remove_tag`` (``value`` is
     the tag; tags live on the investor), ``remove``, or ``restore`` (``items``: one mapping
     per investor with ``investor_id`` and the participant fields to put back; investors no
-    longer in the round are added back). Every activity carries the same ``data.bulk_id``.
+    longer in the round are added back). Every activity carries the same ``data.bulk_id``;
+    ``restore`` activities also carry ``data.undo = true`` (timelines drop an undone pair).
 
     All or nothing: an id outside this workspace is 404 for the whole request, and for
     every op but ``restore`` an investor who is not in the round is 409 ``not_in_round``.
@@ -835,6 +842,7 @@ async def bulk_update(
                 stages=stages,
                 bulk_id=bulk_id,
                 known_owners=owners,
+                undo=True,
             )
             parts[iid] = res.participant
             if res.created or res.changed:

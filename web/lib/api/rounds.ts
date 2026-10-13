@@ -308,7 +308,9 @@ export function toPipelineItems(participants: Participant[], investors: Investor
   const byId = new Map(investors.map((i) => [i.id, i]));
   return participants.map((p) => {
     const inv = byId.get(p.investor.id);
-    const { email: _e, linkedin_url: _l, ...investor } = p.investor;
+    // Email and LinkedIn travel only when set (the Table shows them; an import has little else).
+    const { email, linkedin_url, ...rest } = p.investor;
+    const investor: InvestorCompact = { ...rest, ...(email ? { email } : {}), ...(linkedin_url ? { linkedin_url } : {}) };
     const search = inv
       ? [
           inv.location,

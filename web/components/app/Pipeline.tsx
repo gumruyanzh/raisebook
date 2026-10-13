@@ -375,6 +375,15 @@ export function Pipeline(props: PipelineProps) {
   // Phones have no board: the list, or the Triage takeover when asked for.
   const view: View = phone ? (resolved.view === "triage" && urlView === "triage" ? "triage" : "table") : resolved.view;
   const autoTriage = !phone && resolved.auto && view === "triage";
+  // "All 411 are New, so the round opens in Triage." explains the auto pick once per round
+  // and browser, then gives the title row back.
+  const NOTE_KEY = `rb-triage-note:${workspace.slug}:${round.id}`;
+  const [triageNote, setTriageNote] = useState(false);
+  useEffect(() => {
+    if (!autoTriage || readStore(NOTE_KEY) === "1") return;
+    setTriageNote(true);
+    writeStore(NOTE_KEY, "1");
+  }, [autoTriage, NOTE_KEY]);
   const triageOk = canWrite && Boolean(oStage) && (openCount > 0 || view === "triage");
   const setView = (v: View) => {
     if (!phone) {
@@ -409,6 +418,7 @@ export function Pipeline(props: PipelineProps) {
     if (Array.isArray(arr)) setHidden(new Set(arr));
   }, [workspace.slug, round.id]);
   const visible = useMemo(() => new Set(TABLE_COLS.map((c) => c.key).filter((k) => !hidden.has(k))), [hidden]);
+  const [shownCols, setShownCols] = useState<Set<TableCol> | null>(null);
   const toggleCol = (k: TableCol) =>
     setHidden((h) => {
       const n = new Set(h);
@@ -842,8 +852,8 @@ export function Pipeline(props: PipelineProps) {
   const showStrip = !money && participants.length > 0;
   const startTriageOnScreen = showStrip && canWrite && Boolean(oStage) && openCount > 0;
   const onBucket = (b: NextUpBucket) => {
-    if (b.id === "hw") startTriage("hw");
-    else if (b.id === "new") startTriage("all");
+    if (b.id === "new") startTriage(b.hw > 0 ? "hw" : "all");
+    else if (b.id === "ready") setParams({ stage: b.stageKey, kind: b.stageKey ? null : "open", follow: null });
     else if (b.id === "quiet") setParams({ follow: "quiet", kind: null, stage: null });
     else setParams({ follow: "none", kind: "active", stage: null });
   };
@@ -853,11 +863,21 @@ export function Pipeline(props: PipelineProps) {
   const openInvestor = useCallback((id: string) => setParams({ investor: id }), [setParams]);
   // J / K walk the order the sheet was opened from, even when an edit takes the investor out
   // of the current filter (setting a follow-up from "Due now").
+  // The list the investor was opened from: their board column, the phone's pill list, or the
+  // table (critique 1: "102 of 411" from the Contacted column was the whole round).
   const [sheetOrder, setSheetOrder] = useState<string[] | null>(null);
+  const phoneOrder = useRef<string[]>([]);
+  const onPhoneList = useCallback((ids: string[]) => {
+    phoneOrder.current = ids;
+  }, []);
   useEffect(() => {
-    if (openId && !sheetOrder) setSheetOrder(order);
+    if (openId && !sheetOrder) {
+      const col = view === "board" ? boardColumns.find((c) => c.cards.some((p) => p.investor.id === openId)) : undefined;
+      const list = phone ? phoneOrder.current : col ? col.cards.map((p) => p.investor.id) : order;
+      setSheetOrder(list.includes(openId) ? list : order);
+    }
     if (!openId && sheetOrder) setSheetOrder(null);
-  }, [openId, order, sheetOrder]);
+  }, [openId, order, sheetOrder, view, boardColumns, phone]);
   const orderRef = useRef(order);
   orderRef.current = order;
   const sheetOrderRef = useRef(sheetOrder);
@@ -1222,6 +1242,10 @@ export function Pipeline(props: PipelineProps) {
   const workRef = useRef<HTMLDivElement>(null);
   const [stickyTop, setStickyTop] = useState(0);
   const [fill, setFill] = useState<number | null>(null);
+  // The width the page has (not the viewport: the split sheet takes 512px of it). The title
+  // row, ledger and table adapt to this, so nothing truncates when the sheet opens.
+  const [headW, setHeadW] = useState(1392);
+  const [endSlot, setEndSlot] = useState<HTMLElement | null>(null);
   const [eatBottom, setEatBottom] = useState(0);
   useLayoutEffect(() => {
     const measure = () => {
@@ -1235,6 +1259,7 @@ export function Pipeline(props: PipelineProps) {
       setStickyTop(top);
       const workTop = workRef.current ? workRef.current.getBoundingClientRect().top + window.scrollY : top + 200;
       setFill(Math.max(420, Math.floor(window.innerHeight - workTop - gap)));
+      if (headRef.current) setHeadW(Math.round(headRef.current.clientWidth));
     };
     measure();
     window.addEventListener("resize", measure);
@@ -1244,7 +1269,7 @@ export function Pipeline(props: PipelineProps) {
       window.removeEventListener("resize", measure);
       ro?.disconnect();
     };
-  }, [empty, view, phone]);
+  }, [empty, view, phone, splitOpen]);
 
   const viewOptions: MenuEntry[] =
     view === "table"
@@ -1257,6 +1282,8 @@ export function Pipeline(props: PipelineProps) {
           ...TABLE_COLS.filter((c) => !c.required).map((c) => ({
             label: c.label,
             selected: visible.has(c.key),
+            // On but not on screen: empty for these rows, or no room at this width.
+            hint: visible.has(c.key) && shownCols && !shownCols.has(c.key) ? "hidden" : undefined,
             onSelect: () => toggleCol(c.key),
           })),
         ]
@@ -1384,14 +1411,15 @@ export function Pipeline(props: PipelineProps) {
             search={qText}
             onSearch={onSearch}
             base={base}
+            onListChange={onPhoneList}
           />
         )
       ) : (
         <div ref={headRef} className="flex flex-col gap-14">
-          <RoundHeader wsSlug={workspace.slug} round={round} active="pipeline" className="mb-0 items-center">
+          <RoundHeader wsSlug={workspace.slug} round={round} active="pipeline" className="mb-0 flex-nowrap items-center">
             {viewSegment}
-            {autoTriage ? (
-              <span className="t-micro text-muted max-2xl:hidden">
+            {autoTriage && triageNote && headW >= 1180 ? (
+              <span className="t-micro min-w-0 truncate text-muted">
                 {openCount === participants.length
                   ? `All ${num(openCount)} are ${oStage?.label ?? "New"}, so the round opens in Triage.`
                   : `${num(openCount)} of ${num(participants.length)} are ${oStage?.label ?? "New"}, so the round opens in Triage.`}
@@ -1412,9 +1440,9 @@ export function Pipeline(props: PipelineProps) {
                 }}
               />
             ) : null}
-            {setupNode ? <span className="ml-auto">{setupNode}</span> : null}
+            {setupNode ? <span className="ml-auto shrink-0">{setupNode}</span> : null}
             {view === "triage" && canWrite ? (
-              <Button size="sm" onClick={() => setAdding(true)} kbd="C" aria-keyshortcuts="C" className={setupNode ? undefined : "ml-auto"}>
+              <Button size="sm" onClick={() => setAdding(true)} kbd="C" aria-keyshortcuts="C" className={cn("shrink-0", setupNode ? undefined : "ml-auto")}>
                 Add investor
               </Button>
             ) : null}
@@ -1428,6 +1456,7 @@ export function Pipeline(props: PipelineProps) {
                 openLabel={oStage?.label ?? "New"}
                 today={today}
                 canWrite={canWrite && Boolean(oStage)}
+                width={headW}
                 onStartTriage={() => startTriage(facts.hwOpen > 0 ? "hw" : "all")}
               />
             ) : (
@@ -1440,6 +1469,7 @@ export function Pipeline(props: PipelineProps) {
                 today={today}
                 nowMs={serverAt || Date.now()}
                 canWrite={canWrite}
+                width={headW}
                 onOpen={openInvestor}
                 onDueAll={() => setParams({ follow: "due", stage: null, kind: null })}
                 onBucket={onBucket}
@@ -1453,7 +1483,7 @@ export function Pipeline(props: PipelineProps) {
                 <div className="relative flex min-w-0 flex-[1_1_220px]">
                   <SearchInput
                     ref={searchRef}
-                    placeholder="Search name, firm, focus, notes…"
+                    placeholder={headW < 1000 ? "Search…" : "Search name, firm, focus, notes…"}
                     aria-label="Search investors in this round"
                     aria-keyshortcuts="/"
                     value={qText}
@@ -1491,6 +1521,7 @@ export function Pipeline(props: PipelineProps) {
                   {n > 0 ? `${num(n)} selected · ` : ""}
                   {countText}
                 </span>
+                {view === "board" ? <span ref={setEndSlot} className="inline-flex shrink-0 empty:hidden" /> : null}
                 {canWrite ? (
                   <Button
                     variant={startTriageOnScreen ? "secondary" : "primary"}
@@ -1619,6 +1650,7 @@ export function Pipeline(props: PipelineProps) {
               onFocusMove={splitOpen ? openInvestor : undefined}
               onMove={doMove}
               onMoveMany={(ids, key) => bulkMove(key, ids)}
+              endSlot={endSlot}
             />
           ) : (
             <PipelineTable
@@ -1646,6 +1678,7 @@ export function Pipeline(props: PipelineProps) {
               focusReq={focusReq}
               today={today}
               timeZone={tz}
+              onShown={setShownCols}
             />
           )}
         </div>
@@ -1789,7 +1822,7 @@ function ViewTabs({
   const own = views.filter((v) => !v.builtin);
   const mod = typeof navigator !== "undefined" && /mac/i.test(navigator.platform) ? "⌘⇧" : "Ctrl+Shift+";
   return (
-    <div className="flex min-w-0 items-center gap-6 self-center">
+    <div className="flex min-w-0 shrink items-center gap-6 self-center">
       <div role="group" aria-label="Views" className="flex min-w-0 items-center gap-2 overflow-x-auto rounded-pill bg-sunk p-2 scrollbar-none">
         {views.map((v, i) => {
           const on = v.id === activeId;
@@ -1976,7 +2009,6 @@ function SetupMenu({
     agent: `${base}/settings/mcp`,
   };
   const done = steps.filter((x) => x.done).length;
-  const next = steps.find((x) => !x.done);
   const go = (key: string) => (key === "followups" ? onFollowUps() : href[key] ? router.push(href[key]!) : undefined);
   return (
     <span className="inline-flex items-center gap-8 whitespace-nowrap">
@@ -2002,11 +2034,6 @@ function SetupMenu({
           { label: "Dismiss", onSelect: onDismiss },
         ]}
       />
-      {next ? (
-        <button type="button" onClick={() => go(next.key)} className="link t-body-s border-0 bg-transparent p-0 max-2xl:hidden">
-          {next.label}
-        </button>
-      ) : null}
     </span>
   );
 }

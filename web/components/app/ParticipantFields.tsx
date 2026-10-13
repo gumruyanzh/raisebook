@@ -248,6 +248,8 @@ export function ParticipantFields({
       <section className={className} aria-label={title ?? "Follow-up and next step"}>
         <SectionLabel aside={<SaveState state={state} />}>{title ?? "Follow-up and next step"}</SectionLabel>
         <div className="flex flex-col gap-8">
+          {/* One "what happens next" field: the next step. The follow-up's own note ("What
+              it's for") only shows when an older entry or an agent filled it in. */}
           <div className="grid grid-cols-1 gap-8 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)]">
             <Field label="Follow up on">
               <DateField
@@ -261,11 +263,27 @@ export function ParticipantFields({
                 onChange={(iso) => void save({ follow_up_on: iso })}
               />
             </Field>
-            <Field label="What it’s for">
+            <Field label="Next step">
+              <Input
+                value={next}
+                maxLength={500}
+                placeholder={ro ? "" : "e.g. Send the updated deck"}
+                disabled={ro}
+                title={roTitle}
+                onChange={(e) => setNext(e.target.value)}
+                onKeyDown={enterBlurs}
+                onBlur={() => {
+                  const v = next.trim() || null;
+                  if (v !== (p.next_step ?? null)) void save({ next_step: v });
+                }}
+              />
+            </Field>
+          </div>
+          {p.follow_up_note ? (
+            <Field label="Follow-up note">
               <Input
                 value={fuNote}
                 maxLength={500}
-                placeholder={ro ? "" : "e.g. Send the updated deck"}
                 disabled={ro}
                 title={roTitle}
                 onChange={(e) => setFuNote(e.target.value)}
@@ -276,22 +294,7 @@ export function ParticipantFields({
                 }}
               />
             </Field>
-          </div>
-          <Field label="Next step">
-            <Input
-              value={next}
-              maxLength={500}
-              placeholder={ro ? "" : "What happens next"}
-              disabled={ro}
-              title={roTitle}
-              onChange={(e) => setNext(e.target.value)}
-              onKeyDown={enterBlurs}
-              onBlur={() => {
-                const v = next.trim() || null;
-                if (v !== (p.next_step ?? null)) void save({ next_step: v });
-              }}
-            />
-          </Field>
+          ) : null}
         </div>
         {error ? <p className={cn("t-body-s mt-8 text-bad")}>{error}</p> : null}
       </section>

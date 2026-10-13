@@ -5,7 +5,8 @@ import type { KeyboardEvent } from "react";
 import { cn } from "@/lib/cn";
 
 /**
- * Five 6×10px pips filled in good (SYSTEM 3.7). Read-only by default. `editable` turns it
+ * Five 6×10px pips in a neutral ink (SYSTEM 3.7; green stays for committed money, so a board
+ * of Hot investors does not read as money). Read-only by default. `editable` turns it
  * into a radio group of six values (0–5): click a pip, or use the arrow keys, Home/End or 0–5.
  */
 export function FitMeter({
@@ -29,7 +30,7 @@ export function FitMeter({
   const pips = [1, 2, 3, 4, 5].map((i) => (
     <i
       key={i}
-      className={cn("block h-10 w-6 rounded-xs not-italic", i <= v ? "bg-good" : "bg-line")}
+      className={cn("block h-10 w-6 rounded-xs not-italic", i <= v ? "bg-muted" : "bg-line")}
     />
   ));
   const text = showLabel ? <span className="ml-4">{v}/5</span> : null;
@@ -106,7 +107,7 @@ export function FitMeter({
             <i
               className={cn(
                 "block h-14 w-8 rounded-xs not-italic transition-colors duration-[120ms]",
-                i <= v ? "bg-good" : "bg-line hover:bg-faint",
+                i <= v ? "bg-muted" : "bg-line hover:bg-faint",
               )}
             />
           )}

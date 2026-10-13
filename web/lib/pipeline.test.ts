@@ -3,7 +3,14 @@ import { test } from "node:test";
 
 import type { Participant, Stage } from "./api/types";
 import {
+  boardSegments,
   cardSlot,
+  cursorAfterMove,
+  fitColumns,
+  followOptions,
+  pressedOption,
+  queuePosition,
+  segmentTrack,
   defaultView,
   dominantStage,
   formatDuration,
@@ -14,6 +21,7 @@ import {
   nextUpBuckets,
   paceEstimate,
   priorityGroups,
+  quietColumns,
   triageTargets,
   visibleIndustries,
 } from "./pipeline";
@@ -132,11 +140,12 @@ test("cardSlot: exactly one item, in precedence order", () => {
   });
   assert.deepEqual(c({ follow_up_on: "2026-10-14", follow_up_state: "soon" }), { kind: "soon", text: "Oct 14" });
   assert.deepEqual(c({ follow_up_on: "2026-10-24", follow_up_state: "later" }), { kind: "later", text: "Oct 24" });
-  assert.deepEqual(c({ type: "corporate_vc" }), { kind: "type", text: "CVC" });
+  // No due date, money or follow-up: the slot stays empty (no "VC" fallback).
+  assert.equal(c({ type: "corporate_vc" }), null);
   assert.equal(c({ type: "other" }), null);
 });
 
-test("nextUpBuckets: counts, zero buckets hidden, 'still New' only when it differs", () => {
+test("nextUpBuckets: who to contact next first, New in one row, zero rows hidden", () => {
   const now = Date.parse("2026-10-12T12:00:00Z");
   const today = "2026-10-12";
   const old = "2026-09-20T00:00:00Z";
@@ -144,22 +153,102 @@ test("nextUpBuckets: counts, zero buckets hidden, 'still New' only when it diffe
     row({ fit: 5 }),
     row({ fit: 4 }),
     row({ fit: 2 }),
+    row({ stageKey: "research", fit: 3, name: "Rhea" }),
+    row({ stageKey: "research", fit: 5, name: "Bram" }),
     row({ stageKey: "contacted", last_activity_at: old }), // quiet + no follow-up
     row({ stageKey: "contacted", last_activity_at: old, follow_up_on: "2026-10-20" }), // not quiet
     row({ stageKey: "replied", last_activity_at: "2026-10-11T00:00:00Z" }), // no follow-up only
     row({ stageKey: "passed", last_activity_at: old }),
   ];
-  assert.deepEqual(nextUpBuckets(rows, "new", today, now), [
-    { id: "hw", count: 2 },
-    { id: "quiet", count: 1 },
-    { id: "nofollow", count: 2 },
-    { id: "new", count: 3 },
-  ]);
-  // All of New is Hot or Warm: no separate "still New" bucket.
-  assert.deepEqual(nextUpBuckets([row({ fit: 5 })], "new", today, now), [{ id: "hw", count: 1 }]);
+  const b = nextUpBuckets(rows, "new", today, now);
+  assert.deepEqual(
+    b.map((x) => [x.id, x.count]),
+    [
+      ["ready", 2],
+      ["new", 3],
+      ["quiet", 1],
+      ["nofollow", 2],
+    ],
+  );
+  const ready = b[0] as Extract<(typeof b)[number], { id: "ready" }>;
+  assert.equal(ready.next?.name, "Bram");
+  assert.equal(ready.stageKey, "research");
+  assert.equal((b[1] as Extract<(typeof b)[number], { id: "new" }>).hw, 2);
   assert.deepEqual(nextUpBuckets([], "new", today, now), []);
   // An overdue follow-up does not keep a quiet investor off the list.
   assert.equal(isQuiet(row({ stageKey: "meeting", last_activity_at: old, follow_up_on: "2026-10-01" }), today, now), true);
+});
+
+test("followOptions: three different dates; on a Monday the third becomes In 2 weeks", () => {
+  const monday = [
+    { label: "Tomorrow", iso: "2026-10-13", kbd: "1" },
+    { label: "Next Monday", iso: "2026-10-19", kbd: "m" },
+    { label: "In 1 week", iso: "2026-10-19", kbd: "7" },
+    { label: "In 2 weeks", iso: "2026-10-26", kbd: "2" },
+  ];
+  assert.deepEqual(
+    followOptions(monday).map((o) => [o.label, o.kbd]),
+    [
+      ["Tomorrow", "1"],
+      ["Next Mon", "m"],
+      ["In 2 weeks", "2"],
+    ],
+  );
+  const wednesday = [
+    { label: "Tomorrow", iso: "2026-10-15", kbd: "1" },
+    { label: "Next Monday", iso: "2026-10-19", kbd: "m" },
+    { label: "In 1 week", iso: "2026-10-21", kbd: "7" },
+    { label: "In 2 weeks", iso: "2026-10-28", kbd: "2" },
+  ];
+  assert.deepEqual(
+    followOptions(wednesday).map((o) => o.kbd),
+    ["1", "m", "7"],
+  );
+  // One pressed option per value, never two.
+  const opts = [{ iso: null }, { iso: "2026-10-19" }, { iso: "2026-10-19" }];
+  assert.equal(pressedOption(opts, "2026-10-19"), 1);
+  assert.equal(pressedOption(opts, null), 0);
+  assert.equal(pressedOption(opts, "2026-12-01"), -1);
+});
+
+test("cursorAfterMove: an undecided cursor stays; a moved one goes to the next undecided", () => {
+  const order = ["ada", "bram", "cleo", "dana"];
+  const done = new Set<string>();
+  // Bulk move of bram + cleo while the cursor is on ada: ada stays.
+  assert.equal(cursorAfterMove(order, "ada", new Set(["bram", "cleo"]), (id) => done.has(id)), "ada");
+  // The cursor itself moved: the next undecided after it.
+  assert.equal(cursorAfterMove(order, "bram", new Set(["bram", "cleo"]), (id) => done.has(id)), "dana");
+  // Everything after it is done: wrap to the top.
+  done.add("dana");
+  assert.equal(cursorAfterMove(order, "cleo", new Set(["cleo"]), (id) => done.has(id)), "ada");
+  assert.equal(cursorAfterMove(order, null, new Set(), () => false), "ada");
+});
+
+test("queuePosition: place among the rows left, not among every row seen", () => {
+  const order = ["a", "b", "c", "d", "e"];
+  const left = new Set(["b", "d", "e"]);
+  assert.deepEqual(queuePosition(order, "d", (id) => left.has(id)), { pos: 2, left: 3 });
+  // A decided row has no place; the count still says how many are left.
+  assert.deepEqual(queuePosition(order, "a", (id) => left.has(id)), { pos: null, left: 3 });
+});
+
+test("boardSegments: runs of 2+ empty stages share one track", () => {
+  const cols = (counts: number[]) => counts.map((count, i) => ({ key: `s${i}`, count }));
+  // After a first session: New, Researching 1, Contacted 3, four empty, Passed 87.
+  const seg = boardSegments(cols([405, 1, 3, 0, 0, 0, 0, 87]));
+  assert.deepEqual(
+    seg.map((x) => (x.kind === "empty" ? x.keys.join("+") : x.key)),
+    ["s0", "s1", "s2", "s3+s4+s5+s6", "s7"],
+  );
+  // A single empty stage keeps its own narrow column.
+  const mature = boardSegments(cols([38, 64, 52, 14, 9, 0, 4, 230]));
+  assert.equal(mature.length, 8);
+  assert.deepEqual(mature[5], { kind: "stage", key: "s5", empty: true });
+  assert.equal(segmentTrack(mature[5]!, null), "minmax(136px, .6fr)");
+  assert.equal(segmentTrack(seg[0]!, "s0"), "minmax(352px, 3fr)");
+  assert.equal(segmentTrack(seg[3]!, "s0"), "minmax(184px, .7fr)");
+  // Everyone in New: New plus one stacked track.
+  assert.equal(boardSegments(cols([411, 0, 0, 0, 0, 0, 0, 0])).length, 2);
 });
 
 test("priorityGroups: Hot, Warm, Maybe, Low; fit desc, then import order", () => {
@@ -195,11 +284,35 @@ test("nextCursor: next undecided, skips done, wraps, null when all done", () => 
   assert.equal(nextCursor([], null, () => false), null);
 });
 
-test("paceEstimate: median gap capped at 120s, from the 5th decision", () => {
+test("paceEstimate: median gap clamped to 8s–120s, from the 5th decision", () => {
   assert.deepEqual(paceEstimate([0, 10_000, 20_000, 30_000]), { sorted: 4, perMs: null });
   // Gaps 10s, 10s, 20s, 600s(→120s): median of [10,10,20,120] = 15s.
   assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000]), { sorted: 5, perMs: 15_000 });
+  // Six quick Passes a second apart are not a 1s pace: each gap counts as 8s.
+  assert.deepEqual(paceEstimate([0, 1_000, 2_000, 3_000, 4_000, 5_000]), { sorted: 6, perMs: 8_000 });
   assert.equal(formatDuration(40 * 20_000), "15 min");
   assert.equal(formatDuration(371 * 26_000), "2h 40m");
   assert.equal(formatDuration(1000), "5 min");
+});
+
+test("fitColumns: drop the lowest priority until the widths fit; required ones stay", () => {
+  const cols = [
+    { key: "investor", width: 240, required: true },
+    { key: "firm", width: 180 },
+    { key: "stage", width: 140 },
+    { key: "email", width: 220 },
+    { key: "last", width: 112 },
+  ] as const;
+  assert.deepEqual(fitColumns(cols, ["last", "email", "stage", "investor"], 2000), ["investor", "firm", "stage", "email", "last"]);
+  assert.deepEqual(fitColumns(cols, ["last", "email", "stage", "investor"], 600), ["investor", "firm", "stage"]);
+  assert.deepEqual(fitColumns(cols, ["last", "email", "stage", "investor", "firm"], 100), ["investor"]);
+});
+
+test("quietColumns: all empty, or the same value on 20+ rows", () => {
+  const rows = Array.from({ length: 25 }, (_, i) => ({ stage: "new", soft: null as number | null, firm: `F${i}` }));
+  const v = (r: never, k: "stage" | "soft" | "firm") => (r as Record<string, string | number | null>)[k];
+  assert.deepEqual([...quietColumns(["stage", "soft", "firm"], rows, v)].sort(), ["soft", "stage"]);
+  // A constant column can be kept on purpose, and a short list never counts as constant.
+  assert.deepEqual([...quietColumns(["stage", "soft"], rows, v, ["stage"])], ["soft"]);
+  assert.deepEqual([...quietColumns(["stage"], rows.slice(0, 5), v)], []);
 });

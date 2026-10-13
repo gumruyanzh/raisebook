@@ -20,6 +20,7 @@ import { INVESTOR_TYPE_LABEL, PRIORITY_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { followUpCellText, formatDate, isoDate, money, moneyCompact, priorityFromFit, relativeTime } from "@/lib/format";
 import { isApple } from "@/lib/hotkeys";
+import { fitColumns, quietColumns, visibleIndustries } from "@/lib/pipeline";
 
 import type { AgentMark } from "./PipelineBoard";
 import { personName, useMediaQuery } from "./util";
@@ -31,30 +32,44 @@ export type TableCol =
   | "stage"
   | "fit"
   | "type"
+  | "industry"
   | "follow_up"
   | "soft"
   | "committed"
   | "owner"
   | "last_activity"
-  | "next_step";
+  | "next_step"
+  | "email"
+  | "links";
 
 export type Density = "compact" | "comfortable";
 
 /** Column widths are fixed so windowed rows never change the layout while scrolling. */
-export const TABLE_COLS: { key: TableCol; label: string; width: number; required?: boolean; num?: boolean }[] = [
+export const TABLE_COLS: { key: TableCol; label: string; width: number; required?: boolean; num?: boolean; unsortable?: boolean }[] = [
   { key: "investor", label: "Investor", width: 240, required: true },
   { key: "title", label: "Title", width: 160 },
   { key: "firm", label: "Firm", width: 180 },
-  { key: "stage", label: "Stage", width: 140 },
-  { key: "fit", label: "Fit", width: 76 },
-  { key: "type", label: "Type", width: 104 },
+  { key: "stage", label: "Stage", width: 132 },
+  { key: "fit", label: "Fit", width: 72 },
+  { key: "type", label: "Type", width: 112 },
+  { key: "industry", label: "Industry", width: 160, unsortable: true },
   { key: "follow_up", label: "Follow-up", width: 150 },
-  { key: "soft", label: "Soft", width: 88, num: true },
+  { key: "soft", label: "Soft", width: 84, num: true },
   { key: "committed", label: "Committed", width: 100, num: true },
   { key: "owner", label: "Owner", width: 128 },
   { key: "last_activity", label: "Last activity", width: 112 },
-  { key: "next_step", label: "Next step", width: 240 },
+  { key: "next_step", label: "Next step", width: 220 },
+  { key: "email", label: "Email", width: 270 },
+  { key: "links", label: "LinkedIn", width: 92, unsortable: true },
 ];
+
+/**
+ * When the columns do not fit, these go first (first in the list, first dropped); the
+ * Investor, Firm, Stage, Fit, Follow-up, money and Next step columns stay longest.
+ */
+const DROP_ORDER: TableCol[] = ["title", "last_activity", "links", "email", "type", "industry", "owner", "firm", "soft", "next_step", "follow_up", "committed", "stage"];
+/** Only these may hide for holding one value on every row (Stage: "New" ×411). */
+const CONSTANT_HIDES: TableCol[] = ["stage", "last_activity"];
 
 export type SortDir = "asc" | "desc";
 
@@ -72,6 +87,9 @@ export const DEFAULT_DIR: Record<TableCol, SortDir> = {
   owner: "asc",
   last_activity: "desc",
   next_step: "asc",
+  industry: "asc",
+  email: "asc",
+  links: "asc",
 };
 
 const ROW_H: Record<Density, number> = { compact: 32, comfortable: 44 };
@@ -104,6 +122,11 @@ function sortValue(p: Participant, col: TableCol): string | number | null {
       return p.last_activity_at ?? null;
     case "next_step":
       return p.next_step?.toLowerCase() ?? null;
+    case "email":
+      return p.investor.email?.toLowerCase() ?? null;
+    case "industry":
+    case "links":
+      return null;
   }
 }
 
@@ -132,6 +155,7 @@ export function sortParticipants(rows: Participant[], col: TableCol, dir: SortDi
 export function PipelineTable({
   round,
   rows,
+  extras,
   agentMarks,
   members,
   visible,
@@ -148,6 +172,7 @@ export function PipelineTable({
   focusReq,
   today,
   timeZone,
+  onShown,
 }: {
   round: Round;
   /** Already filtered and sorted. */
@@ -173,10 +198,57 @@ export function PipelineTable({
   focusReq: { id: string; n: number } | null;
   today: string;
   timeZone: string;
+  /** The columns actually on screen (the Display menu marks the ones left out and why). */
+  onShown?: (shown: Set<TableCol>) => void;
 }) {
   const isPhone = useMediaQuery("(max-width: 639px)");
-  const cols = TABLE_COLS.filter((c) => c.required || visible.has(c.key));
-  const titleCol = visible.has("title");
+  const scroll = useRef<HTMLDivElement>(null);
+  const [availW, setAvailW] = useState(1392);
+  useLayoutEffect(() => {
+    const el = scroll.current;
+    if (!el) return;
+    const measure = () => setAvailW(el.clientWidth);
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
+  const industriesOf = useCallback((p: Participant) => visibleIndustries(extras[p.investor.id]?.industries), [extras]);
+  // Columns with nothing to say for these rows are left out (an import has no follow-ups,
+  // money or owners yet), then the rest is fitted to the width the page has.
+  const quiet = useMemo(
+    () =>
+      quietColumns(
+        TABLE_COLS.map((c) => c.key),
+        rows,
+        (p: Participant, k: TableCol) =>
+          k === "industry"
+            ? industriesOf(p).join(", ")
+            : k === "links"
+              ? (p.investor.linkedin_url ?? null)
+              : k === "fit"
+                ? 1
+                : k === "investor"
+                  ? p.investor.name
+                  : (sortValue(p, k) as string | number | null),
+        TABLE_COLS.map((c) => c.key).filter((k) => !CONSTANT_HIDES.includes(k)),
+      ),
+    [rows, industriesOf],
+  );
+  const selectableW = selected !== null ? SELECT_W : 0;
+  const cols = useMemo(() => {
+    const wanted = TABLE_COLS.filter((c) => c.required || (visible.has(c.key) && !quiet.has(c.key)));
+    const keep = new Set(fitColumns(wanted, DROP_ORDER, availW - selectableW));
+    return wanted.filter((c) => keep.has(c.key));
+  }, [visible, quiet, availW, selectableW]);
+  const shownKey = cols.map((c) => c.key).join();
+  useEffect(() => {
+    onShown?.(new Set(cols.map((c) => c.key)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownKey]);
+  const titleCol = cols.some((c) => c.key === "title");
+  // No room for Firm: it goes next to the name instead of the title.
+  const firmCol = cols.some((c) => c.key === "firm");
   const cur = round.currency;
   const now = useMemo(() => new Date(), []);
   const me = useMemo(() => new Set(members.filter((m) => m.is_you).map((m) => m.user_id)), [members]);
@@ -184,7 +256,6 @@ export function PipelineTable({
   const tableWidth = cols.reduce((s, c) => s + c.width, 0) + (selectable ? SELECT_W : 0);
   const rowH = ROW_H[density];
 
-  const scroll = useRef<HTMLDivElement>(null);
   const thead = useRef<HTMLTableSectionElement>(null);
   const [headH, setHeadH] = useState(33);
   useLayoutEffect(() => {
@@ -356,7 +427,11 @@ export function PipelineTable({
             <span className={cn(one, "font-semibold")} title={p.investor.name}>
               {p.investor.name}
             </span>
-            {!titleCol && p.investor.title ? (
+            {!firmCol && p.investor.firm ? (
+              <span className={cn(one, "t-body-s min-w-0 shrink text-muted")} title={p.investor.firm}>
+                {p.investor.firm}
+              </span>
+            ) : !titleCol && p.investor.title ? (
               <span className={cn(one, "t-body-s min-w-0 shrink text-muted")} title={p.investor.title}>
                 {p.investor.title}
               </span>
@@ -437,6 +512,33 @@ export function PipelineTable({
             {p.next_step ?? ""}
           </span>
         );
+      case "industry": {
+        const list = industriesOf(p);
+        return list.length ? (
+          <span className={cn(one, "block text-muted")} title={list.join(", ")}>
+            {list.join(", ")}
+          </span>
+        ) : null;
+      }
+      case "email":
+        return p.investor.email ? (
+          <span className={cn(one, "t-data block text-muted")} title={p.investor.email}>
+            {p.investor.email}
+          </span>
+        ) : null;
+      case "links":
+        return p.investor.linkedin_url ? (
+          <a
+            href={p.investor.linkedin_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="link t-body-s"
+            onClick={(e) => e.stopPropagation()}
+            tabIndex={-1}
+          >
+            Profile ↗
+          </a>
+        ) : null;
     }
   };
 
@@ -481,7 +583,7 @@ export function PipelineTable({
                   key={c.key}
                   align={c.num ? "right" : "left"}
                   sort={sort === c.key ? dir : null}
-                  onSort={() => onSort(c.key)}
+                  onSort={c.unsortable ? undefined : () => onSort(c.key)}
                   className={cn(left !== null && "z-[3]! shadow-[inset_-1px_0_0_var(--line)]")}
                   style={left !== null ? { left } : undefined}
                 >

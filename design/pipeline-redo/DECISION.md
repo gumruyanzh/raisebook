@@ -556,3 +556,57 @@ the auto rule on.
   undoable and announced)".
 - §2.4: add "The industry 'Other' and the type `other` are never rendered as chips".
 - UX-PASS-1 P1-3's rail line is superseded.
+
+---
+
+## 10. Amendments after design critique 1 (2026-10-12)
+
+The review (`review-1/`) found layout and logic bugs; these rules now win over §3–§7 above.
+Screenshots: `after-critique-1/`.
+
+- **Triage counts are "left"** (still `O` and not skipped) everywhere: the pills, the group
+  headers and the investor header ("3 of 190 left in New · Low fit"). A bulk move keeps the
+  cursor on the current row when that row is still undecided (`cursorAfterMove`).
+- **U undoes the last change**, not only the last move: a follow-up, fit or next-step change
+  is its own Undo entry (the follow-up toast has Undo too). A move replaces that investor's
+  earlier edits on the stack, since its turn snapshot already restores them.
+- **Undo leaves no history**: `restore` activities carry `data.undo`; a timeline drops the
+  change and its undo as a pair (`dropUndone` in `lib/api/activities.ts`).
+- **Follow-up picks are three different dates**: Tomorrow · Next Mon · In 1 week, and on a
+  Monday the third becomes In 2 weeks (`f 2`). Exactly one button is pressed per value.
+- **One fit encoding**: pips alone ("Fit ▮▮▮▮▮"); no Hot chip and no "5/5" next to them in the
+  Triage pane, the sheet header or phone Triage. Pips are neutral ink (`muted`), not green,
+  and are hidden in the won and lost stages and in a column where every card has the same fit.
+- **One key map**: the rail shows "Where they are" (counts + this session's +N) without keys
+  or buttons. The 1024px stage strip is gone.
+- **The pane helps decide**: LinkedIn (or a LinkedIn search) as a button with `L`, "Draft
+  intro email" (`mailto:`; afterwards the panel says "sent it? 2 files Calla in Contacted"),
+  "Also at <firm>" (others from the same firm, with their stage) and "Up next" (three). Source
+  shows once (a chip). The toast lifts above the decision panel (`useToastLift`).
+- **Bulk**: "Select 86" scrolls the first selected row into view and offers "Show the 86
+  selected"; the panel reads "Where do the 86 go? one key moves all 86".
+- **Pace**: each gap is clamped to 8–120s, so a burst of quick Passes is not a pace.
+- **Board tracks**: a run of two or more consecutive empty stages shares one "Drop to file"
+  track of stacked drop zones (`boardSegments`); the dominant New column lays cards out in as
+  many ≥236px columns as fit. After a first session (New, Researching 1, Contacted 3, four
+  empty, Passed) the board fits 1440px. The end-stage pill lives in the toolbar and hides when
+  the end stages are empty.
+- **Cards**: the right slot has no type fallback; most fresh cards show only name, firm, pips.
+- **Widths are the page's, not the viewport's**: the title row, ledger and table measure the
+  space the page has, so opening the split sheet reflows them (no "Start tria", no
+  "Edit round" on a second line). The strip has no "$0 committed" cell; the desk is full from
+  1180px and one compact band below. The auto-Triage note shows once per round and browser;
+  "SET UP n/4" is a small Menu without the next-step link; the title row shows "SAFE · $16M CAP".
+- **Next up**: "63 researched, not contacted yet · next Bram Keel" (who to contact next: the
+  highest fit in the open-kind stages after New), then New in one row ("38 still New, 9 Hot or
+  Warm → Triage"), then gone quiet and no follow-up.
+- **Table**: columns that are empty for these rows hide, and Stage / Last activity hide when
+  they hold one value on 20+ rows; Industry, Email and LinkedIn columns exist; the rest is
+  fitted to the width (lowest priority first; Firm moves next to the name when it has no room).
+  The Display menu marks a column that is on but not shown as "hidden".
+- **Sheet**: ↑/↓ and "N of M" walk the list it was opened from (the board column, the phone's
+  pill list, the table). Phones hide the arrows. One "Next step" field; the follow-up note shows
+  only when one exists.
+- **Phone**: Follow up now is not repeated when the pills already show Due now; zero-count stage
+  pills are hidden; a slim title line (the round picker already says "Seed"); Triage shows
+  "321 left · 90 of 411 sorted", a 4px meter, same-firm and five tappable Up next rows.

@@ -11,15 +11,16 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
-import { Board, BoardCard, BoardColumn, Menu, StageDot } from "@/components/ui";
+import { Board, BoardCard, BoardColumn, EmptyStages, Menu, StageDot } from "@/components/ui";
 import { CARD_GAP, CARD_H, CARD_H_STEP } from "@/components/ui/Board";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
 import type { Participant, Priority, Round, Stage } from "@/lib/api/types";
 import { PRIORITY_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { moneyCompact, num, priorityFromFit } from "@/lib/format";
-import { cardSlot, GROUP_LABEL, PRIORITY_ORDER, STAGE_MEANING, triageTargets } from "@/lib/pipeline";
+import { boardSegments, cardSlot, GROUP_LABEL, PRIORITY_ORDER, segmentTrack, STAGE_MEANING, triageTargets } from "@/lib/pipeline";
 
 import { byFit } from "./util";
 
@@ -62,15 +63,23 @@ const PRIO_FILL: Record<Priority, string> = { hot: "bg-hot", warm: "bg-warm", ma
 
 interface ColumnApi {
   scrollToIndex: (cardIndex: number) => boolean;
+  /**
+   * The card next to `idx` in a direction, for columns laid out as a grid (the wide New
+   * column): undefined when the column is a plain list (the board's default moves apply),
+   * null when there is nothing that way inside the column.
+   */
+  neighbor: (idx: number, dir: "up" | "down" | "left" | "right") => number | null | undefined;
 }
 
 /**
- * The pipeline board (DECISION §5.2–§5.5). One column per stage and never a rail: the
- * dominant stage gets at least 352px, a stage with cards 232px, an empty one 136px with a
- * "Drop here" zone, so the 411-in-New round shows all 8 columns at 1440 and a mature round
- * scrolls sideways (a pill at the bottom right reaches the end stages). The board fills the
- * viewport and only the columns scroll, each windowed (cards are 52px). The dominant New
- * column adds a priority bar and groups its cards by priority with "Select N".
+ * The pipeline board (DECISION §5.2–§5.5, critique 1). One column per stage and never a rail:
+ * the dominant stage gets at least 352px and lays its cards out in as many columns as fit, a
+ * stage with cards 232px, a lone empty stage 136px with a "Drop here" zone, and a run of two
+ * or more empty stages shares one narrow track of stacked drop zones. So the 411-in-New round
+ * and the round after its first session both fit 1440px, and a mature round scrolls sideways
+ * (a pill in the toolbar reaches the end stages). The board fills the viewport and only the
+ * columns scroll, each windowed (cards are 52px). The dominant New column adds a priority
+ * bar and groups its cards by priority with "Select N".
  *
  * Keyboard (one tab stop): arrows or J/K move, Enter opens, Alt+→ / Alt+← moves a card one
  * stage (skipping the lost stage), M opens "Move to…" (digits pick a stage), X selects,
@@ -101,6 +110,7 @@ export function PipelineBoard({
   onFocusMove,
   onMove,
   onMoveMany,
+  endSlot,
 }: {
   round: Round;
   stages: Stage[];
@@ -135,6 +145,8 @@ export function PipelineBoard({
   onMove: (investorId: string, stageKey: string) => Promise<boolean>;
   /** One bulk request (dragging or "Move to…" with several selected). */
   onMoveMany: (investorIds: string[], stageKey: string) => void;
+  /** Where the end-stage pill goes (a slot in the toolbar), so it never covers cards. */
+  endSlot?: HTMLElement | null;
 }) {
   const [dragIds, setDragIds] = useState<string[] | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
@@ -146,15 +158,9 @@ export function PipelineBoard({
   const sel = selected ?? EMPTY;
   const anySelected = sel.size > 0;
 
-  const template = columns
-    .map((c) =>
-      c.stage.key === dominantKey
-        ? "minmax(352px, 2.5fr)"
-        : c.cards.length > 0
-          ? "minmax(232px, 1fr)"
-          : "minmax(136px, .6fr)",
-    )
-    .join(" ");
+  const segments = useMemo(() => boardSegments(columns.map((c) => ({ key: c.stage.key, count: c.cards.length }))), [columns]);
+  const template = segments.map((g) => segmentTrack(g, dominantKey)).join(" ");
+  const colByKey = useMemo(() => new Map(columns.map((c, i) => [c.stage.key, { c, i }])), [columns]);
 
   /* ---------- the right edge: fade and the end-stage pill ---------- */
   const [fade, setFade] = useState(false);
@@ -170,11 +176,12 @@ export function PipelineBoard({
     setFade(el.scrollWidth - right > 4);
     const off: string[] = [];
     for (const key of endKeys) {
+      if (!colByKey.get(key)?.c.cards.length) continue;
       const col = el.querySelector<HTMLElement>(`[data-stage="${CSS.escape(key)}"]`);
       if (col && col.offsetLeft + 40 > right) off.push(key);
     }
     setOffEnds((prev) => (prev.join() === off.join() ? prev : off));
-  }, [endKeys]);
+  }, [endKeys, colByKey]);
   useEffect(() => {
     updateEdge();
     window.addEventListener("resize", updateEdge);
@@ -293,19 +300,26 @@ export function PipelineBoard({
       }
     };
     const sideways = (dir: 1 | -1) => {
+      const inside = apis.current[col.stage.key]?.neighbor(at.idx, dir === 1 ? "right" : "left");
+      if (typeof inside === "number") return go(at.col, inside);
       for (let c = at.col + dir; c >= 0 && c < columns.length; c += dir) {
         if (columns[c]!.cards.length) return go(c, Math.min(at.idx, columns[c]!.cards.length - 1));
       }
+    };
+    const vertical = (dir: 1 | -1) => {
+      const n = apis.current[col.stage.key]?.neighbor(at.idx, dir === 1 ? "down" : "up");
+      if (n === null) return e.preventDefault();
+      return go(at.col, n ?? at.idx + dir, e.shiftKey);
     };
     switch (e.key) {
       case "ArrowDown":
       case "j":
       case "J":
-        return go(at.col, at.idx + 1, e.shiftKey);
+        return vertical(1);
       case "ArrowUp":
       case "k":
       case "K":
-        return go(at.col, at.idx - 1, e.shiftKey);
+        return vertical(-1);
       case "ArrowRight":
         return sideways(1);
       case "ArrowLeft":
@@ -350,7 +364,8 @@ export function PipelineBoard({
     const el = boardRef.current;
     if (el) el.scrollTo({ left: el.scrollWidth, behavior: "smooth" });
   };
-  const endCols = columns.filter((c) => offEnds.includes(c.stage.key));
+  // Only end stages with someone in them: "Committed 0 · Passed 0" says nothing.
+  const endCols = columns.filter((c) => offEnds.includes(c.stage.key) && c.cards.length > 0);
 
   return (
     <div className="relative">
@@ -364,7 +379,36 @@ export function PipelineBoard({
         className="min-h-0! grid-rows-[100%] pb-6!"
         style={{ height: height ?? "70vh" }}
       >
-        {columns.map(({ stage: s, cards }) => {
+        {segments.map((seg) => {
+          if (seg.kind === "empty") {
+            return (
+              <EmptyStages
+                key={`empty-${seg.keys.join("-")}`}
+                stages={seg.keys.map((k) => {
+                  const st = colByKey.get(k)!.c.stage;
+                  return { key: st.key, label: st.label, color: st.color, meaning: STAGE_MEANING[st.key] ?? null };
+                })}
+                readOnly={!canWrite}
+                filtered={filtered}
+                dragCount={dragIds !== null && canWrite ? dragIds.length : 0}
+                overKey={overKey}
+                onDragOver={
+                  canWrite
+                    ? (k, e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                        if (overKey !== k) setOverKey(k);
+                      }
+                    : undefined
+                }
+                onDragLeave={(k, e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverKey((x) => (x === k ? null : x));
+                }}
+                onDrop={canWrite ? (k, e) => drop(e, k) : undefined}
+              />
+            );
+          }
+          const { stage: s, cards } = colByKey.get(seg.key)!.c;
           const sort = sorts[s.key] ?? "fit";
           const isOpen = s.key === openKey;
           const grouped = isOpen && s.key === dominantKey;
@@ -477,29 +521,33 @@ export function PipelineBoard({
       {fade ? (
         <div aria-hidden className="pointer-events-none absolute top-0 right-0 bottom-8 w-48 bg-linear-to-l from-canvas to-transparent" />
       ) : null}
-      {endCols.length ? (
-        <button
-          type="button"
-          onClick={scrollToEnds}
-          className="absolute right-12 bottom-20 z-10 inline-flex h-32 items-center gap-8 rounded-pill border border-line bg-surface px-12 text-13 shadow-menu hover:border-accent"
-        >
-          {endCols.map((c, i) => {
-            const amount = c.stage.kind === "won" ? c.cards.reduce((n, p) => n + (p.amount_committed ?? 0), 0) : 0;
-            return (
-              <span key={c.stage.key} className="inline-flex items-center gap-6">
-                {i > 0 ? <span className="text-muted">·</span> : null}
-                <StageDot color={c.stage.color} />
-                <span className="font-medium">{c.stage.label}</span>
-                {amount > 0 ? <span className="font-mono text-[12px] text-good-ink">{moneyCompact(amount, round.currency)}</span> : null}
-                <span className="font-mono text-[12px] text-muted">{num(c.cards.length)}</span>
+      {endCols.length && endSlot
+        ? createPortal(
+            <button
+              type="button"
+              onClick={scrollToEnds}
+              title="Scroll to the end stages"
+              className="inline-flex h-28 shrink-0 items-center gap-8 rounded-pill border border-line bg-surface px-10 text-sm whitespace-nowrap hover:border-accent"
+            >
+              {endCols.map((c, i) => {
+                const amount = c.stage.kind === "won" ? c.cards.reduce((n, p) => n + (p.amount_committed ?? 0), 0) : 0;
+                return (
+                  <span key={c.stage.key} className="inline-flex items-center gap-6">
+                    {i > 0 ? <span className="text-muted">·</span> : null}
+                    <StageDot color={c.stage.color} />
+                    <span className="font-medium">{c.stage.label}</span>
+                    {amount > 0 ? <span className="font-mono text-[12px] text-good-ink">{moneyCompact(amount, round.currency)}</span> : null}
+                    <span className="font-mono text-[12px] text-muted">{num(c.cards.length)}</span>
+                  </span>
+                );
+              })}
+              <span aria-hidden className="text-accent">
+                →
               </span>
-            );
-          })}
-          <span aria-hidden className="text-accent">
-            →
-          </span>
-        </button>
-      ) : null}
+            </button>,
+            endSlot,
+          )
+        : null}
       {canWrite ? (
         <p className="sr-only">
           Use the arrow keys to move between cards and columns, Enter to open a file, Alt with the left or right arrow to
@@ -513,7 +561,14 @@ export function PipelineBoard({
 const EMPTY = new Set<string>();
 const GROUP_H = 30;
 
-type Row = { kind: "group"; priority: Priority; ids: string[] } | { kind: "card"; p: Participant; idx: number };
+/** A wide dominant column lays cards out in columns at least this wide. */
+const GRID_MIN_W = 236;
+const GRID_GAP = 8;
+
+type Row =
+  | { kind: "group"; priority: Priority; ids: string[] }
+  /** One line of cards: one card in a plain column, up to `perRow` in the wide New column. */
+  | { kind: "cards"; items: { p: Participant; idx: number }[] };
 
 function StageColumn({
   stage: s,
@@ -590,13 +645,28 @@ function StageColumn({
   const won = s.kind === "won";
   const cardH = (showNextStep ? CARD_H_STEP : CARD_H) + CARD_GAP;
 
+  // The wide New column fits several cards per line (critique 1: 9 visible of 411 was too few).
+  const [perRow, setPerRow] = useState(1);
+  useEffect(() => {
+    const el = body.current;
+    if (!grouped || !el) {
+      setPerRow(1);
+      return;
+    }
+    const measure = () => setPerRow(Math.max(1, Math.floor((el.clientWidth - 16 + GRID_GAP) / (GRID_MIN_W + GRID_GAP))));
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [grouped]);
+
   // Grouped (the dominant New column): cards partitioned by priority, keeping the column sort.
   const { rows, groupCounts } = useMemo(() => {
     const counts: Record<Priority, number> = { hot: 0, warm: 0, maybe: 0, low: 0 };
     for (const p of cards) counts[priorityFromFit(p.fit)]++;
     if (!grouped) {
       return {
-        rows: cards.map((p, idx) => ({ kind: "card", p, idx }) as Row),
+        rows: cards.map((p, idx) => ({ kind: "cards", items: [{ p, idx }] }) as Row),
         groupCounts: counts,
       };
     }
@@ -608,26 +678,50 @@ function StageColumn({
     for (const pr of PRIORITY_ORDER) {
       if (!by[pr].length) continue;
       out.push({ kind: "group", priority: pr, ids: by[pr].map((p) => p.investor.id) });
-      for (const p of by[pr]) out.push({ kind: "card", p, idx: idx++ });
+      for (let i = 0; i < by[pr].length; i += perRow) {
+        out.push({ kind: "cards", items: by[pr].slice(i, i + perRow).map((p) => ({ p, idx: idx++ })) });
+      }
     }
     return { rows: out, groupCounts: counts };
-  }, [cards, grouped]);
+  }, [cards, grouped, perRow]);
 
   const heightAt = useCallback((i: number) => (rows[i]?.kind === "group" ? GROUP_H : cardH), [rows, cardH]);
   const v = useVirtualRows({ scrollRef: body, count: rows.length, height: heightAt, offset: 2, initial: 16 });
-  const rowOfCard = useMemo(() => {
-    const m: number[] = [];
+  /** card index → [row, place in the row] */
+  const placeOf = useMemo(() => {
+    const m: [number, number][] = [];
     rows.forEach((r, i) => {
-      if (r.kind === "card") m[r.idx] = i;
+      if (r.kind === "cards") r.items.forEach((it, c) => (m[it.idx] = [i, c]));
     });
     return m;
   }, [rows]);
   const { scrollToIndex, topOf } = v;
   useEffect(() => {
-    registerApi({ scrollToIndex: (i) => scrollToIndex(rowOfCard[i] ?? i) });
+    const neighbor = (idx: number, dir: "up" | "down" | "left" | "right"): number | null | undefined => {
+      if (perRow === 1 && !grouped) return undefined;
+      const at = placeOf[idx];
+      if (!at) return undefined;
+      const [r, c] = at;
+      const row = rows[r] as Extract<Row, { kind: "cards" }>;
+      if (dir === "left") return c > 0 ? row.items[c - 1]!.idx : null;
+      if (dir === "right") return c < row.items.length - 1 ? row.items[c + 1]!.idx : null;
+      const step = dir === "down" ? 1 : -1;
+      for (let i = r + step; i >= 0 && i < rows.length; i += step) {
+        const x = rows[i]!;
+        if (x.kind === "cards") return x.items[Math.min(c, x.items.length - 1)]!.idx;
+      }
+      return null;
+    };
+    registerApi({ scrollToIndex: (i) => scrollToIndex(placeOf[i]?.[0] ?? i), neighbor });
     return () => registerApi(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollToIndex, rowOfCard]);
+  }, [scrollToIndex, placeOf, rows, perRow, grouped]);
+
+  // Pips that never vary say nothing: hidden in the lost stage and in a column where every
+  // card has the same fit (the grouped New column keeps them; its Low fit group varies).
+  const lost = s.kind === "lost";
+  const sameFit = !grouped && cards.length > 1 && cards.every((p) => p.fit === cards[0]!.fit);
+  const hidePips = lost || sameFit;
 
   // The sticky group header: the last group that starts at or above the scroll position.
   const [scrollTop, setScrollTop] = useState(0);
@@ -759,11 +853,11 @@ function StageColumn({
             </div>
           );
         }
-        const p = r.p;
+        const cell = ({ p }: { p: Participant; idx: number }) => {
         const id = p.investor.id;
         const isSel = selected.has(id);
         return (
-          <div key={id} className="group/card relative shrink-0" style={{ height: cardH, paddingBottom: CARD_GAP }}>
+          <div key={id} className="group/card relative min-w-0" style={{ height: cardH, paddingBottom: CARD_GAP }}>
             {selectable ? (
               <input
                 type="checkbox"
@@ -787,6 +881,7 @@ function StageColumn({
               nextStep={p.next_step}
               showNextStep={showNextStep}
               won={won}
+              hidePips={hidePips}
               current={openId === id}
               selected={isSel}
               inset={anySelected}
@@ -809,6 +904,16 @@ function StageColumn({
               onDragEnd={onDragEnd}
             />
             {renderMenu(p)}
+          </div>
+        );
+        };
+        return (
+          <div
+            key={`r-${r.items[0]!.p.investor.id}`}
+            className="grid shrink-0"
+            style={{ gridTemplateColumns: `repeat(${grouped ? perRow : 1}, minmax(0, 1fr))`, columnGap: GRID_GAP }}
+          >
+            {r.items.map(cell)}
           </div>
         );
       })}

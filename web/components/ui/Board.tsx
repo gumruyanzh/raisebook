@@ -1,4 +1,4 @@
-import type { ComponentProps, CSSProperties, ReactNode, Ref } from "react";
+import type { ComponentProps, CSSProperties, DragEvent, ReactNode, Ref } from "react";
 
 import type { FollowUpState, StageColor } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -161,6 +161,81 @@ export function BoardColumn({
   );
 }
 
+export interface EmptyStageItem {
+  key: string;
+  label: string;
+  color: StageColor;
+  /** One line under the label ("They wrote back"). */
+  meaning?: string | null;
+}
+
+/**
+ * A run of two or more empty stages in one narrow track (critique 1): each stage is its own
+ * small dashed drop zone, stacked, so a round that has only started to move investors out of
+ * New fits the screen instead of showing seven identical empty slabs. Each zone carries
+ * `data-stage` and its own drag handlers.
+ */
+export function EmptyStages({
+  stages,
+  readOnly,
+  filtered,
+  dragCount = 0,
+  overKey,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+}: {
+  stages: EmptyStageItem[];
+  readOnly?: boolean;
+  filtered?: boolean;
+  /** Cards being dragged (each zone reads "Drop 14"). */
+  dragCount?: number;
+  /** The zone the drag is over. */
+  overKey?: string | null;
+  onDragOver?: (key: string, e: DragEvent<HTMLElement>) => void;
+  onDragLeave?: (key: string, e: DragEvent<HTMLElement>) => void;
+  onDrop?: (key: string, e: DragEvent<HTMLElement>) => void;
+}) {
+  const dragging = dragCount > 0;
+  return (
+    <section aria-label={`${stages.length} empty stages`} className="flex min-h-0 min-w-0 flex-col">
+      <header className="flex h-40 shrink-0 items-center px-4" style={{ borderTop: "3px solid transparent" }}>
+        <span className="t-label">{filtered ? "None match here" : readOnly ? "Empty stages" : "Drop to file"}</span>
+      </header>
+      <div className="flex min-h-0 flex-col gap-6 overflow-y-auto pb-8 scrollbar-thin">
+        {stages.map((st) => {
+          const over = overKey === st.key;
+          return (
+            <div
+              key={st.key}
+              data-stage={st.key}
+              aria-label={`${st.label}, 0`}
+              onDragOver={onDragOver ? (e) => onDragOver(st.key, e) : undefined}
+              onDragLeave={onDragLeave ? (e) => onDragLeave(st.key, e) : undefined}
+              onDrop={onDrop ? (e) => onDrop(st.key, e) : undefined}
+              className={cn(
+                "flex min-h-52 flex-col justify-center gap-2 rounded-md border px-10 py-6 transition-colors duration-[120ms]",
+                readOnly || filtered ? "border-line border-solid" : "border-dashed",
+                over ? "border-accent bg-accent-soft" : dragging ? "border-accent" : "border-line",
+              )}
+              style={{ boxShadow: `inset 3px 0 0 ${stageVar(st.color)}` }}
+            >
+              <span className="flex min-w-0 items-center gap-6 text-13 font-semibold">
+                <StageDot color={st.color} />
+                <span className="min-w-0 truncate">{st.label}</span>
+                <span className="ml-auto font-mono text-[12px] font-normal text-muted">0</span>
+              </span>
+              <span className={cn("t-body-s truncate", over ? "text-accent" : "text-muted")}>
+                {dragging && !readOnly ? `Drop ${num(dragCount)} here` : (st.meaning ?? (readOnly ? "Nothing here yet" : "Drop here"))}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 /** Gap under each card in a column (folded into the virtualized row height). */
 export const CARD_GAP = 6;
 /** Card height in px: two lines, or three with "Show next step". */
@@ -191,6 +266,8 @@ export interface BoardCardProps extends Omit<ComponentProps<"button">, "title"> 
   hint?: string;
   /** In the won stage: the fit pips are hidden (the money is what matters). */
   won?: boolean;
+  /** Hide the fit pips (the lost stage, or a column where every card has the same fit). */
+  hidePips?: boolean;
   /** The investor whose sheet is open. */
   current?: boolean;
   /** Part of the selection: accent-soft fill and accent border. */
@@ -238,8 +315,9 @@ function SlotView({ slot }: { slot: CardSlot }) {
 
 /**
  * The investor card (DECISION §5.3): a <button>, 52px, two lines. Line 1: name, the agent
- * diamond, fit pips. Line 2: firm (else title, else type) and exactly one right-slot item
- * (overdue/today, won money, soft, soon, later, type). No priority, type or industry chips.
+ * diamond, fit pips (neutral ink). Line 2: firm (else title, else type) and at most one
+ * right-slot item (overdue/today, won money, soft, soon, later); nothing else, so the slot is
+ * empty on most fresh cards. No priority, type or industry chips.
  * Keyboard moves (Alt+←/→, M) and roving focus are wired by the board via onKeyDown.
  */
 export function BoardCard({
@@ -259,6 +337,7 @@ export function BoardCard({
   dragging,
   hint,
   won,
+  hidePips,
   current,
   selected,
   inset,
@@ -280,12 +359,11 @@ export function BoardCard({
             amount_soft: amount?.soft ? amount.value : null,
             amount_committed: amount && !amount.soft ? amount.value : null,
             stage: { kind: won ? "won" : "active" } as never,
-            investor: { type: "other" },
           },
           today ?? "",
           amount?.currency ?? "USD",
-        ) ?? (label ? { kind: "type", text: label } : null);
-  const who = firm || title || (slot?.kind === "type" ? null : label) || "";
+        );
+  const who = firm || title || label || "";
   const marker = agentMark ? (
     <Tooltip tip={agentMark.tip} align="end">
       <span className="agent-diamond self-center" aria-label={agentMark.tip} role="img" />
@@ -311,7 +389,7 @@ export function BoardCard({
       <span className="flex h-19 w-full min-w-0 items-center gap-6">
         <span className="min-w-0 truncate text-[13.5px] leading-[19px] font-semibold">{name}</span>
         {marker}
-        {won ? null : <FitMeter value={fit} className="ml-auto shrink-0 pl-4" />}
+        {won || hidePips ? null : <FitMeter value={fit} className="ml-auto shrink-0 pl-4" />}
       </span>
       <span className="flex h-18 w-full min-w-0 items-center gap-6">
         <span className="t-body-s min-w-0 flex-1 truncate leading-[18px] text-muted">{who || " "}</span>

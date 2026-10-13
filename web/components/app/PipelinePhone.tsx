@@ -48,6 +48,7 @@ export function PipelinePhone({
   search,
   onSearch,
   base,
+  onListChange,
 }: {
   round: Round;
   stages: Stage[];
@@ -75,6 +76,8 @@ export function PipelinePhone({
   search: string;
   onSearch: (v: string) => void;
   base: string;
+  /** The ids in the list on screen (the sheet's ↑/↓ walk this list, not the whole round). */
+  onListChange?: (ids: string[]) => void;
 }) {
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -99,6 +102,9 @@ export function PipelinePhone({
     }
     return { grouped, rows: out };
   }, [rows, pick, openKey]);
+  useEffect(() => {
+    onListChange?.(list.rows.flatMap((r) => (r.kind === "row" ? [r.p.investor.id] : [])));
+  }, [list.rows, onListChange]);
 
   // Windowing against the page scroll (fixed row heights).
   const listRef = useRef<HTMLDivElement>(null);
@@ -145,7 +151,7 @@ export function PipelinePhone({
   const msg = stripMessage(facts, stages.find((s) => s.key === openKey)?.label ?? "New", true);
   const sorted = facts.total - facts.openCount;
   const due = dueRows(all);
-  const buckets = nextUpBuckets(all, openKey, today, Date.now()).filter((b) => canWrite || (b.id !== "hw" && b.id !== "new"));
+  const buckets = nextUpBuckets(all, openKey, today, Date.now()).filter((b) => canWrite || b.id !== "new");
   const sub = moneyOn
     ? [INSTRUMENT_LABEL[round.instrument], facts.daysToClose !== null && facts.daysToClose >= 0 ? `${num(facts.daysToClose)} days left` : null]
     : [INSTRUMENT_LABEL[round.instrument], `${moneyCompact(round.target_amount, round.currency)} target`];
@@ -173,12 +179,13 @@ export function PipelinePhone({
 
   return (
     <div className="flex flex-col gap-12">
-      <div className="flex items-baseline gap-10">
-        <h1 className="t-display-s">{round.name}</h1>
-        <span className="t-micro text-muted uppercase">{sub.filter(Boolean).join(" · ")}</span>
+      {/* The round picker above already says "Seed": one slim line instead of a second title. */}
+      <div className="-mt-4 flex h-20 items-center gap-10">
+        <h1 className="sr-only">{round.name}</h1>
+        <span className="t-micro text-muted uppercase">{[round.name, ...sub].filter(Boolean).join(" · ")}</span>
         {canWrite ? (
-          <Link href={`${base}/r/${encodeURIComponent(round.slug)}/settings`} className="link ml-auto">
-            Edit
+          <Link href={`${base}/r/${encodeURIComponent(round.slug)}/settings`} className="link t-body-s ml-auto">
+            Edit round
           </Link>
         ) : null}
       </div>
@@ -218,7 +225,7 @@ export function PipelinePhone({
         </section>
       )}
 
-      {moneyOn && due.length ? (
+      {moneyOn && due.length && pick !== "due" ? (
         <section aria-label="Follow up now" className="rounded-md border border-line bg-surface px-14 py-10">
           <p className="t-label mb-4 flex">
             Follow up now
@@ -240,7 +247,7 @@ export function PipelinePhone({
                   {p.stage.label}
                 </span>
               </span>
-              <Chip tone="due">{dueText(p, today) === "Today" ? "Due today" : dueText(p, today)}</Chip>
+              <Chip tone="due">{dueText(p, today)}</Chip>
             </button>
           ))}
         </section>
@@ -248,7 +255,7 @@ export function PipelinePhone({
 
       <div className="-mx-16 flex gap-8 overflow-x-auto px-16 scrollbar-none" role="group" aria-label="Stage">
         {dueTotal > 0 ? pill("due", "Due now", dueTotal, undefined, true) : null}
-        {stages.map((s) => pill(s.key, s.label, counts[s.key] ?? 0, s.color))}
+        {stages.filter((s) => (counts[s.key] ?? 0) > 0 || s.key === pick).map((s) => pill(s.key, s.label, counts[s.key] ?? 0, s.color))}
       </div>
 
       <div className="flex gap-8">
@@ -365,7 +372,17 @@ export function PipelinePhone({
             return (
               <div key={b.id} className="flex min-h-40 items-center gap-8">
                 <b className="w-36 shrink-0 text-right font-mono text-[12.5px] tnum">{num(b.count)}</b>
-                <span className="t-body-s min-w-0 flex-1">{c.text}</span>
+                <span className="t-body-s min-w-0 flex-1">
+                  {c.text}
+                  {b.id === "ready" && b.next ? (
+                    <>
+                      {" · next "}
+                      <button type="button" className="border-0 bg-transparent p-0 font-semibold text-fg" onClick={() => onOpen(b.next!.id)}>
+                        {b.next.name}
+                      </button>
+                    </>
+                  ) : null}
+                </span>
                 <button type="button" className="link t-body-s border-0 bg-transparent p-0" onClick={() => onBucket(b)}>
                   {c.link}
                 </button>

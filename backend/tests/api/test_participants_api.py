@@ -297,6 +297,14 @@ async def test_bulk_move_is_one_request_and_restore_undoes_it(
     assert r.status_code == 200, r.text
     after = {p["investor"]["id"]: p["stage"]["key"] for p in r.json()["participants"]}
     assert after == {i: before[i]["stage"]["key"] for i in ids}
+    # The Undo's own activities say so (timelines drop the move and its undo as a pair).
+    undone = [
+        a
+        for a in await db.scalars(select(Activity).where(Activity.kind == "stage_change"))
+        if a.data.get("bulk_id") == r.json()["bulk_id"]
+    ]
+    assert len(undone) == 30 and all(a.data.get("undo") is True for a in undone)
+    assert not any(a.data.get("undo") for a in acts)
 
 
 async def test_bulk_follow_up_owner_fit_tags_and_remove(

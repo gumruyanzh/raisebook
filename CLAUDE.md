@@ -156,3 +156,9 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   (`TriageStore`), and Undo restores the turn's snapshot with one `bulk-update` `restore`.
 - Fictional fixtures for the 411-in-New and mature states: `design/pipeline-redo/fixtures/seed.py`
   (through the API, against a dev server).
+- Critique 1 (`DECISION.md` §10): Triage counts are "left" (New and not skipped); U undoes the
+  last change of any kind; a bulk move never skips the current undecided row; `restore` writes
+  `data.undo` and timelines drop undone pairs (`dropUndone`). Fit pips are neutral ink, one
+  encoding per place. Runs of 2+ empty stages share one "Drop to file" track; the end-stage
+  pill lives in the toolbar. The title row, ledger and table size to the page's measured width
+  (the split sheet reflows them), never to viewport breakpoints alone.

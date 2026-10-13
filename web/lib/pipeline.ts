@@ -20,11 +20,11 @@ export function visibleIndustries(list: readonly string[] | null | undefined): s
   return (list ?? []).filter((i) => !isHiddenValue(i));
 }
 
-/** Short type labels for cards and rows ("CVC", "FO"); null for `other`. */
+/** Short type labels for rows ("CVC", "Family office"); null for `other`. */
 export const SHORT_TYPE: Record<string, string> = {
   vc: "VC",
   angel: "Angel",
-  family_office: "FO",
+  family_office: "Family office",
   corporate_vc: "CVC",
   accelerator: "Accel.",
   scout: "Scout",
@@ -132,13 +132,10 @@ export type CardSlot =
   | { kind: "money"; text: string }
   | { kind: "soft"; text: string }
   | { kind: "soon"; text: string }
-  | { kind: "later"; text: string }
-  | { kind: "type"; text: string };
+  | { kind: "later"; text: string };
 
 export function cardSlot(
-  p: Pick<Participant, "follow_up_on" | "follow_up_state" | "amount_soft" | "amount_committed" | "stage"> & {
-    investor: { type: string };
-  },
+  p: Pick<Participant, "follow_up_on" | "follow_up_state" | "amount_soft" | "amount_committed" | "stage">,
   today: string,
   currency: string,
 ): CardSlot | null {
@@ -155,8 +152,9 @@ export function cardSlot(
   if ((p.amount_soft ?? 0) > 0) return { kind: "soft", text: `${moneyCompact(p.amount_soft, currency)} soft` };
   if (on && st === "soon") return { kind: "soon", text: formatDate(on, today) };
   if (on && st === "later") return { kind: "later", text: formatDate(on, today) };
-  const t = shortType(p.investor.type);
-  return t ? { kind: "type", text: t } : null;
+  // Nothing due, no money, no follow-up: the slot stays empty (repeating "VC" on 300 cards
+  // is noise; the type lives in the sheet and the table).
+  return null;
 }
 
 /* ---------- priority groups and the triage queue (§4.2) ---------- */
@@ -234,15 +232,20 @@ export function formatElapsed(ms: number): string {
   return min % 60 ? `${h}h ${min % 60}m` : `${h}h`;
 }
 
+/** A decision takes at least this long when estimating the rest (a burst of Passes is not a pace). */
+export const MIN_GAP_MS = 8_000;
+/** …and at most this long (a coffee break is not a pace either). */
+export const MAX_GAP_MS = 120_000;
+
 /**
- * The session pace: the median gap between decisions (each capped at 120s), from the 5th
- * decision on. `perMs` null before that.
+ * The session pace: the median gap between decisions, each gap clamped to 8s–120s, from the
+ * 5th decision on. `perMs` null before that.
  */
 export function paceEstimate(times: readonly number[]): { sorted: number; perMs: number | null } {
   const sorted = times.length;
   if (sorted < 5) return { sorted, perMs: null };
   const gaps: number[] = [];
-  for (let i = 1; i < times.length; i++) gaps.push(Math.min(120_000, Math.max(0, times[i]! - times[i - 1]!)));
+  for (let i = 1; i < times.length; i++) gaps.push(Math.min(MAX_GAP_MS, Math.max(MIN_GAP_MS, times[i]! - times[i - 1]!)));
   gaps.sort((a, b) => a - b);
   const mid = gaps.length >> 1;
   const median = gaps.length % 2 ? gaps[mid]! : (gaps[mid - 1]! + gaps[mid]!) / 2;
@@ -265,13 +268,23 @@ export function isQuiet(
   return !p.follow_up_on || p.follow_up_on < today;
 }
 
-export interface NextUpBucket {
-  id: "hw" | "quiet" | "nofollow" | "new";
-  count: number;
-}
+export type NextUpBucket =
+  /** Still in `O`; `hw` of them Hot or Warm. One row, one link to Triage. */
+  | { id: "new"; count: number; hw: number }
+  /** Researched but not contacted yet (open-kind stages after `O`); `next` is who to contact first. */
+  | { id: "ready"; count: number; stageKey: string | null; next: { id: string; name: string; fit: number } | null }
+  | { id: "quiet"; count: number }
+  | { id: "nofollow"; count: number };
 
+/**
+ * The Next up rows (DECISION §5.1, critique 1): who to contact next first (the highest fit
+ * among the researched-but-not-contacted), then New with its Hot and Warm share in one row,
+ * then the gone-quiet and no-follow-up lists. Zero rows are left out.
+ */
 export function nextUpBuckets(
-  rows: readonly Pick<Participant, "stage" | "fit" | "last_activity_at" | "stage_changed_at" | "follow_up_on">[],
+  rows: readonly (Pick<Participant, "stage" | "fit" | "last_activity_at" | "stage_changed_at" | "follow_up_on" | "created_at"> & {
+    investor: { id: string; name: string };
+  })[],
   openKey: string | null,
   today: string,
   nowMs: number,
@@ -280,19 +293,187 @@ export function nextUpBuckets(
   let quiet = 0;
   let nofollow = 0;
   let fresh = 0;
+  let ready = 0;
+  const readyStages = new Set<string>();
+  let best: (typeof rows)[number] | null = null;
   for (const p of rows) {
     if (openKey && p.stage.key === openKey) {
       fresh++;
       if (p.fit >= 4) hw++;
+    } else if (p.stage.kind === "open") {
+      ready++;
+      readyStages.add(p.stage.key);
+      if (!best || p.fit > best.fit || (p.fit === best.fit && p.created_at < best.created_at)) best = p;
     }
     if (isQuiet(p, today, nowMs)) quiet++;
     if (p.stage.kind === "active" && !p.follow_up_on) nofollow++;
   }
   const out: NextUpBucket[] = [
-    { id: "hw", count: hw },
+    {
+      id: "ready",
+      count: ready,
+      stageKey: readyStages.size === 1 ? [...readyStages][0]! : null,
+      next: best ? { id: best.investor.id, name: best.investor.name, fit: best.fit } : null,
+    },
+    { id: "new", count: fresh, hw },
     { id: "quiet", count: quiet },
     { id: "nofollow", count: nofollow },
   ];
-  if (fresh !== hw) out.push({ id: "new", count: fresh });
   return out.filter((b) => b.count > 0);
+}
+
+/* ---------- follow-up quick picks in Triage (§4.3) ---------- */
+
+export interface FollowOption {
+  label: string;
+  /** The chord's second key (`f` then this). */
+  kbd: string;
+  iso: string;
+}
+
+/**
+ * Tomorrow · Next Mon · In 1 week, always three different dates: on a Monday "Next Mon" and
+ * "In 1 week" are the same day, so the third pick becomes "In 2 weeks".
+ */
+export function followOptions(picks: readonly { label: string; iso: string; kbd?: string }[]): FollowOption[] {
+  const by = (k: string) => picks.find((p) => p.kbd === k);
+  const out: FollowOption[] = [];
+  const add = (k: string, label: string) => {
+    const p = by(k);
+    if (p && !out.some((o) => o.iso === p.iso)) out.push({ label, kbd: k, iso: p.iso });
+  };
+  add("1", "Tomorrow");
+  add("m", "Next Mon");
+  add("7", "In 1 week");
+  if (out.length < 3) add("2", "In 2 weeks");
+  return out;
+}
+
+/** The one option shown pressed for a date: the first that matches, else none (-1). */
+export function pressedOption(options: readonly { iso: string | null }[], value: string | null): number {
+  return options.findIndex((o) => o.iso === value);
+}
+
+/* ---------- the triage cursor after a move (§4.5, §4.6) ---------- */
+
+/**
+ * Where the cursor goes after investors leave the queue. The current row stays when it is
+ * still undecided (a bulk move of other rows must not skip it); otherwise the next undecided
+ * row after it, wrapping.
+ */
+export function cursorAfterMove(
+  order: readonly string[],
+  cursor: string | null,
+  moved: ReadonlySet<string>,
+  done: (id: string) => boolean,
+): string | null {
+  const gone = (id: string) => moved.has(id) || done(id);
+  if (cursor && order.includes(cursor) && !gone(cursor)) return cursor;
+  return nextCursor(order, cursor, gone);
+}
+
+/** "3 of 190": the cursor's place among the rows still to decide, and how many those are. */
+export function queuePosition(
+  order: readonly string[],
+  cursor: string | null,
+  left: (id: string) => boolean,
+): { pos: number | null; left: number } {
+  let n = 0;
+  let pos: number | null = null;
+  for (const id of order) {
+    if (!left(id)) continue;
+    n++;
+    if (id === cursor) pos = n;
+  }
+  return { pos, left: n };
+}
+
+/* ---------- board tracks (§5.2, critique 1) ---------- */
+
+export type BoardSegment = { kind: "stage"; key: string; empty: boolean } | { kind: "empty"; keys: string[] };
+
+/**
+ * The board's tracks: one per stage, except that a run of two or more consecutive empty
+ * stages shares one narrow track of stacked drop zones. A round that just moved its first
+ * few investors out of New then fits 1440px without sideways scrolling.
+ */
+export function boardSegments(columns: readonly { key: string; count: number }[]): BoardSegment[] {
+  const out: BoardSegment[] = [];
+  let run: string[] = [];
+  const flush = () => {
+    if (run.length === 1) out.push({ kind: "stage", key: run[0]!, empty: true });
+    else if (run.length > 1) out.push({ kind: "empty", keys: run });
+    run = [];
+  };
+  for (const c of columns) {
+    if (c.count === 0) run.push(c.key);
+    else {
+      flush();
+      out.push({ kind: "stage", key: c.key, empty: false });
+    }
+  }
+  flush();
+  return out;
+}
+
+/** The grid track for a segment. */
+export function segmentTrack(seg: BoardSegment, dominantKey: string | null): string {
+  if (seg.kind === "empty") return "minmax(184px, .7fr)";
+  if (seg.key === dominantKey) return "minmax(352px, 3fr)";
+  return seg.empty ? "minmax(136px, .6fr)" : "minmax(232px, 1fr)";
+}
+
+/* ---------- table columns that fit (critique 1) ---------- */
+
+/**
+ * The columns that fit `width`: `cols` in display order, dropping the lowest-priority ones
+ * (`dropOrder`, first dropped first) until the fixed widths fit. Required columns stay.
+ */
+export function fitColumns<K extends string>(
+  cols: readonly { key: K; width: number; required?: boolean }[],
+  dropOrder: readonly K[],
+  width: number,
+): K[] {
+  const keep = new Set(cols.map((c) => c.key));
+  let total = cols.reduce((n, c) => n + c.width, 0);
+  for (const k of dropOrder) {
+    if (total <= width) break;
+    const c = cols.find((x) => x.key === k);
+    if (!c || c.required || !keep.has(k)) continue;
+    keep.delete(k);
+    total -= c.width;
+  }
+  return cols.filter((c) => keep.has(c.key)).map((c) => c.key);
+}
+
+/**
+ * Columns with nothing to say for these rows: every value empty, or (from 20 rows) the same
+ * value everywhere, like a Stage column that reads "New" 411 times.
+ */
+export function quietColumns<K extends string>(
+  keys: readonly K[],
+  rows: readonly unknown[],
+  value: (row: never, key: K) => string | number | null | undefined,
+  constantOk: readonly K[] = [],
+): Set<K> {
+  const out = new Set<K>();
+  for (const k of keys) {
+    let first: string | number | null | undefined;
+    let any = false;
+    let same = true;
+    for (const r of rows) {
+      const v = value(r as never, k);
+      if (v === null || v === undefined || v === "") {
+        if (any) same = false;
+        continue;
+      }
+      if (!any) {
+        any = true;
+        first = v;
+      } else if (v !== first) same = false;
+    }
+    if (!any) out.add(k);
+    else if (same && rows.length >= 20 && !constantOk.includes(k)) out.add(k);
+  }
+  return out;
 }
