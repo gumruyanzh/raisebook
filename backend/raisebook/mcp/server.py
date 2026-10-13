@@ -33,7 +33,7 @@ from raisebook.auth.scopes import SCOPE_WRITE
 
 SERVER_NAME = "raisebook"
 
-# SPEC §6.3, verbatim.
+# SPEC §6.3, verbatim (plus the research line from RESEARCH-PLAN §7).
 SERVER_INSTRUCTIONS = (
     "Raisebook is the founder's fundraising CRM: rounds, investors, and each investor's stage "
     "in a round. Your API key belongs to one workspace (one company). Start with get_workspace "
@@ -48,7 +48,10 @@ SERVER_INSTRUCTIONS = (
     "committed. Every write is recorded on the investor's timeline under your agent name, and "
     "the founder sees it. Never invent investor details; leave unknown fields empty. "
     "import_investors_csv defaults to dry_run=true: show the human the preview counts, then "
-    "rerun with dry_run=false."
+    "rerun with dry_run=false. Research: get_dossier reads an investor's cited dossier; "
+    "research_investor runs research on the workspace's own OpenRouter key within its monthly "
+    "limit; or research with your own tools and submit it with save_dossier (every fact cites a "
+    "source you fetched; professional information only)."
 )
 
 

@@ -203,6 +203,61 @@ async def _export(call: Call, t: Two) -> None:
     clean(res, t)
 
 
+@case("get_dossier")
+async def _get_dossier(call: Call, t: Two) -> None:
+    for ref in b_investor_refs(t):
+        not_found(await call("get_dossier", {"investor": ref}))
+
+
+@case("list_research_runs")
+async def _list_runs(call: Call, t: Two) -> None:
+    for ref in b_investor_refs(t):
+        not_found(await call("list_research_runs", {"investor": ref}))
+    res = await call("list_research_runs")
+    clean(res, t)
+    assert res.data == {"runs": []}
+
+
+@case("research_investor")
+async def _research(call: Call, t: Two) -> None:
+    for ref in b_investor_refs(t):
+        not_found(await call("research_investor", {"investor": ref}))
+        not_found(await call("research_investor", {"investor": ref, "dry_run": True}))
+    not_found(
+        await call("research_investor", {"investor": str(t.a_inv.id), "round": t.b_round.slug})
+    )
+
+
+@case("match_identity")
+async def _match(call: Call, t: Two) -> None:
+    for ref in b_investor_refs(t):
+        not_found(await call("match_identity", {"investor": ref}))
+        not_found(await call("match_identity", {"investor": ref, "pick": "1"}))
+    not_found(
+        await call("match_identity", {"investor": str(t.a_inv.id), "pick": str(t.b_candidate.id)})
+    )
+
+
+@case("save_dossier")
+async def _save(call: Call, t: Two) -> None:
+    doc = {
+        "identity": {"name": B_NAME},
+        "sources": [{"id": "s1", "url": "https://quill.example/x", "title": B_NAME}],
+        "facts": [
+            {"key": "f1", "section": "profile", "kind": "role", "text": "x", "source_ids": ["s1"]}
+        ],
+        "analysis": {"brief": {"verdict": "poor", "why": "x"}},
+    }
+    for ref in b_investor_refs(t):
+        not_found(await call("save_dossier", {"investor": ref, "dossier": doc}))
+    not_found(
+        await call(
+            "save_dossier",
+            {"investor": str(t.a_inv.id), "dossier": doc, "round": t.b_round.slug},
+        )
+    )
+
+
 async def test_every_tool_is_covered(db: AsyncSession, mcp_rpc: Any) -> None:
     t = await two_workspaces(db)
     r = await mcp_rpc(t.a_key, "tools/list", {})

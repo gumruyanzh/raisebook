@@ -32,6 +32,11 @@ ALL_TOOLS = {
     "export_round",
     "add_investors",
     "create_round",
+    "get_dossier",
+    "list_research_runs",
+    "research_investor",
+    "match_identity",
+    "save_dossier",
 }
 READ_ONLY = {
     "get_workspace",
@@ -41,6 +46,8 @@ READ_ONLY = {
     "get_investor",
     "list_due_follow_ups",
     "export_round",
+    "get_dossier",
+    "list_research_runs",
 }
 WRITE_IDEMPOTENT = {
     "add_investor",
@@ -50,8 +57,10 @@ WRITE_IDEMPOTENT = {
     "move_stage",
     "set_follow_up",
     "record_commitment",
+    "research_investor",
+    "match_identity",
 }
-WRITE_NOT_IDEMPOTENT = {"update_investor", "log_activity", "import_investors_csv"}
+WRITE_NOT_IDEMPOTENT = {"update_investor", "log_activity", "import_investors_csv", "save_dossier"}
 AGENT = {"X-Agent-Name": "claude-code", "X-Agent-Model": "claude-opus-5-5"}
 
 # SPEC §6.4 binding descriptions: a distinctive sentence from each AM tool.
