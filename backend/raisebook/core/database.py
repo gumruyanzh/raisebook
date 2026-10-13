@@ -69,6 +69,11 @@ def build_engine(settings: Settings | None = None, **overrides: Any) -> AsyncEng
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+# Rate-limit counters use their own small pool. A request already holds one connection from the
+# main pool when the limiter runs; sharing that pool let a burst of parallel page requests each
+# hold one connection while waiting for a second, until every request timed out.
+_rl_engine: AsyncEngine | None = None
+_engine_installed = False
 
 
 def get_engine() -> AsyncEngine:
@@ -85,15 +90,29 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return _sessionmaker
 
 
+def get_ratelimit_engine() -> AsyncEngine:
+    """Engine for rate-limit counters: a separate pool, or the installed engine in tests."""
+    global _rl_engine
+    if _engine_installed:
+        return get_engine()
+    if _rl_engine is None:
+        _rl_engine = build_engine(pool_size=2, max_overflow=8, pool_timeout=10)
+    return _rl_engine
+
+
 def set_engine(engine: AsyncEngine | None) -> None:
     """Install an engine (tests) or clear it so the next call rebuilds from settings."""
-    global _engine, _sessionmaker
+    global _engine, _sessionmaker, _engine_installed
     _engine = engine
+    _engine_installed = engine is not None
     _sessionmaker = async_sessionmaker(engine, expire_on_commit=False) if engine else None
 
 
 async def dispose_engine() -> None:
-    global _engine, _sessionmaker
+    global _engine, _sessionmaker, _rl_engine
+    if _rl_engine is not None:
+        await _rl_engine.dispose()
+        _rl_engine = None
     if _engine is not None:
         await _engine.dispose()
     _engine = None

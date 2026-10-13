@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     # Database (asyncpg URL; plain postgresql:// is normalised in core.database).
     database_url: str = "postgresql+asyncpg://localhost/raisebook_dev"
     db_schema: str | None = None  # search_path override (tests use one schema per run)
-    db_pool_size: int = 5
-    db_max_overflow: int = 2
+    db_pool_size: int = 10
+    db_max_overflow: int = 10
     db_pool_recycle_s: int = 300
 
     # Hosts.

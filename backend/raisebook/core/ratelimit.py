@@ -124,9 +124,9 @@ class PostgresBackend:
     )
 
     async def hit(self, bucket: str, window_start: datetime) -> int:
-        from raisebook.core.database import get_engine
+        from raisebook.core.database import get_ratelimit_engine
 
-        async with get_engine().begin() as conn:
+        async with get_ratelimit_engine().begin() as conn:
             value = await conn.scalar(self.SQL, {"bucket": bucket, "window_start": window_start})
         return int(value or 0)
 
