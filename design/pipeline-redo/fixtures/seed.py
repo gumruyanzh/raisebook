@@ -11,7 +11,8 @@ Creates two workspaces owned by ``--email`` (a dev API, so sign-in links come ba
   including "other", no notes or check sizes. $2M target, closes in 95 days.
 - "Harbor Robotics" / Seed: the mature pipeline (New 38, Researching 64, Contacted 52,
   Replied 14, Meeting 9, Diligence 0, Committed 4 for $650k, Passed 230), $400k soft,
-  2 overdue follow-ups, 1 due today, and 1 agent move in the last 24 hours.
+  2 overdue follow-ups, 1 due today, and 1 agent move in the last 24 hours. Most investors
+  have a stage focus and about two thirds a check range (the board cards show them).
 
 Every person, firm and email is made up (example.com). Prints one JSON line per workspace.
 """
@@ -87,6 +88,19 @@ def industry(rng: random.Random) -> str:
         return "Other"
     k = rng.choice((1, 1, 2))
     return "; ".join(rng.sample(INDUSTRIES, k))
+
+
+FOCUS = ("Pre-seed; Seed", "Seed", "Seed; Series A", "Seed", "Series A", "")
+CHECKS = ((25_000, 100_000), (50_000, 250_000), (100_000, 500_000), (250_000, 1_000_000), (500_000, 2_000_000))
+
+
+def card_facts(rng: random.Random) -> list[object]:
+    """Stage focus and a check range for most investors (the board card shows them)."""
+    focus = rng.choice(FOCUS)
+    if rng.random() < 0.65:
+        lo, hi = rng.choice(CHECKS)
+        return [focus, lo, hi]
+    return [focus, "", ""]
 
 
 def slug(s: str) -> str:
@@ -181,6 +195,9 @@ def seed_mature(api: Api, today: date) -> dict:
     ws = api.call("POST", "/v1/workspaces", json={"name": "Harbor Robotics", "timezone": "America/Los_Angeles"})
     rnd = make_round(api, ws["slug"], 41, today)
     rng = random.Random(650)
+    # Card facts (stage focus, check size) draw from their own generator, so adding them left
+    # every earlier fixture value (fits, follow-ups, amounts) unchanged.
+    facts = random.Random(651)
     who = people(411, rng)
     rows = []
     i = 0
@@ -220,6 +237,7 @@ def seed_mature(api: Api, today: date) -> dict:
                     amount_committed,
                     next_step,
                     "Warm intro list",
+                    *card_facts(facts),
                 ]
             )
     header = [
@@ -236,6 +254,9 @@ def seed_mature(api: Api, today: date) -> dict:
         "Committed amount",
         "Next step",
         "Source",
+        "Stage focus",
+        "Check min",
+        "Check max",
     ]
     import_csv(api, ws["slug"], rnd["id"], "warm-list.csv", header, rows)
     parts = api.call("GET", f"/v1/rounds/{rnd['id']}/participants", ws["slug"], params={"limit": 1000})["data"]

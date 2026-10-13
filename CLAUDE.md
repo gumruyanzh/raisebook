@@ -150,8 +150,9 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
 - The round page has three views: Triage, Board, Table. Pure rules (default view, money
   exists, dominant stage, triage keys, the card's one right slot, Next up buckets, pace) live
   in `web/lib/pipeline.ts` with unit tests. Triage needs a writer and an open stage.
-- The board never folds a column into a rail. Cards are two lines with one right-slot item;
-  the industry "Other" and the type `other` are never shown as chips or labels.
+- The board never folds a column into a rail. Board cards are the rich `DealCard`
+  (`DECISION.md` §15; helpers in `web/lib/boardCard.ts`); the industry "Other" and the type
+  `other` are never shown as chips or labels.
 - Bare digits write only in Triage. Triage moves are optimistic through the page's store
   (`TriageStore`), and Undo restores the turn's snapshot with one `bulk-update` `restore`.
 - Fictional fixtures for the 411-in-New and mature states: `design/pipeline-redo/fixtures/seed.py`

@@ -801,3 +801,40 @@ unchanged.
   board.
 - Screens: `design/pipeline-redo/kanban/`.
 
+## 15. Richer kanban cards (2026-10-13, owner request)
+
+The owner on the Board: "this looks better, but lets have those cards with names bigger and more
+informative, probability line, warm hot etc." This replaces the card of §5.3 (and §11/§12's
+pips on the board) **on the Board view only**; Triage, Table, the sheet and phone are unchanged.
+
+```
+┌─────────────────────────────────────────┐
+│ Dana Galloway ◆                  [Hot]  │  name 600 15.5px fg · agent diamond · priority chip
+│ General Partner · Wildfern Fund         │  title · firm, body-s muted
+│ (Family office) (Seed)        $100k–500k │  ≤ 3 neutral chips · check range mono
+│ Likelihood ▬▬▬▬▬▬────────────     44%   │  4px bar, mono %
+│ [Today]                   Touched today │  cardSlot item · last touch
+└─────────────────────────────────────────┘
+```
+- **Priority chip**: Hot / Warm / Maybe / Low fit from `priorityFromFit`, the Triage chip tones
+  (never stage colors). On this card it replaces the fit pips (one fit encoding per place).
+- **Likelihood** (`closeLikelihood`, `web/lib/boardCard.ts`): a probability set on the
+  participant wins. Otherwise the stage base (New 5, Researching 10, Contacted 15, Replied 25,
+  Meeting 40, Diligence 60, Committed 100, Passed 0; a custom stage uses its kind: open 5,
+  active 20) × (0.6 + 0.1 × fit), rounded, capped at 95 before the won stage. The tooltip shows
+  the working: "Likelihood to close this round. Meeting 40% × fit 5 → 44%". The fill is `fg` at
+  55% (`good` in the won stage). The lost stage shows no line (0% on 230 cards says nothing).
+- **Meta chips** (`cardMeta`, `fitMeta`): investor type, the first stage focus, the first
+  industry, as neutral outlined chips; `other`/"Other" never; whole chips are dropped (from the
+  end) so nothing is cut mid-word in a 250px column. The check range (`checkRange`) is mono:
+  "$250k–1M", "$250k+", "Up to $1M". The pipeline payload carries `stage_focus`, `check_min`
+  and `check_max` only when set.
+- **Footer**: the `cardSlot` item on the left (overdue/today red chip, committed money, soft,
+  soon chip, later date) and "Touched 3d ago" (`lastTouch`, workspace calendar) on the right,
+  for talking and won stages, or when there was activity after the investor was added.
+- Rows with nothing to say are left out and the card's height follows (`dealCardHeight`), so the
+  virtualized column knows every height up front. Full card 138px; a fresh import's card 112px.
+- Drag and drop, the selection checkbox (left of the name), focus ring, keyboard (§5.5) and the
+  split sheet are unchanged. Display → "Next steps" adds a line under the firm.
+- Screens: `design/pipeline-redo/kanban-cards/`.
+

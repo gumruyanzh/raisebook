@@ -5,8 +5,8 @@
  */
 export { ActorName, AgentMarker } from "./ActorName";
 export { Avatar, shortPersonName } from "./Avatar";
-export { Board, BoardCard, BoardColumn } from "./Board";
-export type { BoardCardProps, BoardColumnProps } from "./Board";
+export { Board, BoardCard, BoardColumn, DealCard, dealCardHeight } from "./Board";
+export type { BoardCardProps, BoardColumnProps, DealCardProps, DealCardRows } from "./Board";
 export { Button, ButtonLink, TextLink, buttonClasses } from "./Button";
 export type { ButtonProps, ButtonSize, ButtonVariant } from "./Button";
 export { Chip, FollowUpChip, MoneyChip, PriorityChip } from "./Chip";
