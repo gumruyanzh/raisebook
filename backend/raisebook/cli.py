@@ -1,8 +1,9 @@
 """``rbctl``: the Raisebook operator CLI.
 
 Commands: ``user create``, ``workspace create|list``, ``apikey create|list|revoke``,
-``seed-demo``, ``housekeeping``. Output is JSON on stdout (one object per line) so
-scripts can parse it. API key secrets are printed once, on creation only.
+``seed-demo``, ``housekeeping``, ``worker [--once]``, ``secrets gen-kek|rotate``. Output is
+JSON on stdout (one object per line) so scripts can parse it. API key secrets are printed
+once, on creation only.
 """
 
 from __future__ import annotations
@@ -32,9 +33,11 @@ app = typer.Typer(help="Raisebook operator CLI", no_args_is_help=True)
 user_app = typer.Typer(help="Users", no_args_is_help=True)
 ws_app = typer.Typer(help="Workspaces", no_args_is_help=True)
 key_app = typer.Typer(help="API keys", no_args_is_help=True)
+secrets_app = typer.Typer(help="Server secrets (the KEK that seals OpenRouter keys)")
 app.add_typer(user_app, name="user")
 app.add_typer(ws_app, name="workspace")
 app.add_typer(key_app, name="apikey")
+app.add_typer(secrets_app, name="secrets", no_args_is_help=True)
 
 
 def _run[T](fn: Callable[[AsyncSession], Awaitable[T]]) -> T:
@@ -276,3 +279,52 @@ def members(workspace: Annotated[str, typer.Option(help="Workspace slug or id")]
 
     for email, role in _run(go):
         _emit({"email": email, "role": role})
+
+
+@app.command("worker")
+def worker(
+    once: Annotated[
+        bool, typer.Option("--once", help="Run the jobs that are due, then exit")
+    ] = False,
+) -> None:
+    """Run the background worker (research runs, prefill, removals). Stops cleanly on
+    SIGTERM/SIGINT: running jobs get RAISEBOOK_WORKER_GRACE_S seconds, then go back to the
+    queue for another worker."""
+    from raisebook.config import get_settings
+    from raisebook.core.logging import configure_logging
+    from raisebook.worker import main
+
+    s = get_settings()
+    configure_logging(s.log_level, json=s.log_json)
+    done = asyncio.run(main(once=once))
+    if once:
+        _emit({"jobs_run": done})
+
+
+@secrets_app.command("gen-kek")
+def secrets_gen_kek(
+    kek_id: Annotated[str, typer.Option("--id", help="KEK id stored with each sealed key")] = "k1",
+) -> None:
+    """Print a new RAISEBOOK_SECRETS_KEK value. Store it like a password: losing it makes
+    saved OpenRouter keys unreadable (owners then enter them again)."""
+    from raisebook.core.secrets import SecretsConfigError, gen_kek_line
+
+    try:
+        typer.echo(gen_kek_line(kek_id))
+    except SecretsConfigError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2) from exc
+
+
+@secrets_app.command("rotate")
+def secrets_rotate() -> None:
+    """Re-wrap every saved key's data key under the current KEK (set the old one as
+    RAISEBOOK_SECRETS_KEK_PREVIOUS first). Prints counts only."""
+    from raisebook.services.ai_settings import rotate_all
+
+    async def go(s: AsyncSession) -> dict[str, int]:
+        counts = await rotate_all(s)
+        await s.commit()
+        return counts
+
+    _emit(_run(go))
