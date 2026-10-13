@@ -7,11 +7,14 @@ already asked for professional information only:
 - **Strip** personal contact details, replacing each match with ``[removed]``: phone numbers
   (E.164, North American, and digit groups next to a phone cue word), street addresses,
   apartment/suite numbers next to an address, PO boxes, postcodes on an address line, and
-  email addresses on consumer mail domains. A claim that is mostly ``[removed]`` afterwards
-  is dropped.
+  email addresses on consumer mail domains. In source titles and snippets the rest is kept;
+  a **claim** (fact, analysis, suggestion) that had any contact detail in it is dropped
+  whole, so no half-sentence like "mobile [removed]" is stored.
 - **Drop** a claim that touches family, health, politics, religion or someone's home.
-  Investment language passes ("healthcare fund", "led the seed round"); a false drop is
-  preferred over a leak.
+  Investment language passes ("healthcare fund", "led the seed round", "sister fund"); a
+  false drop is preferred over a leak.
+- Text is NFKC-normalized and stripped of zero-width and other format characters first, so
+  "husb\u200band" cannot slip past a keyword.
 
 Only counts leave this module (``removed``), never the removed text.
 """
@@ -19,6 +22,7 @@ Only counts leave this module (``removed``), never the removed text.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 REMOVED = "[removed]"
@@ -45,6 +49,9 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 _CUED_PHONE = re.compile(
     rf"(?i)(\b{_PHONE_CUE}[^\d\n]{{0,20}})\d{{2,5}}(?:[\s.-]\d{{2,5}}){{1,4}}\b"
 )
+# Any other run of 9 to 15 digits in groups (a phone without a cue word): "07700 900123".
+_DIGIT_RUN = re.compile(r"(?<![\w$€£¥.,/])\(?\d[\d\s().-]{7,22}\d(?![\w%/])")
+_DATE_LIKE = re.compile(r"^\d{4}[-./]\d{1,2}([-./]\d{1,2})?$|^\d{4}\s*[-\u2013]\s*\d{4}$")
 # Postcodes only count when an address was found on the same line.
 _POSTCODE = re.compile(
     r"\b\d{5}(?:-\d{4})?\b|\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b"  # US ZIP(+4), UK postcode
@@ -102,17 +109,49 @@ _SENSITIVE = re.compile(
     r"donated to (?:the )?\w+(?: \w+)? campaign|super ?pac|"
     # religion
     r"church|mosque|synagogue|temple|faith|religious|religion|"
+    r"father|mother|dad|mom|mum|parents|siblings?|brother|sister|grandparents?|"
+    r"grandmother|grandfather|uncle|aunt|nephew|niece|cousins?|in-laws?|stepson|"
+    r"stepdaughter|widow(?:ed|er)?|"
+    # health
+    r"stroke|leuk(?:a)?emia|parkinson'?s|alzheimer'?s|dementia|heart attack|diabetes|"
+    r"multiple sclerosis|in remission|autism|autistic|adhd|pregnan\w*|miscarriage|"
+    r"recovering from (?:a |an |his |her )?(?:stroke|illness|injury|surgery|cancer|"
+    r"heart attack|burnout|covid|addiction)|addiction|sobriety|"
+    # politics
+    r"trump|biden|obama|kamala|harris campaign|gop|maga|tory|tories|labour party|"
+    r"conservative party|liberal party|liberal democrats?|political donor|"
+    r"(?:vocal|staunch|ardent|outspoken|avid) (?:\w+ )?supporter|"
+    # religion
+    r"catholic|jewish|muslim|hindu|buddhist|mormon|evangelical|atheist|agnostic|devout|"
+    r"(?:a|is|devout|practicing|practising|born-again|committed) christian|christianity|"
+    r"attends? mass|shabbat|ramadan|bible|prays?|prayer|"
     # home
-    r"lives in|living in|home in|house in|resides in|residence in|neighbou?rhood|"
-    r"home address|personal address|personal phone|personal email"
+    r"lives? (?:in|at|on|near)|living (?:in|at|on|near)|home in|house in|house on|"
+    r"resides? (?:in|at|on)|residence in|neighbou?rhood|"
+    r"(?:his|her|their) (?:home|house|apartment|flat|condo)|"
+    r"home address|personal address|personal phone|personal email|personal cell"
     r")\b"
 )
 # Investment phrases that contain a sensitive word but are professional ("healthcare fund").
 _ALLOW = re.compile(
     r"(?i)\b(?:health ?care|health ?tech|digital health|healthtech|"
     r"family offices?|family fund|portfolio company|children's education (?:startup|company)|"
-    r"kids? (?:edtech|startup|company|app)|faith-?tech|temple capital)\b"
+    r"kids? (?:edtech|startup|company|app)|faith-?tech|temple capital|"
+    r"sister (?:fund|funds|company|companies|firm|firms|publication|vehicle)|"
+    r"parent (?:company|fund|firm)|mothership|founding fathers|"
+    r"\w+ brothers|\w+ & sons|prayer app|stroke (?:of|play)|"
+    r"(?:fund|firm|portfolio|deal|company|firm's) home (?:page|base|market))\b"
 )
+
+
+_FORMAT_CHARS = re.compile(r"[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+
+
+def normalize(text: str) -> str:
+    """NFKC, without zero-width and other invisible format characters."""
+    text = unicodedata.normalize("NFKC", text)
+    text = _FORMAT_CHARS.sub("", text)
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
 @dataclass
@@ -136,6 +175,17 @@ def strip_contacts(
                 had_address = True
         line, n = _CUED_PHONE.subn(lambda m: m.group(1) + REMOVED, line)
         count += n
+
+        def digits(m: re.Match[str]) -> str:
+            nonlocal count
+            raw = m.group(0).strip()
+            n_digits = sum(ch.isdigit() for ch in raw)
+            if not 9 <= n_digits <= 15 or _DATE_LIKE.match(raw):
+                return m.group(0)
+            count += 1
+            return REMOVED
+
+        line = _DIGIT_RUN.sub(digits, line)
         if had_address:
             line, n = _POSTCODE.subn(REMOVED, line)
             count += n
@@ -159,7 +209,7 @@ def strip_contacts(
 
 def is_sensitive(text: str) -> bool:
     """True when the claim is about family, health, politics, religion or someone's home."""
-    cleaned = _ALLOW.sub(" ", text)
+    cleaned = _ALLOW.sub(" ", normalize(text))
     return bool(_SENSITIVE.search(cleaned))
 
 
@@ -173,11 +223,12 @@ def scrub(text: str | None, *, drop_sensitive: bool = True) -> Scrubbed:
     """One claim: stripped of contact details, or dropped (``text=None``)."""
     if text is None:
         return Scrubbed(None, 0)
+    text = normalize(text)
     if drop_sensitive and is_sensitive(text):
         return Scrubbed(None, 1)
     cleaned, n = strip_contacts(text)
-    if n and mostly_removed(cleaned):
-        return Scrubbed(None, n)
+    if n:
+        return Scrubbed(None, n)  # a claim that carried contact details goes whole
     return Scrubbed(cleaned, n)
 
 
@@ -186,6 +237,7 @@ def scrub_source_text(text: str | None) -> tuple[str | None, int]:
     still back professional facts, but its private text is not kept)."""
     if not text:
         return text, 0
+    text = normalize(text)
     if is_sensitive(text):
         return None, 1
     cleaned, n = strip_contacts(text)

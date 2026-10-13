@@ -76,8 +76,42 @@ def test_private_topics_drop_the_claim(text: str) -> None:
 
 def test_a_claim_that_is_mostly_contact_details_is_dropped() -> None:
     assert scrub("Phone: +1 (415) 555-0100").text is None
-    kept = scrub("Joined Kelpline's pre-seed; mobile +1 (415) 555-0100.")
-    assert kept.text == f"Joined Kelpline's pre-seed; mobile {REMOVED}."
+    # A claim that carried a contact detail goes whole: no "mobile [removed]" half-sentence.
+    gone = scrub("Joined Kelpline's pre-seed; mobile +1 (415) 555-0100.")
+    assert gone.text is None and gone.removed == 1
+
+
+BYPASSES = [
+    # verify-security: each of these was stored through the agent save path.
+    "She is a devout Catholic and attends mass weekly.",
+    "He is a vocal Trump supporter and GOP donor.",
+    "Recovering from a stroke in 2025.",
+    "Her father and mother live on Elm Street in Palo Alto.",
+    "Reach her on 07700 900123 any evening.",
+    "Her husb\u200band is a surgeon.",
+    # verify-correctness: the street went, the home city stayed.
+    "She lives at 1234 Elm Street, Springfield, IL 62704.",
+]
+
+
+@pytest.mark.parametrize("text", BYPASSES)
+def test_known_bypasses_are_dropped(text: str) -> None:
+    assert scrub(text).text is None
+
+
+STILL_KEPT = [
+    "Christian Hansen led the round.",
+    "Invests $250,000 to $1,000,000 alongside a sister fund.",
+    "Conservative investor who prefers revenue.",
+    "The firm is recovering from a down round.",
+    "Filed on 2026-05-02; Fund III closed at $120M in 2025.",
+    "Lehman Brothers alumni run the fund.",
+]
+
+
+@pytest.mark.parametrize("text", STILL_KEPT)
+def test_professional_lookalikes_pass(text: str) -> None:
+    assert scrub(text).text == text
 
 
 def test_source_titles_and_snippets() -> None:
