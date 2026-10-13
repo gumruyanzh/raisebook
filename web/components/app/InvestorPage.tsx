@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   Button,
   Chip,
+  PageHeader,
   ConfirmDialog,
   FitMeter,
   Input,
@@ -21,6 +22,7 @@ import {
   Timeline,
   useToast,
 } from "@/components/ui";
+import { DateField } from "@/components/ui/DateField";
 import { deleteActivity, listActivities } from "@/lib/api/activities";
 import { errorMessage } from "@/lib/api/client";
 import { deleteInvestor, getInvestor } from "@/lib/api/investors";
@@ -34,7 +36,6 @@ import {
 } from "@/lib/api/rounds";
 import type { Activity, Investor, Member, Participant, Round } from "@/lib/api/types";
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
-import { cn } from "@/lib/cn";
 import { formatDate, isoDate, plural, stageFocusLabel } from "@/lib/format";
 import { useSession, useWorkspace } from "@/lib/session";
 
@@ -64,7 +65,8 @@ function RoundRow({
   onRemoved: () => void;
   wsSlug: string;
 }) {
-  const { client } = useWorkspace();
+  const { client, workspace } = useWorkspace();
+  const timeZone = workspace.timezone;
   const toast = useToast();
   const p = participant;
   const { state, error, save, run } = useParticipantSave(client, round.id, p.investor.id, onChange);
@@ -163,18 +165,22 @@ function RoundRow({
             <FitMeter editable value={p.fit} disabled={ro} label={`Fit for ${round.name}`} onChange={(fit) => void save({ fit })} />
           </span>
         </div>
-        <label className="flex min-w-0 flex-col gap-4">
-          <span className="text-[12px] text-muted">Follow up on</span>
-          <Input
-            type="date"
-            mono
-            max="9999-12-31"
-            value={p.follow_up_on ?? ""}
+        <div className="flex min-w-0 flex-col gap-4">
+          <span className="text-[12px] text-muted" aria-hidden>
+            Follow up on
+          </span>
+          <DateField
+            value={p.follow_up_on ?? null}
+            timeZone={timeZone}
+            quickPicks="followup"
+            placeholder="Set follow-up"
+            clearable
             disabled={ro}
-            className={cn(p.follow_up_state === "overdue" || p.follow_up_state === "today" ? "text-bad" : "")}
-            onChange={(e) => void save({ follow_up_on: e.target.value || null })}
+            aria-label={`Follow up on, ${round.name}`}
+            aria-invalid={p.follow_up_state === "overdue" ? true : undefined}
+            onChange={(iso) => void save({ follow_up_on: iso })}
           />
-        </label>
+        </div>
         <label className="flex min-w-0 flex-col gap-4">
           <span className="text-[12px] text-muted">Soft ({round.currency})</span>
           <Input
@@ -348,18 +354,16 @@ export function InvestorPage({
   const entries = `${timeline.length}${cursor ? "+" : ""}`;
 
   return (
-    <div className="flex flex-col gap-24">
-      <nav aria-label="Breadcrumb" className="t-body-s text-muted">
-        <Link href={`${base}/investors`} className="hover:text-fg">
-          Investors
-        </Link>{" "}
-        <span aria-hidden>/</span> <span className="text-fg">{inv.name}</span>
-      </nav>
+    <div className="flex flex-col gap-14">
+      <PageHeader
+        className="mb-0"
+        crumbs={[{ label: "Investors", href: `${base}/investors` }]}
+        title={inv.name}
+        aside={who || undefined}
+      />
       <div className="grid grid-cols-1 gap-24 xl:grid-cols-12">
         <div className="flex min-w-0 flex-col gap-24 xl:col-span-5">
           <header className="flex flex-col gap-8">
-            <h1 className="t-display-m">{inv.name}</h1>
-            {who ? <p className="text-muted">{who}</p> : null}
             <div className="flex flex-wrap gap-4">
               <Chip tone="type">{INVESTOR_TYPE_LABEL[inv.type]}</Chip>
               {inv.stage_focus.map((st) => (
