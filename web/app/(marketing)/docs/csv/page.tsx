@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { pageMeta } from "@/components/marketing/site";
+
 import {
   A,
   C,
@@ -17,7 +19,7 @@ export const metadata: Metadata = {
   title: "CSV import format",
   description:
     "How Raisebook reads a spreadsheet: accepted column names, list, date and money formats, dedupe and what happens to each row.",
-  alternates: { canonical: "/docs/csv" },
+  ...pageMeta("/docs/csv"),
 };
 
 const CONTACT_FIELDS: [string, string, string][] = [

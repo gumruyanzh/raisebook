@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 
+import { pageMeta } from "@/components/marketing/site";
+
 import { A, DocHeader, H2, P, Ul, slug } from "@/components/marketing/docs/Prose";
 import { AsideFacts, AsideToc, PageShell } from "@/components/marketing/PageShell";
 
 export const metadata: Metadata = {
   title: "Terms",
   description: "The terms for using raisebook.org, in plain language.",
-  alternates: { canonical: "/terms" },
+  ...pageMeta("/terms"),
 };
 
 const SECTIONS = [
@@ -30,9 +32,9 @@ export default function Terms() {
         <>
           <AsideFacts
             items={[
-              ["Updated", "2026-10-10"],
+              ["Updated", "2026-10-13"],
               ["Covers", "raisebook.org"],
-              ["Status", "Draft before launch"],
+              ["Status", "In effect"],
             ]}
           />
           <AsideToc items={SECTIONS.map((s) => ({ id: slug(s), label: s }))} />

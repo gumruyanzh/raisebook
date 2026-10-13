@@ -1,4 +1,8 @@
+import type { Metadata } from "next";
+
 import { ButtonLink, EmptyState, Wordmark } from "@/components/ui";
+
+export const metadata: Metadata = { title: "Page not found", robots: { index: false } };
 
 export default function NotFound() {
   return (
@@ -9,9 +13,14 @@ export default function NotFound() {
         title="There is no page at this address"
         actions={
           <>
-            <ButtonLink href="/app">Go to your workspace</ButtonLink>
-            <ButtonLink href="/" variant="ghost">
-              Marketing site
+            <ButtonLink href="/" variant="primary">
+              Home
+            </ButtonLink>
+            <ButtonLink href="/docs" variant="ghost">
+              Docs
+            </ButtonLink>
+            <ButtonLink href="/app" variant="ghost">
+              Your workspace
             </ButtonLink>
           </>
         }

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { pageMeta } from "@/components/marketing/site";
+
 import {
   A,
   C,
@@ -17,7 +19,7 @@ export const metadata: Metadata = {
   title: "Export and delete",
   description:
     "Take your data out of Raisebook as CSV or JSON at any time, and delete an investor, a round, a workspace or your account permanently.",
-  alternates: { canonical: "/docs/export" },
+  ...pageMeta("/docs/export"),
 };
 
 const ROUND_COLUMNS =

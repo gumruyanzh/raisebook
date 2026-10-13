@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 
 import { DocHeader } from "@/components/marketing/docs/Prose";
 import { AsideFacts, PageShell } from "@/components/marketing/PageShell";
-import { REPO_URL } from "@/components/marketing/site";
+import { REPO_URL, pageMeta } from "@/components/marketing/site";
 import { Chip, TextLink } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "Changelog",
   description: "What changed in Raisebook, newest first.",
-  alternates: { canonical: "/changelog" },
+  ...pageMeta("/changelog"),
 };
 
 interface Entry {
@@ -22,9 +22,48 @@ interface Entry {
 /** Newest first. Add an entry for every release and for any change to the privacy page or terms. */
 const ENTRIES: Entry[] = [
   {
+    date: "2026-10-14",
+    version: "0.2.0",
+    status: "Public launch",
+    title: "Open to everyone",
+    groups: [
+      {
+        label: "Pipeline",
+        items: [
+          "Three views of a round: Triage (decide on new investors one at a time, with number keys and undo), a classic kanban Board with richer cards, and a dense Table.",
+          "Board cards show fit, likelihood, the next step and the key facts; drag a card to another stage.",
+          "Bulk moves and edits, saved views, a split investor sheet, and a Today queue of due follow-ups.",
+          "A command palette and keyboard shortcuts across the app.",
+        ],
+      },
+      {
+        label: "Getting started",
+        items: [
+          "Continue with Google, next to the emailed sign-in link.",
+          "A sample workspace with fictional investors, so you can try everything before importing your own.",
+          "Signed-in visitors to raisebook.org go straight to their workspace.",
+          "An import review you can trust: rows with bad optional cells are kept, and every skipped row says why.",
+        ],
+      },
+      {
+        label: "Phones",
+        items: [
+          "A stacked pipeline list, compact ledger and single-column forms at phone width.",
+          "Form fields no longer zoom the page on iPhone.",
+        ],
+      },
+      {
+        label: "Privacy and terms",
+        items: [
+          "The privacy page and the terms are in effect: who runs raisebook.org, where it is hosted, the email provider and the contact address are filled in.",
+          "The privacy page now lists Google sign-in and every cookie and browser-storage key.",
+        ],
+      },
+    ],
+  },
+  {
     date: "2026-10-10",
     version: "0.1.0",
-    status: "Unreleased",
     title: "The first build",
     groups: [
       {
@@ -47,7 +86,7 @@ const ENTRIES: Entry[] = [
       {
         label: "Data",
         items: [
-          "CSV import with column mapping, preview and dedupe; prototype JSON import.",
+          "CSV import with column mapping, preview and dedupe.",
           "CSV and JSON export of a round, all investors or the whole workspace.",
           "Permanent, immediate deletion of an investor, round, workspace or account.",
         ],

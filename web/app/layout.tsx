@@ -15,6 +15,15 @@ export const metadata: Metadata = {
   description:
     "Track every investor through every round: stages, follow-ups, notes and commitments. Free forever, open source, private per workspace, with an MCP server for your coding agent.",
   applicationName: "Raisebook",
+  openGraph: {
+    type: "website",
+    siteName: "Raisebook",
+    locale: "en_US",
+  },
+  twitter: { card: "summary_large_image" },
+  ...(process.env.NEXT_PUBLIC_GIT_SHA
+    ? { other: { "raisebook-commit": process.env.NEXT_PUBLIC_GIT_SHA } }
+    : {}),
 };
 
 export const viewport: Viewport = {

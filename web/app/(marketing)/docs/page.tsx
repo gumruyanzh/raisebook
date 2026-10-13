@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { pageMeta } from "@/components/marketing/site";
+
 import {
   A,
   C,
@@ -17,7 +19,7 @@ export const metadata: Metadata = {
   title: "Getting started",
   description:
     "Set up Raisebook in a few minutes: sign in, create a workspace and a round, bring your investors, and work the pipeline from the board, the table or your agent.",
-  alternates: { canonical: "/docs" },
+  ...pageMeta("/docs"),
 };
 
 const STAGES = [

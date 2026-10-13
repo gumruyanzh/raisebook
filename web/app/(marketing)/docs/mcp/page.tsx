@@ -12,7 +12,7 @@ import {
   P,
   Ul,
 } from "@/components/marketing/docs/Prose";
-import { MCP_URL, SNIPPETS_CHECKED_ON } from "@/components/marketing/site";
+import { MCP_URL, SNIPPETS_CHECKED_ON, pageMeta } from "@/components/marketing/site";
 import { clientTabs } from "@/components/marketing/snippets";
 import { CodeBlock } from "@/components/ui";
 
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   title: "Connect an agent (MCP)",
   description:
     "Connect Claude Code, Codex, Cursor or any MCP client to Raisebook with a workspace API key. Copy-ready setup for each client.",
-  alternates: { canonical: "/docs/mcp" },
+  ...pageMeta("/docs/mcp"),
 };
 
 const PROMPTS = [

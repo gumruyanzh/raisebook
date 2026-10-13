@@ -4,13 +4,13 @@ import { A, C, DocHeader, DocTable, H2, P, Ul, slug } from "@/components/marketi
 import { AsideFacts, AsideToc, PageShell } from "@/components/marketing/PageShell";
 import { PRIVACY_PROMISE } from "@/components/marketing/promise";
 import { RuledList } from "@/components/marketing/Section";
-import { REPO_URL } from "@/components/marketing/site";
+import { REPO_URL, pageMeta } from "@/components/marketing/site";
 
 export const metadata: Metadata = {
   title: "Privacy",
   description:
     "Raisebook's privacy promise and the details behind it: what is stored, what is never collected, cookies, logs, email, backups and deletion.",
-  alternates: { canonical: "/privacy" },
+  ...pageMeta("/privacy"),
 };
 
 const SECTIONS = [
@@ -35,9 +35,9 @@ export default function Privacy() {
         <>
           <AsideFacts
             items={[
-              ["Updated", "2026-10-10"],
+              ["Updated", "2026-10-13"],
               ["Covers", "raisebook.org"],
-              ["Status", "Draft before launch"],
+              ["Status", "In effect"],
             ]}
           />
           <AsideToc items={SECTIONS.map((s) => ({ id: slug(s), label: s }))} />
@@ -68,6 +68,7 @@ export default function Privacy() {
         minWidth={460}
         rows={[
           ["Your email address and, if you add it, your name", "To sign you in and show who did what to your co-founders."],
+          ["If you use \u201cContinue with Google\u201d: your Google account id, and the verified email and name Google returns", "To sign you in with Google and keep that Google account tied to the same Raisebook account. Raisebook asks Google only for your basic profile (openid, email, profile), never for Gmail, contacts or Drive."],
           ["Sign-in sessions: when they started and were last used, the browser's user agent and IP address", "To keep you signed in, and so you can see and end them under Account → Signed-in browsers. A session ends after 30 days without use, or 90 days after sign-in at the latest."],
           ["Sign-in requests: the email address and IP that asked for a link", "To send the link and limit abuse. Deleted about a day after the link expires, whether or not it was used."],
           ["Pending invites: the invited email address and role", "To let them join. Deleted once revoked, or a week after they expire; accepted invites become a membership."],
@@ -97,11 +98,21 @@ export default function Privacy() {
         rows={[
           ["rb_session", "cookie, HttpOnly", "Keeps you signed in. 30 days, renewed while you use the app, 90 days at most."],
           ["rb_csrf", "cookie", "Protects your account from forged requests."],
+          ["rb_google_flow", "cookie, HttpOnly", "Only during \u201cContinue with Google\u201d: ties Google's answer to the browser that started it. 10 minutes, then gone."],
           ["rb-theme", "localStorage", "Light, dark or system."],
-          ["rb-last-ws", "localStorage", "Opens the workspace you used last."],
+          ["rb-last-ws, rb-last-route", "localStorage", "Opens the workspace and page you used last."],
+          ["View, column, density and sort choices", "localStorage", "Remembers how you like each list laid out."],
+          ["rb-recent-investors", "localStorage", "The investors you opened recently in a workspace, for search. Names and firms, on this device only."],
+          ["rb-triage-note, rb-import-map", "localStorage", "An unsent note draft, and how you mapped a CSV's columns last time."],
+          ["rb-signin-requested", "localStorage", "The address you asked a sign-in link for, so the link page can show it. Deleted on sign-in, useless after 15 minutes."],
+          ["rb-signin, rb-name-asked, onboarding flags", "sessionStorage / localStorage", "Small flags for the sign-in and first-run screens."],
         ]}
       />
-      <P>That is the whole list. None of them is used for tracking, and there is no cookie banner because there is nothing to consent to.</P>
+      <P>
+        That is the whole list. Browser storage stays on your device, and clearing the site&apos;s
+        data removes it. None of it is used for tracking, and there is no cookie banner because
+        there is nothing to consent to.
+      </P>
 
       <H2>Logs</H2>
       <P>

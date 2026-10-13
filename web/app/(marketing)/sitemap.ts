@@ -5,7 +5,7 @@ import { SITE_URL } from "@/components/marketing/site";
 
 /** Public pages only. The app, auth flows and /design are disallowed in robots.ts. */
 export default function sitemap(): MetadataRoute.Sitemap {
-  const lastModified = new Date("2026-10-10");
+  const lastModified = new Date("2026-10-14");
   const paths = [
     "/",
     ...DOCS_NAV.map((n) => n.href).filter((h) => h.startsWith("/docs")),

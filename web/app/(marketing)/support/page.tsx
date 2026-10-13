@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 
 import { A, DocHeader, H2, Note, P, Ul, slug } from "@/components/marketing/docs/Prose";
 import { AsideFacts, AsideToc, PageShell } from "@/components/marketing/PageShell";
-import { REPO_URL, SPONSOR_URL } from "@/components/marketing/site";
+import { REPO_URL, SPONSOR_URL, pageMeta } from "@/components/marketing/site";
 import { ButtonLink, TextLink } from "@/components/ui";
 
 export const metadata: Metadata = {
-  title: "Support Raisebook",
+  title: "Support",
   description:
     "Raisebook is free forever. If it helps your raise, you can help pay for hosting. Donations never buy features.",
-  alternates: { canonical: "/support" },
+  ...pageMeta("/support"),
 };
 
 const SECTIONS = ["What a donation pays for", "What it never buys", "Other ways to help", "Need help?"];
@@ -23,7 +23,7 @@ export default function Support() {
             items={[
               ["Price", "$0, forever"],
               ["Donations", "Optional"],
-              ["Sponsorship", "Not set up yet"],
+              ["Sponsorship", SPONSOR_URL ? "Open" : "Not open yet"],
             ]}
           />
           <AsideToc items={SECTIONS.map((s) => ({ id: slug(s), label: s }))} />
@@ -41,18 +41,22 @@ export default function Support() {
         }
       />
 
-      <Note tone="warn" label="Placeholder">
-        <p>
-          Donations are not open yet. The button below points to a GitHub Sponsors page that is a
-          placeholder until sponsorship is set up. Please do not send money anywhere else in
-          Raisebook&apos;s name.
-        </p>
-      </Note>
+      {SPONSOR_URL ? null : (
+        <Note label="Not open yet">
+          <p>
+            Donations are not open yet; the maintainer pays the running costs for now. This page
+            will link the one official sponsor page when it opens. Please do not send money
+            anywhere else in Raisebook&apos;s name.
+          </p>
+        </Note>
+      )}
 
       <div className="mb-32 flex flex-wrap items-center gap-x-18 gap-y-12">
-        <ButtonLink href={SPONSOR_URL} external size="lg">
-          Support Raisebook
-        </ButtonLink>
+        {SPONSOR_URL ? (
+          <ButtonLink href={SPONSOR_URL} external size="lg">
+            Support Raisebook
+          </ButtonLink>
+        ) : null}
         <TextLink href={REPO_URL} external>
           Star the repository
         </TextLink>
@@ -66,7 +70,7 @@ export default function Support() {
         <li>The domain.</li>
       </Ul>
       <P>
-        Once hosting is live, the monthly costs and what donations covered will be published here,
+        Once donations open, the monthly costs and what donations covered will be published here,
         so you can see where the money goes.
       </P>
 

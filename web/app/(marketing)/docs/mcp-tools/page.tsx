@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { pageMeta } from "@/components/marketing/site";
+
 import {
   A,
   C,
@@ -18,7 +20,7 @@ export const metadata: Metadata = {
   title: "MCP tools reference",
   description:
     "All 17 Raisebook MCP tools: what each one does, its parameters, what it returns, and which ones are safe to repeat.",
-  alternates: { canonical: "/docs/mcp-tools" },
+  ...pageMeta("/docs/mcp-tools"),
 };
 
 const INSTRUCTIONS = `Raisebook is the founder's fundraising CRM: rounds, investors, and each investor's stage in a round. Your API key belongs to one workspace (one company). Start with get_workspace to learn the rounds, valid stage keys and today's date in the workspace timezone. Refer to investors by id, email, LinkedIn URL, or exact name ("Name" or "Name @ Firm"). Refer to rounds by id, slug or name; you may omit the round when the workspace has exactly one open round. Amounts are whole units of the round's currency (250000 means $250k). Dates are YYYY-MM-DD. add_investor deduplicates by email, LinkedIn and name+firm, so call it directly instead of searching first. Use log_activity for what happened (email sent, call, meeting), set_follow_up for what should happen next, move_stage when the relationship advances, and record_commitment only when the investor has actually committed. Every write is recorded on the investor's timeline under your agent name, and the founder sees it. Never invent investor details; leave unknown fields empty. import_investors_csv defaults to dry_run=true: show the human the preview counts, then rerun with dry_run=false.`;

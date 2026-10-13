@@ -12,14 +12,14 @@ import {
   Ul,
 } from "@/components/marketing/docs/Prose";
 import { ERROR_CODES, RATE_LIMITS, REST_GROUPS, SHAPES } from "@/components/marketing/docs/rest";
-import { PUBLIC_API_URL } from "@/components/marketing/site";
+import { PUBLIC_API_URL, pageMeta } from "@/components/marketing/site";
 import { CodeBlock } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "REST API",
   description:
     "The Raisebook REST API under /v1: authentication with workspace API keys, conventions, errors, rate limits and every endpoint.",
-  alternates: { canonical: "/docs/api" },
+  ...pageMeta("/docs/api"),
 };
 
 const EXAMPLE = [

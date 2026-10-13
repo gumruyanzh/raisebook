@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
 import { AgentTranscript } from "@/components/marketing/AgentTranscript";
 import { Faq } from "@/components/marketing/Faq";
@@ -8,7 +7,7 @@ import { HeroDesk } from "@/components/marketing/HeroDesk";
 import { ImportVignette } from "@/components/marketing/ImportVignette";
 import { PRIVACY_PROMISE } from "@/components/marketing/promise";
 import { RuledList, Section } from "@/components/marketing/Section";
-import { MCP_TOOL_COUNT, REPO_URL, SPONSOR_URL } from "@/components/marketing/site";
+import { MCP_TOOL_COUNT, REPO_URL, SPONSOR_URL, pageMeta } from "@/components/marketing/site";
 import { claudeCodeSnippet } from "@/components/marketing/snippets";
 import {
   AgentTimeline,
@@ -17,13 +16,12 @@ import {
   TableVignette,
 } from "@/components/marketing/Vignettes";
 import { ButtonLink, CodeBlock, TextLink } from "@/components/ui";
-import { getSession } from "@/lib/api/server";
 
 export const metadata: Metadata = {
   title: { absolute: "Raisebook · The free fundraising CRM, built for founders and their agents" },
   description:
     "Track every investor through every round: stages, follow-ups, notes and commitments. Free forever, open source, private per workspace, with an MCP server so Claude Code, Codex or Cursor can work the pipeline with you.",
-  alternates: { canonical: "/" },
+  ...pageMeta("/"),
 };
 
 const FACTS = [
@@ -58,7 +56,8 @@ const FAQ = [
     a: (
       <p>
         The costs are small: a server, a database and the email that delivers sign-in links.
-        Donations cover them. And because the code is open, you can always run your own copy.
+        The maintainer pays them today, and donations will cover them once they open. And because
+        the code is open, you can always run your own copy.
       </p>
     ),
   },
@@ -143,9 +142,8 @@ const FAQ = [
   },
 ];
 
-export default async function Landing() {
-  // Signed in: the product, not the pitch.
-  if ((await getSession()).status === "ok") redirect("/app");
+/** Static on purpose: signed-in visitors are sent to /app by middleware.ts, before rendering. */
+export default function Landing() {
   return (
     <>
       {/* ---------------- Hero ---------------- */}
@@ -168,7 +166,7 @@ export default async function Landing() {
               <TextLink href="/docs/mcp">Connect Claude Code →</TextLink>
             </div>
             <p className="t-body-s mt-24 text-muted">
-              Sign in with an email link. Try it with a sample workspace of fictional investors.
+              Sign in with an email link, then try a sample workspace of fictional investors.
             </p>
           </div>
           <div className="min-w-0 lg:col-span-7">
@@ -344,14 +342,18 @@ export default async function Landing() {
             <p className="text-muted">
               The code is AGPL-3.0, so anyone who runs a modified copy as a service has to publish
               their changes: a hosted fork cannot quietly turn into a closed, paid product. The
-              running costs are kept small. If Raisebook saves you a subscription, you can chip in.
-              Donations pay for hosting and nothing else. They never buy features, priority or a
-              different deal on your data.
+              running costs are kept small, and the maintainer pays them today. Donations, once they
+              open, will pay for hosting and nothing else. They will never buy features, priority
+              or a different deal on your data.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-x-18 gap-y-12">
-              <ButtonLink href={SPONSOR_URL} external>
-                Support Raisebook
-              </ButtonLink>
+              {SPONSOR_URL ? (
+                <ButtonLink href={SPONSOR_URL} external>
+                  Support Raisebook
+                </ButtonLink>
+              ) : (
+                <ButtonLink href="/support">How it stays free</ButtonLink>
+              )}
               <TextLink href="/docs/self-hosting">Self-host it →</TextLink>
             </div>
           </div>
@@ -395,7 +397,7 @@ export default async function Landing() {
           title="Self-host"
           code={[
             `git clone ${REPO_URL}.git && cd raisebook`,
-            "cp deploy/.env.example deploy/.env   # fill in the secrets",
+            "cp deploy/.env.example deploy/.env   # set your hosts and secrets",
             "docker compose -f deploy/docker-compose.yml up -d --build",
           ].join("\n")}
         />
@@ -407,6 +409,26 @@ export default async function Landing() {
           <Faq items={FAQ} />
         </div>
       </Section>
+
+      {/* ---------------- Closing call to action ---------------- */}
+      <section aria-labelledby="start-title" className="gutter mx-auto max-w-site">
+        <div className="flex flex-col gap-18 border-t border-line pt-40 pb-64 md:flex-row md:items-center md:justify-between xl:pb-96">
+          <div className="min-w-0">
+            <h2 id="start-title" className="t-display-l max-w-[22ch]">
+              Start your raise.
+            </h2>
+            <p className="t-body-l mt-10 max-w-[52ch] text-muted">
+              Free forever. Sign in with an email link, import a CSV or start from a sample.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-18 gap-y-12">
+            <ButtonLink href="/signin" variant="primary" size="lg">
+              Start your raise
+            </ButtonLink>
+            <TextLink href="/docs/mcp">Connect Claude Code →</TextLink>
+          </div>
+        </div>
+      </section>
     </>
   );
 }

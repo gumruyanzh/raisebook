@@ -11,14 +11,14 @@ import {
   P,
   Ul,
 } from "@/components/marketing/docs/Prose";
-import { REPO_URL } from "@/components/marketing/site";
+import { REPO_URL, pageMeta } from "@/components/marketing/site";
 import { CodeBlock } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "Self-hosting",
   description:
     "Run Raisebook on your own server with Docker Compose: Postgres, the API and MCP server, the web app and Caddy for TLS.",
-  alternates: { canonical: "/docs/self-hosting" },
+  ...pageMeta("/docs/self-hosting"),
 };
 
 const INSTALL = [
@@ -39,7 +39,9 @@ const SECRETS = [
 
 const UPDATE = [
   "cd raisebook && git pull",
-  "docker compose -f deploy/docker-compose.yml up -d --build",
+  "# build while the old containers keep serving, then swap",
+  "docker compose -f deploy/docker-compose.yml build",
+  "docker compose -f deploy/docker-compose.yml up -d",
   "# the migrate service applies database migrations before the API starts",
 ].join("\n");
 
@@ -105,6 +107,7 @@ export default function SelfHosting() {
           ["postgres", "Postgres 17 with a named volume. Not exposed outside the compose network."],
           ["migrate", "Runs alembic upgrade head once, then exits. The API waits for it."],
           ["api", "FastAPI: the REST API under /v1 and the MCP server at /mcp."],
+          ["worker", "A background job runner on the API image. No released feature uses it yet, so it idles."],
           ["web", "The Next.js app and this site."],
           ["caddy", "TLS and reverse proxy. The only service that publishes ports."],
         ]}
@@ -127,7 +130,9 @@ export default function SelfHosting() {
           ["RAISEBOOK_SMTP_HOST, _PORT, _USERNAME, _PASSWORD", "Your SMTP provider."],
           ["RAISEBOOK_EMAIL_FROM", 'Sender, e.g. "Raisebook <login@raise.example.com>".'],
           ["RAISEBOOK_RATE_LIMIT_BACKEND", "postgres (default), memory or off."],
-          ["NEXT_PUBLIC_SPONSOR_URL", "The Support link. Point it anywhere, or at nothing."],
+          ["RAISEBOOK_MAGIC_LINKS_PER_IP_HOUR", "Sign-in links per IP per hour (default 100). Raise it for an event on shared Wi-Fi."],
+          ["RAISEBOOK_EMAIL_GLOBAL_PER_HOUR", "All outbound email per hour (default 500). Keep it under your email plan."],
+          ["NEXT_PUBLIC_SPONSOR_URL", "The Support link. Empty hides it."],
         ]}
       />
       <Note>

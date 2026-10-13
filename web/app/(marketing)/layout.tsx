@@ -37,7 +37,7 @@ const FOOTER: { title: string; links: { href: string; label: string; external?: 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="border-b border-line">
+      <header className="sticky top-0 z-30 border-b border-line bg-canvas md:static">
         <div className="gutter mx-auto flex h-64 max-w-site items-center gap-24">
           <Wordmark size={22} href="/" />
           <SiteNav className="hidden md:flex" />
@@ -64,14 +64,16 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
           <div className="flex flex-col gap-10">
             <Wordmark size={22} />
             <p className="max-w-[32ch] text-muted">Free, private, open source fundraising CRM.</p>
-            <a
-              href={SPONSOR_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="link self-start text-sm"
-            >
-              Support Raisebook <span aria-hidden>↗</span>
-            </a>
+            {SPONSOR_URL ? (
+              <a
+                href={SPONSOR_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="link self-start text-sm"
+              >
+                Support Raisebook <span aria-hidden>↗</span>
+              </a>
+            ) : null}
           </div>
           {FOOTER.map((col) => (
             <nav key={col.title} aria-label={col.title}>
