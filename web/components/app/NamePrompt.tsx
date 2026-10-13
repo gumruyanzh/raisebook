@@ -1,58 +1,107 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { Button, Input, useToast } from "@/components/ui";
+import { Button, Dialog, Field, Input, useToast } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api/client";
 import { updateMe } from "@/lib/api/core";
 import { useSession } from "@/lib/session";
 
-/**
- * Asks for a display name when the account has none (people who joined through an emailed
- * invite link, and accounts from before names were asked for), so the timeline reads as people
- * rather than email addresses.
- */
-export function NamePrompt() {
-  const session = useSession();
+const ASKED_KEY = "rb-name-asked";
+
+/** "Add your name" dialog, opened from the account menu or the one-time toast. */
+export function NameDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
-  const toast = useToast();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
-  if (session.user.name) return null;
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setError(null);
+    }
+  }, [open]);
 
   return (
-    <form
-      className="mb-16 flex flex-wrap items-center gap-10 rounded-md border border-line bg-surface px-14 py-10"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        if (!name.trim()) return;
+    <Dialog
+      open={open}
+      onClose={busy ? () => {} : onClose}
+      dismissible={!busy}
+      title="Add your name"
+      description="Co-founders see it on the timeline next to everything you do."
+      onSubmit={async () => {
+        const v = name.trim();
+        if (!v) {
+          setError("Enter the name your co-founders know you by.");
+          return;
+        }
         setBusy(true);
         try {
-          await updateMe(api, { name: name.trim() });
+          await updateMe(api, { name: v });
+          onClose();
           router.refresh();
         } catch (err) {
-          toast.show(errorMessage(err));
+          setError(errorMessage(err));
+        } finally {
           setBusy(false);
         }
       }}
+      actions={
+        <>
+          <Button onClick={onClose} disabled={busy}>
+            Not now
+          </Button>
+          <Button type="submit" variant="primary" busy={busy ? "Saving…" : false}>
+            Save name
+          </Button>
+        </>
+      }
     >
-      <label htmlFor="rb-your-name" className="min-w-0 flex-1 basis-[240px]">
-        Add your name so co-founders see who did what.
-      </label>
-      <Input
-        id="rb-your-name"
-        size="sm"
-        className="w-[200px]!"
-        value={name}
-        maxLength={120}
-        autoComplete="name"
-        placeholder="Your name"
-        onChange={(e) => setName(e.target.value)}
-      />
-      <Button type="submit" size="sm" variant="primary" busy={busy ? "Saving…" : false} disabled={!name.trim()}>
-        Save
-      </Button>
-    </form>
+      <Field label="Your name" error={error ?? undefined}>
+        <Input
+          autoFocus
+          value={name}
+          maxLength={120}
+          autoComplete="name"
+          placeholder="Sam Rivera"
+          aria-invalid={error ? true : undefined}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (error) setError(null);
+          }}
+        />
+      </Field>
+    </Dialog>
   );
+}
+
+/**
+ * Asks once for a display name when the account has none (people who joined through an
+ * emailed invite, accounts from before names were asked for): a single toast with "Add name",
+ * never a permanent banner. The account menu keeps "Add your name…" and a dot on the avatar
+ * until a name is set.
+ */
+export function useNamePrompt(onOpen: () => void): boolean {
+  const session = useSession();
+  const toast = useToast();
+  const missing = !session.user.name;
+  const done = useRef(false);
+  useEffect(() => {
+    if (!missing || done.current) return;
+    done.current = true;
+    let asked = false;
+    try {
+      asked = localStorage.getItem(ASKED_KEY) === "1";
+      localStorage.setItem(ASKED_KEY, "1");
+    } catch {
+      /* storage unavailable: ask this once per page view */
+    }
+    if (asked) return;
+    setTimeout(
+      () => toast.show("Add your name so co-founders see who did what.", { label: "Add name", onClick: onOpen }),
+      600,
+    );
+  }, [missing, onOpen, toast]);
+  return missing;
 }
