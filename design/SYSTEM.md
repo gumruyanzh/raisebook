@@ -194,7 +194,9 @@ carry no pips: the header already says it. Only Low fit (0–2) varies, so only 
 Chips are pills with `chip` type and a 1px transparent border. Variants: `priority` (§2.2),
 `type` (`accent-soft`/`accent`: VC, Angel…), `tag` and `industry` (`sunk`/`muted`), `due` and
 `soon` (§2.3), `money` (`good-soft`/`good`, mono amount: "$250k"), `agent` (`agent-soft`/
-`agent`, used only for "by claude-code" badges), `mode` (outlined, mono: SANDBOX, TEST). There
+`agent`, used only for "by claude-code" badges), `mode` (outlined, mono: SANDBOX, TEST), and the
+research verdict (`strong` = `good-soft`/`good-ink` "Strong fit", `maybe` "Possible fit", `low`
+"Poor fit"; only in a Brief and nowhere else). There
 are no chips on a board card (§3.13: one right-slot item). The industry "Other" and the
 investor type `other` are never rendered as chips or labels anywhere (cards, rows, sheet
 header, Triage, phone); they stay as filter values labelled "Other".
@@ -244,7 +246,7 @@ tokens, and works with the keyboard. The live inventory is `/design` (dev only, 
 | 3.13 | `BoardCard`, `DealCard` | **The pipeline board uses `DealCard`** (design/pipeline-redo/DECISION.md §15, owner request): a `<button>` surface, 1px line, radius 7, padding 10/12. Name 600 15.5px `fg` with the agent marker and the priority chip on the right (Hot / Warm / Maybe / Low fit from `priorityFromFit`, the Triage tones; it replaces the pips on this card, one fit encoding per place) · "Title · Firm" body-s muted · up to three neutral outlined chips (type, first stage focus, first industry; whole chips dropped to fit, `fitMeta`) with the check range in mono on the right ("$250k–1M") · a Likelihood line (label, a 4px `sunk` bar filled `fg` 55% or `good` in the won stage, mono percent; the tooltip shows the working, `closeLikelihood`; none in the lost stage) · a footer with the `cardSlot` item on the left and "Touched 3d ago" on the right. Rows with nothing to say are left out and the height follows (`dealCardHeight`), so columns stay windowed. Selected: `accent-soft` + accent border + a checkbox left of the name. Hover accent border, inset focus ring, 50% opacity while dragged. `BoardCard` (52px, two lines, pips and one right-slot item) remains for the marketing pages and the kit. |
 | 3.14 | `Sheet` | A right-side panel, `min(520px, 100%)` wide, full height, surface, 1px left line, scrim. Header: `display-s` title, muted subline, chips, close button (32px square, 1px line, radius 6, "✕"). The body scrolls with 16px section gaps. Esc and the scrim close it. Focus is trapped while open, moves to the close button on open, and returns to the invoking card on close. Respects safe-area insets. |
 | 3.15 | `Dialog`, `ConfirmDialog` | Native `<dialog>`: surface, radius 8, dialog shadow, max-width 480. Title `display-s`, body, actions right-aligned (secondary then primary). `ConfirmDialog` with `typed` asks the user to type the slug or name to enable the `danger` button ("Delete workspace permanently"). |
-| 3.16 | `Toast` (`ToastProvider`, `useToast`, `useToastLift`) | The prototype toast: an `fg` box with `canvas` text, radius 8, centered bottom with safe-area offset. One line, plus an optional action ("Undo" for stage moves, bulk changes, Done and Snooze). Auto-dismisses after 4s, or 8s with an action. `role="status"`. A bar at the bottom of the viewport (a selection bar, the Today queue's "Next follow-up?" strip) calls `useToastLift` so the toast rises above it and never covers its buttons. |
+| 3.16 | `Toast` (`ToastProvider`, `useToast`, `useToastLift`) | The prototype toast: an `fg` box with `canvas` text, radius 8, centered bottom with safe-area offset. One line, plus an optional action ("Undo" for stage moves, bulk changes, Done and Snooze), or at most two (an offer first, Undo last: "Refresh ≈ $0.21 · Undo" after a move to Meeting; 12s). Auto-dismisses after 4s, or 8s with an action. `role="status"`. A bar at the bottom of the viewport (a selection bar, the Today queue's "Next follow-up?" strip) calls `useToastLift` so the toast rises above it and never covers its buttons. |
 | 3.17 | `EmptyState` | A surface with a 1px **dashed** line and radius 8, padding 28, centered. Title `display-xs`, one sentence in muted, then the action button(s). Copy rules in §6. |
 | 3.18 | `Timeline` | A vertical list: each item has a mono time (11.5, muted, fixed 64px column), the actor (§2.5), the action sentence, and an optional body (pre-wrap, 65ch). Day separators use a `label` style ("TODAY", "OCT 9"). Agent items get the orchid rule and tint. Filters: Segmented All / Conversations / Stage & money / Agent actions. Feeds collapse an import run or bulk change into one expandable entry, and also 5+ consecutive look-alike edits (one actor, one kind, the same fields, stage or date, each within 10 minutes of the next): "claude-code changed next step, probability for 28 investors". Conversations and commitments never collapse. |
 | 3.19 | `ActorName` | §2.5. |
@@ -329,6 +331,17 @@ This is the prototype page, made real, with the pipeline redo on top
   title row), where everyone is with this session's +N (empty stages fold into "4 other stages
   empty"; no keys, the decision panel is the one key map) and the pace (gaps clamped to
   20–120s). The next two investors are prefetched. Phones get a full-screen takeover.
+- Research in Triage (RESEARCH-PLAN §8.4): a fixed-height surface band at the top of the pinned
+  decision panel (148px; it never changes height between investors) holds the compact Brief
+  (one line each), or "Is this Lane?" as one-line candidate rows with "This one", or "Research
+  Calla ≈ $0.21", and one suggestion line ("Research: Strong fit (you have Hot) · Accept A";
+  `A` accepts all for this investor and U undoes it). Phones show the same band under the card.
+  The band shows only when research can run or the round already has dossiers. The round's
+  Research menu ("Match all 405 without an identity ≈ $1.50", "Research all with an
+  identity…") is in the title row in Triage and in the toolbar on the board and table, with the
+  batch line beside it ("Matching 228 of 405 · $0.14 · Cancel"). Bulk research always goes
+  through the estimate dialog (count, left out and why, each and total, left this month; over
+  the limit a warm box offers the part that fits or raising it).
 - Triage decides, it does not invent history: filing someone in a talking stage (Contacted and
   later, or Committed) asks once ("Has Calla heard from you?", the same key again confirms,
   "Shortlist in Researching" is one click, "don't ask again" lasts the session), unless the
@@ -443,6 +456,25 @@ Top to bottom (each section has a `label` header):
    by, Other rounds: "Pre-seed 2025 · Passed").
 9. **NOTES**: the investor-level notes textarea, autosaving 1.2s after typing stops ("Saving…"
    → "Saved").
+- **Pipeline | Dossier** tabs sit under the header (`R` toggles them, and the tab stays while J/K
+  walk the list; the Dossier tab label carries a muted word: Strong, Possible, Poor, pick,
+  running). The Dossier tab (`components/app/research/DossierPanel`, also a section on the
+  investor page) reads top to bottom: a Meeting refresh banner (warm, only for a dossier > 30
+  days old in Meeting), **Brief** (verdict chip + why with `[1]` citations, Best way in, Opener
+  with Copy, Risk, "Researched Oct 13 · Claude Opus 5.5 · $0.21" or "by claude-code" in orchid,
+  "May be stale" after 90 days), **New since <date>** (a 2px accent rule; new lines also carry
+  it inside their section), **Suggestions** ("Research says check $1M–$4M (you have $100k–$500k)
+  · Accept · Ignore", the fit first, "Accept all N"), then the collapsed sections as ruled
+  `details` rows (→ closed, ↓ open, mono label, count right): Fit, Recent activity (newest
+  first, mono dates), Thesis and public views, Ways in ("from your own data" for workspace
+  paths), Talking points, Red flags, and "Unverified · from model memory" with a one-line
+  warning. Citations are mono `[n]` accent links numbered in reading order; the title, domain
+  and date are in `title`. Footer: identity line, version select (last 5), "Research again
+  ≈ $0.21", "6 sources cited". No identity yet: one primary "Research Dana ≈ $0.21" and a ghost
+  "Only find who this is"; "Is this them?" is a ruled list of 2–3 candidates led by title · firm
+  (the name only when it differs), LinkedIn ↗, firm site ↗ and source domains, "This one",
+  then "None of these" and "Enter their LinkedIn URL" as links. Facts filled by research carry
+  a muted "from research" mark until someone edits them.
 
 ### 4.5 Round: Overview (`/w/[ws]/r/[round]/overview`)
 12-column grid (stacked under 1024px).
@@ -493,7 +525,7 @@ Two columns (5 / 7), stacked on phones.
 
 ### 4.9 Settings (`/w/[ws]/settings/*`)
 A left sub-nav (180px; it becomes a select on phones): General · Members · API keys · Connect
-an agent · Data.
+an agent · AI research · Company profile · Data.
 - **General**: workspace name, timezone (`TimezonePicker`; when the browser's zone differs, a
   line "Your browser is on Los Angeles (America/Los_Angeles). Use it" saves it straight
   away), default currency
@@ -513,6 +545,19 @@ an agent · Data.
   `rb_live_…` with a note). 03 Try it: suggested prompts in a CodeBlock ("What follow-ups are
   due this week in Seed?", "Import investors.csv into Seed as Researching, dry run first.").
   Below: the 17 tools as a Table (tool name in mono, what it does, read/write).
+- **AI research** (`/settings/ai`): a plain statement of what is sent to OpenRouter and who pays
+  (link to the Research Policy); the key (owner: password field + "Save key", then "Key ending
+  ••••7a1b · checked 2m ago" with Replace and Remove key; others see the line only; no KEK = an
+  EmptyState); Models as a Segmented Best / Balanced / Budget with "≈ $0.21" per dossier in
+  mono, and "Advanced: pick each model" (three Comboboxes over OpenRouter's list, writers
+  without JSON output disabled); Monthly limit (an 8px spend meter: good, warm from 80%, bad
+  when used up, then "$1.92 of $25.00 used in October · 191 calls"; the limit field for
+  admins); Recent runs (Table: investor, kind, status, cost, when).
+- **Company profile** (`/settings/company`): "Draft it from your website or deck" (URL field,
+  a PDF FileDrop, "Draft the profile", run progress, and the line that the deck goes to the AI
+  provider and is not kept), then the R6 form in a 640px column. A draft fills the form unsaved:
+  changed fields get an accent border and a mono "drafted" mark, a ruled line says "Drafted from
+  your deck and site: 9 fields changed. Review them and save."
 - **Data**: Import (link to the import flow, plus the last 5 import runs), Export (Workspace
   JSON, All investors CSV, a CSV per round), and the **Danger zone** (a 1px `bad` border block):
   "Delete workspace" → ConfirmDialog typed with the slug, plus the copy "Everything in

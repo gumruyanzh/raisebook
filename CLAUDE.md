@@ -258,3 +258,25 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   (DELETE/UPDATE, counts only); suppressions refuse research for that person everywhere.
 - Tests: `tests/research/pipeline_mock.Script` scripts OpenRouter's answers;
   `tests/research/helpers.run_jobs(db)` runs queued jobs in-process on the test session.
+
+## Investor research, Part 3 web (keep these)
+- Research runs only on the workspace's own OpenRouter key, only on a click (never on import,
+  never automatic); every bulk run goes through `EstimateDialog` (count, left out, each and
+  total, left under the limit) and `batchBody` sends the total the person confirmed.
+- Every research call goes through `web/lib/api/research.ts`; pure rules (money, freshness,
+  the Meeting offer, sections and citation numbers, suggestion lines, estimate and run words)
+  live in `web/lib/research.ts` with unit tests. Components are in
+  `web/components/app/research/` (`DossierPanel`, `Brief`, `IdentityPicker`, `SuggestionList`,
+  `RunProgress`, `EstimateDialog`, `BatchProgress`, `TriageResearch`, settings pages).
+- The key is never shown again after saving: the web shows `key_last4` only, and only an owner
+  signed in on the web sees the key form.
+- The sheet has Pipeline | Dossier tabs (`R`); the Triage decision panel's research band has a
+  fixed height (`TRIAGE_RESEARCH_H`) and `A` accepts all suggestions for the investor, undone
+  by U (`Decision.revert` puts investor fields back). Write-back is shown, never silent:
+  "from research" marks on filled fields, suggestions everywhere else.
+- The Meeting refresh offer is a toast action (`refreshOffer`, > 30 days) and a banner on the
+  Dossier tab; it never starts a run by itself. A run started elsewhere is announced
+  (`announceRun`) so an open dossier follows it.
+- Polls (runs, batches) go every 2s and pause while the tab is hidden; no websockets.
+- Screenshots of every research screen (1440 light and dark, 1280, 390) are in
+  `design/research/shots/`, taken against a throwaway database and a local fake OpenRouter.
