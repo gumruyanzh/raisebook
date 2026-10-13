@@ -295,6 +295,10 @@ export interface PipelineItem {
   search: string;
   /** Where the investor came from ("SF Tech Week"), only when set. */
   source?: string;
+  /** Board card facts (DECISION §15), only when set. */
+  stage_focus?: string[];
+  check_min?: number;
+  check_max?: number;
 }
 
 /** Investor fields the pipeline keeps per row (filters and search), by investor id. */
@@ -303,9 +307,25 @@ export interface PipelineExtra {
   search: string;
   /** Triage hides the source chip when every investor in the queue shares it. */
   source?: string;
+  /** Board card facts (DECISION §15): stage focus and check size, when known. */
+  stage_focus?: string[];
+  check_min?: number;
+  check_max?: number;
 }
 
 const NOTES_IN_SEARCH = 400;
+
+/** The board card's investor facts (stage focus, check size), only the ones that are set. */
+export function cardFacts(inv: Pick<Investor, "stage_focus" | "check_min" | "check_max">): Pick<
+  PipelineExtra,
+  "stage_focus" | "check_min" | "check_max"
+> {
+  const out: Pick<PipelineExtra, "stage_focus" | "check_min" | "check_max"> = {};
+  if (inv.stage_focus?.length) out.stage_focus = inv.stage_focus;
+  if (inv.check_min != null) out.check_min = inv.check_min;
+  if (inv.check_max != null) out.check_max = inv.check_max;
+  return out;
+}
 
 /** Server side: participants (+ the round's investors) → the trimmed rows. */
 export function toPipelineItems(participants: Participant[], investors: Investor[]): PipelineItem[] {
@@ -350,6 +370,7 @@ export function toPipelineItems(participants: Participant[], investors: Investor
     if (p.owner) item.owner = p.owner;
     if (p.last_activity_at) item.last_activity_at = p.last_activity_at;
     if (inv?.source) item.source = inv.source;
+    if (inv) Object.assign(item, cardFacts(inv));
     return item;
   });
 }
@@ -364,8 +385,12 @@ export function expandPipelineItems(
   const fallback = sortedStages(round.stages)[0]!;
   const extras: Record<UUID, PipelineExtra> = {};
   const participants = items.map((it) => {
-    const { industries, search, source, stage, ...rest } = it;
-    extras[it.investor.id] = source ? { industries, search, source } : { industries, search };
+    const { industries, search, source, stage, stage_focus, check_min, check_max, ...rest } = it;
+    const extra: PipelineExtra = source ? { industries, search, source } : { industries, search };
+    if (stage_focus?.length) extra.stage_focus = stage_focus;
+    if (check_min != null) extra.check_min = check_min;
+    if (check_max != null) extra.check_max = check_max;
+    extras[it.investor.id] = extra;
     return {
       ...rest,
       round_id: round.id,

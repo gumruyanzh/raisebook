@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode, Ref } from "react";
 
-import type { FollowUpState, StageColor } from "@/lib/api/types";
+import type { FollowUpState, Priority, StageColor } from "@/lib/api/types";
+import { PRIORITY_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { moneyCompact, num } from "@/lib/format";
 import { cardSlot, type CardSlot } from "@/lib/pipeline";
@@ -290,6 +291,198 @@ export function BoardCard({
       {step !== null ? (
         <span className="t-body-s block h-18 w-full truncate leading-[18px] text-muted" title={step || undefined}>
           {step || " "}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+/* ---------- the rich kanban card (DECISION §15) ---------- */
+
+/** Rich card rows, in px (the virtualized column adds them up per card, plus CARD_GAP). */
+const DEAL = { pad: 22, head: 22, sub: 18, meta: 26, odds: 24, foot: 26, step: 20 } as const;
+
+/** Which optional rows a rich card shows; decides its height. */
+export interface DealCardRows {
+  /** Type, stage focus, industry chips or a check range. */
+  meta: boolean;
+  /** The likelihood line (hidden in the lost stage). */
+  odds: boolean;
+  /** Follow-up, money or last touch. */
+  foot: boolean;
+  /** Display → "Show next step". */
+  step: boolean;
+}
+
+/** A rich card's height in px (borders included, the gap under it not). */
+export function dealCardHeight(r: DealCardRows): number {
+  return (
+    DEAL.pad +
+    DEAL.head +
+    DEAL.sub +
+    (r.step ? DEAL.step : 0) +
+    (r.meta ? DEAL.meta : 0) +
+    (r.odds ? DEAL.odds : 0) +
+    (r.foot ? DEAL.foot : 0)
+  );
+}
+
+export interface DealCardProps extends Omit<ComponentProps<"button">, "title" | "slot"> {
+  name: string;
+  /** Line 2: "Partner · Ember Labs" (title and firm, either may be missing). */
+  title?: string | null;
+  firm?: string | null;
+  priority: Priority;
+  /** Up to three short facts ("VC", "Seed", "Fintech"). */
+  meta: string[];
+  /** "$250k–1M", mono. */
+  check?: string | null;
+  /** Likelihood to close; null hides the line. */
+  odds?: { value: number; why: string; won?: boolean } | null;
+  /** Bottom left: the follow-up, the committed money or the soft amount (`cardSlot`). */
+  slot?: CardSlot | null;
+  /** Bottom right: "3d ago", with the date in `title`. */
+  touch?: { text: string; tip: string } | null;
+  nextStep?: string | null;
+  showNextStep?: boolean;
+  agentMark?: { tip: string } | null;
+  dragging?: boolean;
+  hint?: string;
+  current?: boolean;
+  selected?: boolean;
+  /**
+   * Room on the left of the name for the selection checkbox (rendered by the board): "shown"
+   * while anything is selected, "hover" when it appears on hover or focus, else none.
+   */
+  checkbox?: "shown" | "hover" | null;
+}
+
+/**
+ * The kanban card the owner asked for (DECISION §15): bigger names and more to read at a
+ * glance, still calm. Name (600 15.5px) with the priority chip (Hot / Warm / Maybe / Low fit,
+ * the Triage colors) · "Title · Firm" · up to three neutral meta chips and the check range in
+ * mono · a thin Likelihood bar with its percent (the tooltip shows the working) · the
+ * follow-up or money on the left and the last touch on the right. Rows with nothing to say
+ * are left out, and the height follows (`dealCardHeight`), so the column stays windowed.
+ */
+export function DealCard({
+  name,
+  title,
+  firm,
+  priority,
+  meta,
+  check,
+  odds,
+  slot,
+  touch,
+  nextStep,
+  showNextStep,
+  agentMark,
+  dragging,
+  hint,
+  current,
+  selected,
+  checkbox,
+  className,
+  type = "button",
+  ...rest
+}: DealCardProps) {
+  const who = [title?.trim(), firm?.trim()].filter(Boolean).join(" · ");
+  const step = showNextStep ? nextStep || "" : null;
+  const rows: DealCardRows = {
+    meta: meta.length > 0 || Boolean(check),
+    odds: Boolean(odds),
+    foot: Boolean(slot || touch),
+    step: step !== null,
+  };
+  const pct = odds ? Math.max(0, Math.min(100, odds.value)) : 0;
+  return (
+    <button
+      type={type}
+      title={hint}
+      className={cn(
+        "flex w-full shrink-0 flex-col rounded-card border px-12 py-10 text-left",
+        "transition-[border-color] duration-[120ms] hover:border-accent focus-visible:-outline-offset-2",
+        selected ? "border-accent bg-accent-soft" : current ? "border-accent bg-surface" : "border-line bg-surface",
+        rest.draggable && "cursor-grab active:cursor-grabbing",
+        dragging && "opacity-50",
+        className,
+      )}
+      style={{ height: dealCardHeight(rows) }}
+      {...rest}
+    >
+      <span
+        className={cn(
+          "flex w-full min-w-0 items-center gap-8 transition-[padding] duration-[120ms]",
+          checkbox === "shown" && "pl-22",
+          checkbox === "hover" && "group-hover/card:pl-22 group-focus-within/card:pl-22",
+        )}
+        style={{ height: DEAL.head }}
+      >
+        <span className="min-w-0 truncate text-[15.5px] leading-[22px] font-semibold tracking-[-0.005em] text-fg">{name}</span>
+        {agentMark ? (
+          <Tooltip tip={agentMark.tip} align="end">
+            <span className="agent-diamond self-center" aria-label={agentMark.tip} role="img" />
+          </Tooltip>
+        ) : null}
+        <Chip tone={priority} className="ml-auto shrink-0">
+          {PRIORITY_LABEL[priority]}
+        </Chip>
+      </span>
+      <span className="t-body-s block w-full truncate leading-[18px] text-muted" style={{ height: DEAL.sub }}>
+        {who || " "}
+      </span>
+      {step !== null ? (
+        <span
+          className="t-body-s block w-full truncate pt-2 leading-[18px] text-fg/80"
+          style={{ height: DEAL.step }}
+          title={step || undefined}
+        >
+          {step ? `→ ${step}` : " "}
+        </span>
+      ) : null}
+      {rows.meta ? (
+        <span className="flex w-full min-w-0 items-end gap-4 overflow-hidden" style={{ height: DEAL.meta }}>
+          {meta.map((m) => (
+            <Chip key={m} tone="type" className="min-w-0 shrink overflow-hidden text-ellipsis">
+              {m}
+            </Chip>
+          ))}
+          {check ? (
+            <span className="ml-auto shrink-0 pl-4 font-mono text-[11.5px] leading-[20px] text-muted tnum" title="Check size">
+              {check}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
+      {odds ? (
+        <span className="flex w-full min-w-0 items-end gap-8" style={{ height: DEAL.odds }} title={odds.why}>
+          <span className="flex h-16 w-full min-w-0 items-center gap-8">
+            <span className="shrink-0 text-[11.5px] leading-none text-muted">Likelihood</span>
+            <span
+              aria-hidden
+              className="relative h-4 min-w-0 flex-1 overflow-hidden rounded-pill bg-sunk"
+            >
+              <span
+                className={cn("absolute inset-y-0 left-0 rounded-pill", odds.won ? "bg-good" : "bg-fg/55")}
+                style={{ width: `${pct}%` }}
+              />
+            </span>
+            <span className={cn("w-32 shrink-0 text-right font-mono text-[11.5px] leading-none tnum", odds.won ? "text-good-ink" : "text-fg")}>
+              <span className="sr-only">Likelihood </span>
+              {pct}%
+            </span>
+          </span>
+        </span>
+      ) : null}
+      {rows.foot ? (
+        <span className="flex w-full min-w-0 items-end gap-8" style={{ height: DEAL.foot }}>
+          {slot ? <SlotView slot={slot} /> : null}
+          {touch ? (
+            <span className="t-body-s ml-auto shrink-0 leading-[20px] text-muted" title={touch.tip}>
+              {touch.text}
+            </span>
+          ) : null}
         </span>
       ) : null}
     </button>

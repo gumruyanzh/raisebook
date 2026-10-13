@@ -63,10 +63,18 @@ export function HomeToday({ companies }: { companies: HomeCompany[] }) {
           const w = c.workspace;
           const due = c.counts.overdue + c.counts.today;
           const href = `/w/${enc(w.slug)}`;
+          // The whole card opens the company: straight to its pipeline when there is one round.
+          const open = c.rounds.length === 1 ? `${href}/r/${enc(c.rounds[0]!.slug)}` : href;
           return (
-            <div key={w.slug} className="flex flex-col gap-8 rounded-md border border-line bg-surface p-14">
+            <div
+              key={w.slug}
+              className="relative flex flex-col gap-8 rounded-md border border-line bg-surface p-14 transition-colors hover:border-accent focus-within:border-accent"
+            >
               <div className="flex min-w-0 items-baseline gap-8">
-                <Link href={href} className="min-w-0 truncate font-semibold hover:underline">
+                <Link
+                  href={open}
+                  className="min-w-0 truncate font-semibold after:absolute after:inset-0 after:rounded-md after:content-[''] focus-visible:outline-none"
+                >
                   {w.name}
                 </Link>
                 {w.is_sandbox ? <Chip tone="mode">Sandbox</Chip> : null}
@@ -79,7 +87,7 @@ export function HomeToday({ companies }: { companies: HomeCompany[] }) {
                 <ul className="m-0 flex list-none flex-wrap gap-x-12 gap-y-4 p-0">
                   {c.rounds.map((r) => (
                     <li key={r.slug} className="t-body-s">
-                      <Link href={`${href}/r/${enc(r.slug)}/overview`} className="link">
+                      <Link href={`${href}/r/${enc(r.slug)}/overview`} className="link relative z-10">
                         {r.name}
                       </Link>{" "}
                       <span className="text-muted">· {plural(r.participant_count, "investor")}</span>

@@ -13,13 +13,16 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { Board, BoardCard, BoardColumn, Menu, StageDot } from "@/components/ui";
-import { CARD_GAP, CARD_H, CARD_H_STEP } from "@/components/ui/Board";
+import { Board, BoardColumn, DealCard, Menu, StageDot } from "@/components/ui";
+import { CARD_GAP, dealCardHeight, type DealCardRows } from "@/components/ui/Board";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
+import type { PipelineExtra } from "@/lib/api/rounds";
 import type { Participant, Round, Stage } from "@/lib/api/types";
+import { PRIORITY_LABEL } from "@/lib/api/types";
+import { cardMeta, cardPriority, checkRange, closeLikelihood, fitMeta, lastTouch } from "@/lib/boardCard";
 import { cn } from "@/lib/cn";
-import { moneyCompact, num } from "@/lib/format";
-import { boardTrack, cardSlot, defaultColumnSort, hiddenPipFit, triageTargets } from "@/lib/pipeline";
+import { formatDateTime, moneyCompact, num } from "@/lib/format";
+import { boardTrack, cardSlot, defaultColumnSort, triageTargets } from "@/lib/pipeline";
 
 import { byFit } from "./util";
 
@@ -75,8 +78,8 @@ interface ColumnApi {
  * The pipeline board as a classic kanban (DECISION §14, the prototype's board): every stage is
  * its own equal-width column side by side, empty ones included, and the board scrolls sideways
  * when they do not fit (a pill in the toolbar reaches the end stages). The board fills the
- * viewport and only the columns scroll, each windowed (cards are 52px), so 411 cards in New
- * cost about 20 mounted cards. Drag a card (or the selection) onto another column to move it.
+ * viewport and only the columns scroll, each windowed (rich cards of DECISION §15, each with a
+ * known height), so 411 cards in New cost about 15 mounted cards. Drag a card (or the selection) onto another column to move it.
  *
  * Keyboard (one tab stop): arrows or J/K move, Enter opens, Alt+→ / Alt+← moves a card one
  * stage (skipping the lost stage), M opens "Move to…" (digits pick a stage), X selects,
@@ -104,6 +107,8 @@ export function PipelineBoard({
   onFocusMove,
   onMove,
   onMoveMany,
+  extras,
+  timeZone,
   endSlot,
 }: {
   round: Round;
@@ -135,6 +140,10 @@ export function PipelineBoard({
   onMove: (investorId: string, stageKey: string) => Promise<boolean>;
   /** One bulk request (dragging or "Move to…" with several selected). */
   onMoveMany: (investorIds: string[], stageKey: string) => void;
+  /** Investor facts the cards show (stage focus, check size, industries), by investor id. */
+  extras?: Record<string, PipelineExtra>;
+  /** The workspace timezone (the cards' "3d ago"). */
+  timeZone?: string;
   /** Where the end-stage pill goes (a slot in the toolbar), so it never covers cards. */
   endSlot?: HTMLElement | null;
 }) {
@@ -444,6 +453,8 @@ export function PipelineBoard({
               showNextStep={showNextStep}
               agentMarks={agentMarks}
               today={today}
+              extras={extras ?? NO_EXTRAS}
+              timeZone={timeZone}
               canWrite={canWrite}
               selectable={canWrite && Boolean(selected)}
               anySelected={anySelected}
@@ -575,6 +586,56 @@ export function PipelineBoard({
 }
 
 const EMPTY = new Set<string>();
+const NO_EXTRAS: Record<string, PipelineExtra> = {};
+
+/** Everything a rich card shows, worked out once per card (and its height). */
+interface CardView {
+  rows: DealCardRows;
+  meta: string[];
+  check: string;
+  odds: { value: number; why: string; won: boolean } | null;
+  slot: ReturnType<typeof cardSlot>;
+  touch: { text: string; tip: string } | null;
+}
+
+/** The meta row's width in the narrowest column (250px, less padding and borders). */
+const META_WIDTH = 206;
+
+/** A minute after it was added: the import's own activity is not a touch. */
+const REAL_TOUCH_MS = 60_000;
+
+function cardView(
+  p: Participant,
+  stage: Stage,
+  extra: PipelineExtra | undefined,
+  today: string,
+  currency: string,
+  showNextStep: boolean,
+  timeZone?: string,
+): CardView {
+  const check = checkRange(extra?.check_min, extra?.check_max, currency);
+  const all = cardMeta({ type: p.investor.type, stageFocus: extra?.stage_focus, industries: extra?.industries });
+  const meta = fitMeta(all, check, META_WIDTH);
+  // The lost stage has no likelihood line: 0% on 230 cards says nothing the column does not.
+  const l = stage.kind === "lost" ? null : closeLikelihood({ ...p, stage });
+  const odds = l ? { value: l.value, why: `Likelihood to close this round. ${l.why}`, won: stage.kind === "won" } : null;
+  const slot = cardSlot(p, today, currency);
+  const at = p.last_activity_at;
+  const real =
+    at && (stage.kind === "active" || stage.kind === "won" || Date.parse(at) - Date.parse(p.created_at) > REAL_TOUCH_MS);
+  const text = real ? lastTouch(at, today, timeZone) : "";
+  const touch = text
+    ? { text: text === "Today" ? "Touched today" : `Touched ${text}`, tip: `Last activity ${formatDateTime(at, timeZone)}` }
+    : null;
+  return {
+    rows: { meta: meta.length > 0 || Boolean(check), odds: Boolean(odds), foot: Boolean(slot || touch), step: showNextStep },
+    meta,
+    check,
+    odds,
+    slot,
+    touch,
+  };
+}
 
 
 
@@ -589,6 +650,8 @@ function StageColumn({
   showNextStep,
   agentMarks,
   today,
+  extras,
+  timeZone,
   canWrite,
   selectable,
   anySelected,
@@ -620,6 +683,8 @@ function StageColumn({
   showNextStep: boolean;
   agentMarks: Record<string, AgentMark>;
   today: string;
+  extras: Record<string, PipelineExtra>;
+  timeZone?: string;
   canWrite: boolean;
   selectable: boolean;
   anySelected: boolean;
@@ -643,20 +708,21 @@ function StageColumn({
 }) {
   const body = useRef<HTMLDivElement>(null);
   const won = s.kind === "won";
-  const cardH = (showNextStep ? CARD_H_STEP : CARD_H) + CARD_GAP;
+  // Each card's rows (and so its height) are known up front, so the column stays windowed.
+  const views = useMemo(
+    () => cards.map((p) => cardView(p, s, extras[p.investor.id], today, currency, showNextStep, timeZone)),
+    [cards, s, extras, today, currency, showNextStep, timeZone],
+  );
+  const rowH = useCallback((i: number) => dealCardHeight(views[i]!.rows) + CARD_GAP, [views]);
 
   // Windowed: a 411-card New column mounts only the cards in view (no "Show more").
-  const v = useVirtualRows({ scrollRef: body, count: cards.length, height: cardH, initial: 16 });
+  const v = useVirtualRows({ scrollRef: body, count: cards.length, height: rowH, initial: 10 });
   const { scrollToIndex } = v;
   useEffect(() => {
     registerApi({ scrollToIndex: (i) => scrollToIndex(i) });
     return () => registerApi(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollToIndex]);
-
-  // Pips help decide who to contact: none past the open stages, and in an open column only on
-  // the cards whose fit differs from the one most share (critique 3).
-  const pipHidden = useMemo(() => hiddenPipFit(s, cards.map((p) => p.fit)), [s, cards]);
 
   const total = won ? cards.reduce((sum, p) => sum + (p.amount_committed ?? 0), 0) : 0;
   const due = cards.filter((p) => p.follow_up_state === "overdue" || p.follow_up_state === "today").length;
@@ -695,11 +761,16 @@ function StageColumn({
       }
     >
       {v.padTop > 0 ? <div aria-hidden className="shrink-0" style={{ height: v.padTop }} /> : null}
-      {cards.slice(v.start, v.end).map((p) => {
+      {cards.slice(v.start, v.end).map((p, k) => {
         const id = p.investor.id;
         const isSel = selected.has(id);
+        const view = views[v.start + k]!;
         return (
-          <div key={id} className="group/card relative min-w-0 shrink-0" style={{ height: cardH, paddingBottom: CARD_GAP }}>
+          <div
+            key={id}
+            className="group/card relative min-w-0 shrink-0"
+            style={{ height: dealCardHeight(view.rows) + CARD_GAP, paddingBottom: CARD_GAP }}
+          >
             {selectable ? (
               <input
                 type="checkbox"
@@ -708,33 +779,34 @@ function StageColumn({
                 onChange={() => onToggle(id)}
                 aria-label={`Select ${p.investor.name}`}
                 className={cn(
-                  "absolute top-[11px] left-10 z-[1] size-14 accent-[var(--accent)]",
+                  "absolute top-[15px] left-13 z-[1] size-14 accent-[var(--accent)]",
                   !anySelected && "opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100",
                 )}
               />
             ) : null}
-            <BoardCard
+            <DealCard
               data-investor={id}
               name={p.investor.name}
               title={p.investor.title}
               firm={p.investor.firm}
-              fit={p.fit}
-              rightSlot={cardSlot(p, today, currency)}
+              priority={cardPriority(p.fit)}
+              meta={view.meta}
+              check={view.check}
+              odds={view.odds}
+              slot={view.slot}
+              touch={view.touch}
               nextStep={p.next_step}
               showNextStep={showNextStep}
-              won={won}
-              hidePips={pipHidden === "all" || pipHidden === p.fit}
               current={openId === id}
               selected={isSel}
-              inset={anySelected}
-              className={selectable && !anySelected ? "group-hover/card:pl-32 group-focus-within/card:pl-32" : undefined}
+              checkbox={anySelected ? "shown" : selectable ? "hover" : null}
               tabIndex={tabStop === id ? 0 : -1}
               agentMark={agentMarks[id] ? { tip: agentMarks[id].tip } : null}
               dragging={dragIds?.includes(id)}
               draggable={canWrite}
               hint={canWrite ? undefined : "View only"}
               aria-current={openId === id || undefined}
-              aria-label={`${p.investor.name}${p.investor.firm ? `, ${p.investor.firm}` : ""}. ${s.label}.${isSel ? " Selected." : ""}`}
+              aria-label={`${p.investor.name}${p.investor.firm ? `, ${p.investor.firm}` : ""}. ${s.label}. ${PRIORITY_LABEL[cardPriority(p.fit)]}.${view.odds ? ` Likelihood ${view.odds.value}%.` : ""}${isSel ? " Selected." : ""}`}
               onFocus={() => onCardFocus(id)}
               onClick={(e) => onCardClick(e, id)}
               onKeyDown={(e) => onCardKey(e, p)}

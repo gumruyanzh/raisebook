@@ -36,6 +36,7 @@ import { FilterChips, FilterMenu, type FilterField, type FilterMenuHandle } from
 import { errorMessage } from "@/lib/api/client";
 import {
   bulkUpdateParticipants,
+  cardFacts,
   expandPipelineItems,
   getRoundSummary,
   moveStage,
@@ -1729,6 +1730,8 @@ export function Pipeline(props: PipelineProps) {
               onFocusMove={splitOpen ? openInvestor : undefined}
               onMove={doMove}
               onMoveMany={(ids, key) => bulkMove(key, ids)}
+              extras={extras}
+              timeZone={tz}
               endSlot={endSlot}
             />
           ) : (
@@ -1801,7 +1804,12 @@ export function Pipeline(props: PipelineProps) {
           );
           setExtras((e) => ({
             ...e,
-            [inv.id]: { industries: inv.industries, search: e[inv.id]?.search ?? "", ...(inv.source ? { source: inv.source } : {}) },
+            [inv.id]: {
+              industries: inv.industries,
+              search: e[inv.id]?.search ?? "",
+              ...(inv.source ? { source: inv.source } : {}),
+              ...cardFacts(inv),
+            },
           }));
         }}
         onChanged={() => {
@@ -1819,7 +1827,10 @@ export function Pipeline(props: PipelineProps) {
         round={round}
         onOpen={openInvestor}
         onAdded={(inv, part) => {
-          setExtras((e) => ({ ...e, [inv.id]: { industries: inv.industries, search: (inv.location ?? "").toLowerCase() } }));
+          setExtras((e) => ({
+            ...e,
+            [inv.id]: { industries: inv.industries, search: (inv.location ?? "").toLowerCase(), ...cardFacts(inv) },
+          }));
           if (part) patchParticipant(part);
           afterWrite();
         }}
