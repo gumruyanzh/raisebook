@@ -22,7 +22,9 @@ export type ChipTone =
   | "soon"
   | "money"
   | "agent"
-  | "mode";
+  | "mode"
+  /** A research verdict "Strong fit" (the Brief's chip; Possible uses `maybe`, Poor `low`). */
+  | "strong";
 
 const TONE: Record<ChipTone, string> = {
   hot: "bg-hot-soft text-hot-ink",
@@ -37,6 +39,7 @@ const TONE: Record<ChipTone, string> = {
   soon: "bg-warm-soft text-warm-ink",
   money: "bg-good-soft text-good-ink font-mono",
   agent: "bg-agent-soft text-agent",
+  strong: "bg-good-soft text-good-ink",
   mode: "border-line! bg-transparent text-muted font-mono uppercase tracking-[0.06em] text-2xs!",
 };
 

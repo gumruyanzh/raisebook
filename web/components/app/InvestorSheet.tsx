@@ -15,6 +15,7 @@ import {
   Skeleton,
   StagePill,
   StageSelector,
+  Tabs,
   Textarea,
   Timeline,
 } from "@/components/ui";
@@ -33,8 +34,19 @@ import { visibleIndustries } from "@/lib/pipeline";
 import { useOptionalSession, useWorkspace } from "@/lib/session";
 
 import { LogComposer } from "./LogComposer";
+import { DossierPanel } from "./research/DossierPanel";
 import { ParticipantFields, useParticipantSave } from "./ParticipantFields";
 import { draftHref, ReachOut } from "./ReachOut";
+
+/** A quiet "from research" mark beside a value research filled in (R7). */
+export function FromResearch({ fields, of }: { fields: readonly string[] | undefined; of: readonly string[] }) {
+  if (!fields || !of.some((f) => fields.includes(f))) return null;
+  return (
+    <span className="t-micro ml-6 whitespace-nowrap text-muted" title="Filled in by research. Edit it and the mark goes away.">
+      from research
+    </span>
+  );
+}
 
 /** "$250k–$1M" from check_min/max, else the free-text note. */
 export function checkSize(inv: Pick<Investor, "check_min" | "check_max" | "check_note">, currency: string) {
@@ -140,6 +152,7 @@ export function InvestorSheet({
   onInvestorChange,
   onChanged,
   onStageMove,
+  onResearchChange,
 }: {
   open: boolean;
   investorId: string | null;
@@ -166,6 +179,8 @@ export function InvestorSheet({
   onChanged: () => void;
   /** Stage moves go through the board's optimistic path (with Undo). */
   onStageMove: (investorId: string, stageKey: string) => Promise<boolean>;
+  /** Research changed something (a dossier, an identity, accepted suggestions). */
+  onResearchChange?: () => void;
 }) {
   const [investor, setInvestor] = useState<Investor | null>(null);
   const [timeline, setTimeline] = useState<Activity[]>([]);
@@ -258,6 +273,14 @@ export function InvestorSheet({
   useHotkey("alt+arrowup", () => go(prevId), { priority: 1, enabled: open && Boolean(prevId), allowInInputs: true });
   useHotkey("n", focusLog, { priority: 1, enabled: open && canWrite && Boolean(investorId), description: "Log a note", group: "Investor file" });
   useHotkey("f", openFollowUp, { priority: 1, enabled: open && canWrite && Boolean(p), description: "Set follow-up", group: "Investor file" });
+  // Pipeline | Dossier (RESEARCH-PLAN §8.3). The tab stays as you walk the list with J / K.
+  const [tab, setTab] = useState<"pipeline" | "dossier">("pipeline");
+  useHotkey("r", () => setTab((t) => (t === "dossier" ? "pipeline" : "dossier")), {
+    priority: 1,
+    enabled: open && Boolean(investorId),
+    description: "Dossier / Pipeline tab",
+    group: "Investor file",
+  });
 
   const name = investor?.name ?? p?.investor.name ?? "Investor";
   const stages = useMemo(() => sortedStages(round.stages), [round.stages]);
@@ -336,6 +359,17 @@ export function InvestorSheet({
       }
     : null;
   const draft = person ? draftHref(person, { workspaceName: workspace.name, round, sender: me?.name ?? null }) : null;
+  const fromResearch = investor?.research?.from_research;
+  const rs = investor?.research;
+  const researchHint = rs
+    ? rs.active_run
+      ? "running"
+      : rs.identity_status === "needs_pick"
+        ? "pick"
+        : rs.verdict
+          ? (rs.verdict === "strong" ? "Strong" : rs.verdict === "possible" ? "Possible" : "Poor")
+          : null
+    : null;
   const contactAndFacts = investor ? (
     <>
       <section aria-label="Contact">
@@ -346,9 +380,33 @@ export function InvestorSheet({
         <SectionLabel>Facts</SectionLabel>
         <DefList
           items={[
-            { term: "Invests at", value: investor.stage_focus.map(stageFocusLabel).join(", ") },
-            { term: "Check size", value: checkSize(investor, round.currency) },
-            { term: "Industries", value: visibleIndustries(investor.industries).join(", ") },
+            {
+              term: "Invests at",
+              value: investor.stage_focus.length ? (
+                <>
+                  {investor.stage_focus.map(stageFocusLabel).join(", ")}
+                  <FromResearch fields={fromResearch} of={["stage_focus"]} />
+                </>
+              ) : null,
+            },
+            {
+              term: "Check size",
+              value: checkSize(investor, round.currency) ? (
+                <>
+                  {checkSize(investor, round.currency)}
+                  <FromResearch fields={fromResearch} of={["check_min", "check_max"]} />
+                </>
+              ) : null,
+            },
+            {
+              term: "Industries",
+              value: visibleIndustries(investor.industries).length ? (
+                <>
+                  {visibleIndustries(investor.industries).join(", ")}
+                  <FromResearch fields={fromResearch} of={["industries"]} />
+                </>
+              ) : null,
+            },
             {
               term: "Tags",
               value: investor.tags.length ? (
@@ -361,7 +419,15 @@ export function InvestorSheet({
                 </span>
               ) : null,
             },
-            { term: "Location", value: investor.location },
+            {
+              term: "Location",
+              value: investor.location ? (
+                <>
+                  {investor.location}
+                  <FromResearch fields={fromResearch} of={["location"]} />
+                </>
+              ) : null,
+            },
             { term: "Source", value: investor.source },
             { term: "Warm intro by", value: investor.warm_intro_by },
             {
@@ -453,7 +519,54 @@ export function InvestorSheet({
         ) : null
       }
     >
+      {investorId ? (
+        <Tabs
+          label={`${name}'s file`}
+          idBase="investor-sheet"
+          value={tab}
+          onChange={setTab}
+          className="-mt-6 shrink-0"
+          items={[
+            { value: "pipeline", label: "Pipeline" },
+            {
+              value: "dossier",
+              label: (
+                <span className="inline-flex items-baseline gap-6" title="Dossier (R)">
+                  Dossier
+                  {researchHint ? <span className="t-micro text-muted">{researchHint}</span> : null}
+                </span>
+              ),
+            },
+          ]}
+        />
+      ) : null}
       {error ? <p className="t-body-s text-bad">{error}</p> : null}
+      {tab === "dossier" && investorId ? (
+        <div role="tabpanel" id="investor-sheet-panel-dossier" aria-labelledby="investor-sheet-tab-dossier">
+          <DossierPanel
+            key={investorId}
+            investorId={investorId}
+            investorName={name}
+            round={round.id}
+            client={client}
+            wsSlug={wsSlug}
+            canWrite={canWrite}
+            today={today}
+            currency={round.currency}
+            onChanged={() => {
+              void getInvestor(client, investorId)
+                .then((inv) => {
+                  setInvestor(inv);
+                  onInvestorChange?.(inv);
+                })
+                .catch(() => {});
+              onResearchChange?.();
+              onChanged();
+            }}
+          />
+        </div>
+      ) : (
+      <>
       {p ? (
         <>
           <section aria-label={`Stage for ${round.name}`}>
@@ -581,6 +694,8 @@ export function InvestorSheet({
           }}
         />
       ) : null}
+      </>
+      )}
     </Sheet>
   );
 }

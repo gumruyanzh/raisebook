@@ -44,6 +44,7 @@ import { InvestorProfile } from "./InvestorProfile";
 import { LogComposer } from "./LogComposer";
 import { CommitmentDialog, useParticipantSave } from "./ParticipantFields";
 import { ReachOut } from "./ReachOut";
+import { DossierPanel } from "./research/DossierPanel";
 import { moneyInput, parseMoney, personName } from "./util";
 
 /** One ruled row per participation (SYSTEM §4.8 "Rounds"). */
@@ -445,6 +446,28 @@ export function InvestorPage({
                 })}
               </ul>
             )}
+          </section>
+
+          <section id="dossier" aria-label="Dossier" className="scroll-mt-80 rounded-md border border-line bg-surface p-16">
+            <SectionLabel>Dossier</SectionLabel>
+            <DossierPanel
+              investorId={inv.id}
+              investorName={inv.name}
+              round={parts[0]?.round_id ?? null}
+              client={client}
+              wsSlug={workspace.slug}
+              canWrite={canWrite}
+              today={today}
+              currency={currency}
+              nested
+              onChanged={() => {
+                void getInvestor(client, inv.id)
+                  .then(setInv)
+                  .catch(() => {});
+                void reloadTimeline();
+                router.refresh();
+              }}
+            />
           </section>
 
           <section id="timeline" aria-label="Timeline" className="scroll-mt-80 rounded-md border border-line bg-surface p-16">
