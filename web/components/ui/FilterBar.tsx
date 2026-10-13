@@ -279,7 +279,9 @@ export function FilterMenu({
           }
         }}
         className={cn(
-          "inline-flex h-32 items-center gap-6 rounded-sm border bg-surface px-10 text-base whitespace-nowrap transition-colors duration-[120ms]",
+          // One ring hugging the border when focus comes back after Esc (critique 4: border plus
+          // an offset outline read as a heavy double ring).
+          "inline-flex h-32 items-center gap-6 rounded-sm border bg-surface px-10 text-base whitespace-nowrap transition-colors duration-[120ms] focus-visible:border-accent focus-visible:outline-1 focus-visible:outline-offset-0",
           applied ? "border-accent text-fg" : "border-line text-muted hover:border-muted hover:text-fg",
         )}
       >

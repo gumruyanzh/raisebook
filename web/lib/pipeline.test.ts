@@ -11,7 +11,9 @@ import {
   pressedOption,
   queuePosition,
   segmentTrack,
+  defaultColumnSort,
   defaultView,
+  introFitLine,
   dominantStage,
   formatDuration,
   isHiddenValue,
@@ -294,19 +296,21 @@ test("nextCursor: next undecided, skips done, wraps, null when all done", () => 
 });
 
 test("paceEstimate: the median of real gaps between single decisions, breaks left out", () => {
-  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 30_000]), { sorted: 4, perMs: null });
+  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 30_000]), { sorted: 4, perMs: null, floored: false });
   // Gaps 10s, 10s, 20s and a 10-minute break (left out): three real gaps are not a pace yet.
-  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000]), { sorted: 5, perMs: null });
+  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000]), { sorted: 5, perMs: null, floored: false });
   // …one more 30s gap: the median of [10, 10, 20, 30] is 15s.
-  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000, 670_000]), { sorted: 6, perMs: 15_000 });
-  // Quick decisions are the founder's real pace (no invented 20s floor), at least 1s.
-  assert.deepEqual(paceEstimate([0, 2_000, 4_000, 6_000, 8_000]), { sorted: 5, perMs: 2_000 });
-  assert.deepEqual(paceEstimate([0, 100, 200, 300, 400]), { sorted: 5, perMs: 1_000 });
+  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000, 670_000]), { sorted: 6, perMs: 15_000, floored: false });
+  // Quick decisions plan at the 10s floor and say so (critique 4: "1s each, 10 min" is no plan).
+  assert.deepEqual(paceEstimate([0, 2_000, 4_000, 6_000, 8_000]), { sorted: 5, perMs: 10_000, floored: true });
+  assert.deepEqual(paceEstimate([0, 100, 200, 300, 400]), { sorted: 5, perMs: 10_000, floored: true });
   // Steady 45s reads are the pace.
-  assert.deepEqual(paceEstimate([0, 45_000, 90_000, 135_000, 180_000]), { sorted: 5, perMs: 45_000 });
+  assert.deepEqual(paceEstimate([0, 45_000, 90_000, 135_000, 180_000]), { sorted: 5, perMs: 45_000, floored: false });
   assert.equal(formatDuration(40 * 20_000), "15 min");
   assert.equal(formatDuration(371 * 26_000), "2h 40m");
-  assert.equal(formatDuration(1000), "5 min");
+  // Under 10 minutes, to the minute: 9 at 20s is 3 min, not "about 5".
+  assert.equal(formatDuration(9 * 20_000), "3 min");
+  assert.equal(formatDuration(1000), "1 min");
   assert.equal(formatRest(60_000), "under 5 min");
   assert.equal(formatRest(40 * 20_000), "15 min");
   assert.equal(formatEach(2_400), "about 2s each");
@@ -362,4 +366,19 @@ test("claimsContact: talking and committed stages, not open or lost ones", () =>
   assert.equal(claimsContact({ kind: "won" }), true);
   assert.equal(claimsContact({ kind: "open" }), false);
   assert.equal(claimsContact({ kind: "lost" }), false);
+});
+
+test("defaultColumnSort: talking stages by the next follow-up, the rest by fit", () => {
+  assert.equal(defaultColumnSort({ kind: "active" }), "due");
+  assert.equal(defaultColumnSort({ kind: "open" }), "fit");
+  assert.equal(defaultColumnSort({ kind: "won" }), "fit");
+  assert.equal(defaultColumnSort({ kind: "lost" }), "fit");
+});
+
+test("introFitLine: the email claims only the fit the founder gave", () => {
+  assert.match(introFitLine("Halyard Fund", 5), /strong fit/);
+  assert.match(introFitLine("Halyard Fund", 3), /good fit/);
+  assert.equal(introFitLine("Halyard Fund", 0), "I wanted to reach out to you at Halyard Fund directly.");
+  assert.doesNotMatch(introFitLine("Halyard Fund", 2), /fit/);
+  assert.equal(introFitLine(null, 5), "");
 });

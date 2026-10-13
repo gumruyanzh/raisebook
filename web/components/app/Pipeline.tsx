@@ -54,6 +54,7 @@ import { formatDate, num, priorityFromFit, relativeTime } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
 import {
   countByStage,
+  defaultColumnSort,
   defaultView,
   dominantStage,
   isQuiet,
@@ -71,7 +72,7 @@ import { AddInvestorDialog } from "./AddInvestorDialog";
 import { InvestorSheet } from "./InvestorSheet";
 import { quickPicks } from "@/lib/dates";
 import { PipelineBoard, sortCards, type AgentMark, type BoardSort } from "./PipelineBoard";
-import { ledgerFacts, LedgerDesk, LedgerStrip } from "./PipelineLedger";
+import { ledgerFacts, LedgerDesk, LedgerStrip, shownBuckets } from "./PipelineLedger";
 import { PipelinePhone } from "./PipelinePhone";
 import { PipelineTriage, type TriageStore } from "./PipelineTriage";
 import { RoundHeader } from "./RoundHeader";
@@ -615,10 +616,10 @@ export function Pipeline(props: PipelineProps) {
   }, [extras]);
 
   // Every filter except the stage (Triage works inside the open stage).
-  const matches = useCallback(
-    (p: Participant) => {
+  const matchesAll = useCallback(
+    (p: Participant, withKind: boolean) => {
       if (prio && priorityFromFit(p.fit) !== prio) return false;
-      if (kindFilter && p.stage.kind !== kindFilter) return false;
+      if (withKind && kindFilter && p.stage.kind !== kindFilter) return false;
       if (type && p.investor.type !== type) return false;
       if (industry) {
         const inds = extras[p.investor.id]?.industries ?? [];
@@ -639,6 +640,9 @@ export function Pipeline(props: PipelineProps) {
     },
     [extras, prio, kindFilter, type, industry, tag, follow, owner, query, searchText, today],
   );
+  const matches = useCallback((p: Participant) => matchesAll(p, true), [matchesAll]);
+  // Triage's queue is New only: stage and stage kind say nothing there (critique 4).
+  const triageMatches = useCallback((p: Participant) => matchesAll(p, false), [matchesAll]);
   const filtered = useMemo(
     () => participants.filter((p) => (!stageFilter || p.stage.key === stageFilter) && matches(p)),
     [participants, stageFilter, matches],
@@ -702,7 +706,8 @@ export function Pipeline(props: PipelineProps) {
           { value: "quiet", label: "Gone quiet (14+ days)", hint: num(counts.quiet) },
         ],
       },
-      {
+      // Solo workspaces get no owner UI (critique 2), the Filter menu included (critique 4).
+      ...(props.members.length < 2 ? [] : [{
         key: "owner",
         label: "Owner",
         values: [
@@ -715,7 +720,7 @@ export function Pipeline(props: PipelineProps) {
             hint: num(counts.ownerN[m.user_id] ?? 0),
           })),
         ],
-      },
+      }]),
       {
         key: "tag",
         label: "Tag",
@@ -734,6 +739,8 @@ export function Pipeline(props: PipelineProps) {
     ],
     [stages, counts, props.members],
   );
+
+  const triageFilterFields = useMemo(() => filterFields.filter((f) => f.key !== "stage" && f.key !== "kind"), [filterFields]);
 
   const clearFilters = () => {
     if (qTimer.current) clearTimeout(qTimer.current);
@@ -754,7 +761,9 @@ export function Pipeline(props: PipelineProps) {
   // Built-in views that can say something here (critique 3): "Due now" once any follow-up
   // exists, "My investors" once someone else could own investors. No "Hot": the fit groups
   // and the Filter menu already do that.
-  const anyFollowUp = counts.none < participants.length;
+  // "Due now" only while something is due (critique 4: an empty view with no count was noise),
+  // or while it is the view on screen.
+  const anyFollowUp = counts.due > 0 || follow === "due";
   const builtins: SavedView[] = useMemo(
     () => [
       { id: "all", name: "All", query: "", builtin: true },
@@ -833,7 +842,7 @@ export function Pipeline(props: PipelineProps) {
     for (const s of stages) m[s.key] = [];
     for (const p of filtered) (m[p.stage.key] ??= []).push(p);
     return stages.map((s) => {
-      const cards = sortCards(m[s.key] ?? [], boardSorts[s.key] ?? "fit");
+      const cards = sortCards(m[s.key] ?? [], boardSorts[s.key] ?? defaultColumnSort(s));
       if (s.key !== oStage?.key || s.key !== dominantKey) return { stage: s, cards };
       // The dominant New column is grouped by priority (DECISION §5.4); keep the sort inside.
       const by: Record<string, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
@@ -877,9 +886,12 @@ export function Pipeline(props: PipelineProps) {
     phoneOrder.current = ids;
   }, []);
   // Triage's queue (the slice on screen), so the sheet's "3 of 190" walks the queue.
+  // It is live: a decision files someone and the count under the file follows the queue.
   const triageOrder = useRef<string[]>([]);
+  const [triageWalk, setTriageWalk] = useState<string[]>([]);
   const onTriageOrder = useCallback((ids: string[]) => {
     triageOrder.current = ids;
+    setTriageWalk((prev) => (prev.length === ids.length && prev.every((x, i) => x === ids[i]) ? prev : ids));
   }, []);
   useEffect(() => {
     if (openId && !sheetOrder) {
@@ -914,10 +926,11 @@ export function Pipeline(props: PipelineProps) {
     }
   }, [setParams, backgroundRefresh]);
   const navOrder = useMemo(() => {
+    if (view === "triage" && openId && triageWalk.includes(openId)) return triageWalk;
     if (!sheetOrder) return order;
     const inRound = new Set(participants.map((p) => p.investor.id));
     return sheetOrder.filter((id) => inRound.has(id));
-  }, [sheetOrder, order, participants]);
+  }, [sheetOrder, order, participants, view, openId, triageWalk]);
 
   /* ---------- "Get set up" (P2-4) ---------- */
   const SETUP_KEY = `rb-setup-dismissed:${workspace.slug}`;
@@ -1181,14 +1194,27 @@ export function Pipeline(props: PipelineProps) {
   const isNarrow = useMediaQuery("(max-width: 899px)");
   // ≥1280px the sheet is a split panel: the list stays usable and follows the keyboard (P2-3).
   const split = useMediaQuery("(min-width: 1280px)") === true;
-  // Triage opens the file the same way (critique 2: a modal there, a split pane elsewhere).
-  const splitOpen = split && Boolean(openId);
+  // Triage opens the file the same way (critique 2: a modal there, a split pane elsewhere),
+  // from 1024px: the decision panel stays beside the file (critique 4: a scrim over it at 1024).
+  const desk = useMediaQuery("(min-width: 1024px)") === true;
+  const splitSheet = split || (view === "triage" && desk);
+  const splitOpen = splitSheet && Boolean(openId);
+  // Under 1280px (Triage only) the file is narrower, so the decision panel beside it keeps
+  // every stage name whole.
+  const sheetW = split || !splitSheet ? SHEET_W : 440;
   const working = !empty && view !== "triage";
   useHotkey("/", () => searchRef.current?.focus(), {
     description: "Search this round",
     group: "Pipeline",
     blockedByModals: true,
     enabled: working,
+  });
+  // Triage has no search box: "/" opens the command palette there, and "?" says so (critique 4).
+  useHotkey("/", () => {}, {
+    description: "Search investors and commands",
+    group: "Pipeline",
+    listOnly: true,
+    enabled: !empty && view === "triage",
   });
   useHotkey("f", () => filterRef.current?.open(), {
     description: "Filter",
@@ -1291,6 +1317,18 @@ export function Pipeline(props: PipelineProps) {
     };
   }, [empty, view, phone, splitOpen]);
 
+  // One way into Triage per screen besides the view switch (critique 4): the strip's Start
+  // triage, else the desk's "still New → Triage" row when it shows, else the New column's link.
+  const deskTriageOnScreen = useMemo(
+    () =>
+      !showStrip &&
+      canWrite &&
+      Boolean(oStage) &&
+      openCount > 0 &&
+      shownBuckets(participants, oStage?.key ?? null, today, serverAt || Date.now(), canWrite, headW).some((b) => b.id === "new"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showStrip, canWrite, oStage, openCount, participants, today, headW],
+  );
   const anyNextStep = useMemo(() => participants.some((p) => p.next_step), [participants]);
   const viewOptions: MenuEntry[] =
     view === "table"
@@ -1401,7 +1439,7 @@ export function Pipeline(props: PipelineProps) {
       className="flex flex-col gap-14"
       style={{
         ...(eatBottom && !phone ? { marginBottom: -eatBottom } : null),
-        ...(splitOpen ? { paddingRight: SHEET_W - 8 } : null),
+        ...(splitOpen ? { paddingRight: sheetW - 8 } : null),
       }}
     >
       {phone ? (
@@ -1444,9 +1482,10 @@ export function Pipeline(props: PipelineProps) {
             round={round}
             active="pipeline"
             className="mb-0 flex-nowrap items-center"
+            compact={headW < 700}
             aside={
               <>
-                {setupNode}
+                {headW < 700 ? null : setupNode}
                 {/* One place in every view (critique 3): the title row's right-aligned group. */}
                 {canWrite && !empty ? (
                   <Button
@@ -1642,7 +1681,7 @@ export function Pipeline(props: PipelineProps) {
             round={round}
             stages={stages}
             rows={participants}
-            matches={matches}
+            matches={triageMatches}
             extras={extras}
             agentMarks={agentMarks}
             today={today}
@@ -1654,7 +1693,7 @@ export function Pipeline(props: PipelineProps) {
             slice={tq}
             at={get("at") || null}
             active={activeFilters}
-            filterFields={filterFields}
+            filterFields={triageFilterFields}
             filterActive={active}
             onFilterChange={(k, v) => setParams({ [k]: v, at: null })}
             onSlice={(sl) => setParams({ tq: sl === "all" ? null : sl, at: null })}
@@ -1690,7 +1729,7 @@ export function Pipeline(props: PipelineProps) {
               dominantKey={dominantKey}
               // One way in per screen (critique 3): the strip's Start triage when it shows, else
               // the New column's "Triage →".
-              onTriage={triageOk && openCount > 0 && !startTriageOnScreen ? () => setView("triage") : undefined}
+              onTriage={triageOk && openCount > 0 && !startTriageOnScreen && !deskTriageOnScreen ? () => setView("triage") : undefined}
               selected={canWrite ? selected : null}
               onSelectedChange={setSelected}
               onOpen={openInvestor}
@@ -1750,7 +1789,8 @@ export function Pipeline(props: PipelineProps) {
         canWrite={canWrite}
         order={navOrder}
         onNavigate={openInvestor}
-        modal={!split}
+        modal={!splitSheet}
+        width={sheetW}
         top={stickyTop}
         onClose={closeSheet}
         onParticipantChange={(p) => {

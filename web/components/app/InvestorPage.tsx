@@ -11,7 +11,6 @@ import {
   ConfirmDialog,
   FitMeter,
   Input,
-  LinkButtons,
   Menu,
   MoneyChip,
   Pagination,
@@ -44,6 +43,7 @@ import { NotesEditor } from "./InvestorSheet";
 import { InvestorProfile } from "./InvestorProfile";
 import { LogComposer } from "./LogComposer";
 import { CommitmentDialog, useParticipantSave } from "./ParticipantFields";
+import { ReachOut } from "./ReachOut";
 import { moneyInput, parseMoney, personName } from "./util";
 
 /** One ruled row per participation (SYSTEM §4.8 "Rounds"). */
@@ -383,7 +383,12 @@ export function InvestorPage({
                 </Chip>
               ))}
             </div>
-            <LinkButtons linkedin={inv.linkedin_url} website={inv.website_url} x={inv.x_url} email={inv.email} className="mt-4" />
+            {/* The same reach-out row as Triage and the sheet (critique 4). */}
+            <ReachOut
+              className="mt-4"
+              draft={null}
+              person={{ name: inv.name, firm: inv.firm, fit: 0, email: inv.email, linkedin_url: inv.linkedin_url, website_url: inv.website_url, x_url: inv.x_url }}
+            />
           </header>
           <div className="rounded-md border border-line bg-surface px-16 pt-16 pb-8">
             <InvestorProfile client={client} investor={inv} currency={currency} canWrite={canWrite} onSaved={setInv} />

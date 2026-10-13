@@ -23,6 +23,7 @@ import {
   boardSegments,
   cardSlot,
   GROUP_LABEL,
+  defaultColumnSort,
   hiddenPipFit,
   PRIORITY_ORDER,
   segmentTrack,
@@ -66,8 +67,6 @@ export function sortCards(cards: Participant[], sort: BoardSort): Participant[] 
   }
 }
 
-/** The fill per priority group (the bar under the dominant New column). */
-const PRIO_FILL: Record<Priority, string> = { hot: "bg-hot", warm: "bg-warm", maybe: "bg-maybe", low: "bg-faint" };
 
 interface ColumnApi {
   scrollToIndex: (cardIndex: number) => boolean;
@@ -263,8 +262,21 @@ export function PipelineBoard({
         const c = col.getBoundingClientRect();
         // 48px of fade sits on the right edge of a board that scrolls on.
         const pad = 56;
-        if (c.right > b.right - 8) board.scrollBy({ left: c.right - b.right + pad, behavior: "smooth" });
-        else if (c.left < b.left) board.scrollBy({ left: c.left - b.left - 8, behavior: "smooth" });
+        let left: number | null = null;
+        if (c.right > b.right - 8) left = board.scrollLeft + c.right - b.right + pad;
+        else if (c.left < b.left) left = board.scrollLeft + c.left - b.left - 8;
+        if (left !== null) {
+          // Land on a track's left edge (critique 4: a 90px sliver of Researching showed blank
+          // card shells at the board's edge): the first track that starts at or after the
+          // needed offset, as long as the open card's column stays in view.
+          const colLeft = c.left - b.left + board.scrollLeft;
+          const starts = Array.from(board.children)
+            .map((el) => (el as HTMLElement).getBoundingClientRect().left - b.left + board.scrollLeft)
+            .filter((x) => x >= left! - 1 && x <= colLeft + 1)
+            .sort((x, y) => x - y);
+          if (starts.length) left = starts[0]!;
+          board.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
+        }
         const body = card!.closest<HTMLElement>(".overflow-y-auto");
         if (body) {
           const r = card!.getBoundingClientRect();
@@ -465,7 +477,7 @@ export function PipelineBoard({
             );
           }
           const { stage: s, cards } = colByKey.get(seg.key)!.c;
-          const sort = sorts[s.key] ?? "fit";
+          const sort = sorts[s.key] ?? defaultColumnSort(s);
           const isOpen = s.key === openKey;
           // Fit groups (Hot · Warm · Maybe · Low fit) where fit decides the next step: the
           // dominant New column always, and any not-contacted column sorted by fit with 12+
@@ -801,7 +813,6 @@ function StageColumn({
           sticky && "rounded-sm bg-sunk shadow-[0_1px_0_var(--line)]",
         )}
       >
-        <span aria-hidden className={cn("inline-block size-7 rounded-pill", PRIO_FILL[g.priority])} />
         <span className="t-label">{GROUP_LABEL[g.priority]}</span>
         {/* The count stands apart from "fit 5" (critique 3: "fit 5 12"). */}
         <span className="ml-auto flex items-center gap-12">

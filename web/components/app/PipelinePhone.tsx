@@ -172,7 +172,7 @@ export function PipelinePhone({
   };
   useEffect(() => () => void (press.current && clearTimeout(press.current)), []);
 
-  const msg = stripMessage(facts, stages.find((s) => s.key === openKey)?.label ?? "New", true);
+  const msg = stripMessage(facts, stages.find((s) => s.key === openKey)?.label ?? "New");
   const sorted = facts.total - facts.openCount;
   const due = dueRows(all);
   const buckets = nextUpBuckets(all, openKey, today, Date.now()).filter((b) => canWrite || b.id !== "new");

@@ -723,3 +723,47 @@ panel at 1280) and leftover noise. These rules now win over §3–§11. Screensh
   round name; list rows are 48px; the stage pills do not count as a filter; the next group
   header pushes the stuck one up; Triage shows no progress sliver at 0; the follow-up sheet is
   "Follow up with Dorian" with four different dates.
+
+## 13. Amendments after design critique 4 (2026-10-12)
+
+The review (`review-4/`) confirmed the §12 list and found a regression, three real bugs and
+drift. These rules now win over §3–§12. Screenshots: `after-critique-4/`.
+
+- **The pane runs full height again** (amends §12's "as tall as its content"): the decision
+  panel is pinned to the pane's foot, so it never moves between investors (an "Also at" block
+  moved it up to 100px under the pointer) and no dead canvas sits under it. With the file open
+  beside it, the pane is the panel and one line.
+- **One way into Triage per screen, besides the view switch**: the strip's Start triage, else
+  the desk's "still New → Triage" row when it is on screen (`shownBuckets`), else the New
+  column's "Triage →".
+- **Undo of a bulk move goes back to where the cursor was** (`Decision.cursor`), not to the
+  first id of the selection (the last fit-0 row).
+- **The file's "N of M" is the queue's population**: the sheet walks who is still New in the
+  slice ("4 of 312" beside "312 in New"), live as decisions file people.
+- **A selection is its own subject**: starting one clears the last notice, U waits for Esc, and
+  the hint line lists the selection's keys (1–7 Move all, F, X, Esc).
+- **Honest but useful pace**: faster than 10s a decision (`PACE_FLOOR_MS`), the estimate plans
+  at 10s and says so ("Planning at 10s each, the rest of New takes 1h 5m."). Durations under 10
+  minutes are said to the minute ("about 3 min at 20s each").
+- **Triage's Filter menu** has no Stage or Stage kind (the queue is New); solo workspaces get
+  no Owner filter anywhere.
+- **The file opens split from 1024px in Triage**: under 1280px the sheet is 440px, the queue
+  steps aside and the decision panel stays beside the file; the title row drops the terms and
+  SET UP when the page is under 700px.
+- **One reach-out row everywhere** (`components/app/ReachOut.tsx`): Triage, the sheet, phone
+  and the investor page share LinkedIn · Draft intro email · address + Copy · Website · X. The
+  intro's "why you" line follows the fit (`introFitLine`): strong fit from 4, good fit at 3,
+  no fit claim below.
+- **Board**: talking columns default to the next follow-up first (`defaultColumnSort`); group
+  headers carry no priority dots (the hot/warm hues were the Diligence/Meeting stage colors);
+  opening the split sheet lands the board on a column's left edge, never a sliver of cards.
+- **Built-in "Due now"** shows only while something is due (or while it is the view on screen).
+- **Queue pills stay on one line**: "Hot+Warm" and "Low" first, then All without its count.
+- **Words**: Contacted means "You reached out" in Triage and on the board; the phone strip says
+  "are still New" like the desktop; bulk breakdowns use the table's type words ("Corporate VC").
+  The shortcuts list shows "/ Search investors and commands" in Triage and only the follow-up
+  chords the row offers.
+- **Polish**: the sheet header puts the type chip before the fit, so the fit's hover-only clear
+  and save state trail at the end; the Filter button's focus is one ring on its border.
+- Not changed: Researching cards show pips on line 1 and a follow-up on line 2. §5.3 defines the
+  pips as line 1 and the one right slot as line 2; the pips are not a second slot item.

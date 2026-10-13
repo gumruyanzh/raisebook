@@ -38,7 +38,7 @@ import type { Activity, Investor, Participant, Priority, Round, Stage } from "@/
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { quickPicks } from "@/lib/dates";
-import { followUpState, formatDate, isoDate, moneyCompact, num, priorityFromFit, stageFocusLabel } from "@/lib/format";
+import { followUpState, formatDate, isoDate, num, priorityFromFit, stageFocusLabel } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
 import { useOptionalSession, useWorkspace } from "@/lib/session";
 import {
@@ -58,7 +58,6 @@ import {
   PRIORITY_ORDER,
   queuePosition,
   sharedValue,
-  shortType,
   SLICE_LABEL,
   START_SECONDS,
   TRIAGE_MEANING,
@@ -70,6 +69,7 @@ import {
 } from "@/lib/pipeline";
 
 import { checkSize } from "./InvestorSheet";
+import { draftHref, ReachOut, type ReachPerson } from "./ReachOut";
 import { useMediaQuery } from "./util";
 
 /** The store hooks the round page lends to Triage (optimistic writes, newer `updated_at` wins). */
@@ -109,6 +109,9 @@ interface Decision {
   what?: string;
   /** A move of a selection (one keypress for many: not part of the pace). */
   bulk?: boolean;
+  /** Where the cursor was when a bulk move was made: Undo goes back there, not to the
+   * first id of the selection (critique 4: Undo of "Select 86 → 7" landed on the last fit-0 row). */
+  cursor?: string | null;
 }
 
 interface FullInvestor {
@@ -134,6 +137,19 @@ function snap(p: Participant): Snapshot {
 }
 
 const firstName = (name: string) => name.split(/\s+/)[0] ?? name;
+
+/** The reach-out row's person: the queue row, filled in from the full investor once it came. */
+function reachPerson(p: Participant, inv: Investor | undefined): ReachPerson {
+  return {
+    name: p.investor.name,
+    firm: inv?.firm ?? p.investor.firm,
+    fit: p.fit,
+    email: inv?.email ?? p.investor.email ?? null,
+    linkedin_url: inv?.linkedin_url ?? p.investor.linkedin_url ?? null,
+    website_url: inv?.website_url ?? null,
+    x_url: inv?.x_url ?? null,
+  };
+}
 
 /**
  * Triage (DECISION §4): a keyboard-first queue for the open stage. One key files the current
@@ -213,7 +229,12 @@ export function PipelineTriage({
   const me = useOptionalSession()?.user;
   const phone = useMediaQuery("(max-width: 639px)") === true;
   const wide = useMediaQuery("(min-width: 1024px)") !== false;
-  const roomy = useMediaQuery("(min-width: 1280px)") !== false && !squeezed;
+  const viewportWide = useMediaQuery("(min-width: 1280px)") !== false;
+  const roomy = viewportWide && !squeezed;
+  // Under 1280px the open file leaves no room for the queue beside the decision panel: the
+  // pane alone stays, so digits still file and the next file opens (critique 4: a modal over
+  // the panel at 1024 meant filing blind).
+  const showQueue = wide && !(squeezed && !viewportWide);
   const openStage = stages.find((s) => s.key === openKey)!;
   const targets = useMemo(() => triageTargets(stages), [stages]);
   const byKey = useMemo(() => new Map(stages.map((s) => [s.key, s])), [stages]);
@@ -262,7 +283,6 @@ export function PipelineTriage({
     [queue, slice, showSel, showSel ? selected : null],
   );
   const order = useMemo(() => sliceRows.map((p) => p.investor.id), [sliceRows]);
-  useEffect(() => onOrder?.(order), [order, onOrder]);
   const rowById = useMemo(() => new Map(queue.map((p) => [p.investor.id, p])), [queue]);
   const done = useCallback(
     (id: string) => {
@@ -293,6 +313,13 @@ export function PipelineTriage({
   useEffect(() => {
     if (cursor !== at) onCursor(cursor);
   }, [cursor, at, onCursor]);
+  // The sheet walks who is still New in this slice, the population every count here uses
+  // (critique 4: the file said "15 of 411" beside "312 in New").
+  const walkOrder = useMemo(
+    () => order.filter((id) => id === cursor || Boolean(rowById.get(id) && isOpen(rowById.get(id)!))),
+    [order, cursor, rowById, isOpen],
+  );
+  useEffect(() => onOrder?.(walkOrder), [walkOrder, onOrder]);
   // The snapshot Undo restores: what the investor looked like when their turn began.
   if (current && !turnSnap.current.has(current.investor.id)) turnSnap.current.set(current.investor.id, snap(current));
 
@@ -389,6 +416,13 @@ export function PipelineTriage({
     return () => clearTimeout(t);
   }, [notice]);
 
+  // A selection is a new subject: the last single-investor notice ("Bram is back in New. Undo")
+  // leaves with it (critique 4).
+  const selecting = selected.size > 0;
+  useEffect(() => {
+    if (selecting) setNotice(null);
+  }, [selecting]);
+
   const undo = useCallback(
     async (d?: Decision) => {
       const entry = d ?? undoStack.current[undoStack.current.length - 1];
@@ -427,7 +461,9 @@ export function PipelineTriage({
         if (entry.bulk) setBulkN((n) => Math.max(0, n - entry.ids.length));
         else setTimes((t) => t.filter((x) => x !== entry.at));
       }
-      go(entry.ids[0]!);
+      const back = entry.bulk && entry.cursor ? entry.cursor : entry.ids[0]!;
+      go(back);
+      if (entry.bulk) setScrollReq((r) => ({ id: back, n: (r?.n ?? 0) + 1 }));
       try {
         const r = await bulkUpdateParticipants(client, round.id, { op: "restore", items });
         store.commit(r.participants);
@@ -501,7 +537,15 @@ export function PipelineTriage({
   const decideMany = async (ids: string[], to: Stage) => {
     const rows = ids.map((id) => rowById.get(id)).filter(Boolean) as Participant[];
     if (!rows.length || !canWrite) return;
-    const entry: Decision = { kind: "move", ids: rows.map((p) => p.investor.id), snaps: rows.map(snap), to: to.key, at: Date.now(), bulk: true };
+    const entry: Decision = {
+      kind: "move",
+      ids: rows.map((p) => p.investor.id),
+      snaps: rows.map(snap),
+      to: to.key,
+      at: Date.now(),
+      bulk: true,
+      cursor,
+    };
     const set = new Set(entry.ids);
     store.apply(entry.ids, (x) => ({ ...x, stage: to }));
     setDecided((m) => {
@@ -566,8 +610,8 @@ export function PipelineTriage({
       setConfirm({ to, n });
       store.announce(
         n === 1
-          ? `${to.label} means you already reached out. Press ${targets.find((t) => t.stage.key === to.key)?.key ?? "it"} again to confirm.`
-          : `${to.label} means you already reached out to all ${num(n)}. Press again to confirm.`,
+          ? `${to.label} means you reached out. Press ${targets.find((t) => t.stage.key === to.key)?.key ?? "it"} again to confirm.`
+          : `${to.label} means you reached out to all ${num(n)}. Press again to confirm.`,
       );
       return;
     }
@@ -698,7 +742,9 @@ export function PipelineTriage({
     });
   }
   useHotkey("s", skip, { ...hk, enabled: decideOn, description: "Skip for now" });
-  useHotkey("u", () => void undo(), { ...hk, enabled: decideOn, description: "Undo the last change (a move, follow-up, fit or next step)" });
+  // With a selection on screen, U would undo something the screen is no longer about
+  // (critique 4); Esc first.
+  useHotkey("u", () => void undo(), { ...hk, enabled: decideOn && !selected.size, description: "Undo the last change (a move, follow-up, fit or next step)" });
   useHotkey("[", () => void changeFit(-1), { ...hk, enabled: on, description: "Fit −1" });
   useHotkey("]", () => void changeFit(1), { ...hk, enabled: on, description: "Fit +1" });
   useHotkey("n", () => setNextStepFocus((n) => n + 1), { ...hk, enabled: on, description: "Next step" });
@@ -721,10 +767,13 @@ export function PipelineTriage({
   const picks = quickPicks("followup", today);
   const pickIso = (k: string) => picks.find((p) => p.kbd === k)?.iso ?? null;
   const follows = followOptions(picks);
-  useHotkey("f 1", () => void setFollow(pickIso("1")), { ...hk, enabled: on, description: "Follow up tomorrow" });
-  useHotkey("f m", () => void setFollow(pickIso("m")), { ...hk, enabled: on, description: "Follow up next Monday" });
-  useHotkey("f 7", () => void setFollow(pickIso("7")), { ...hk, enabled: on, description: "Follow up in 1 week" });
-  useHotkey("f 2", () => void setFollow(pickIso("2")), { ...hk, enabled: on, description: "Follow up in 2 weeks" });
+  // Only the chords the follow-up row shows (critique 4: "?" listed F 7 on a Monday, when the
+  // row offers In 2 weeks instead).
+  const offers = (k: string) => follows.some((f) => f.kbd === k);
+  useHotkey("f 1", () => void setFollow(pickIso("1")), { ...hk, enabled: on && offers("1"), description: "Follow up tomorrow" });
+  useHotkey("f m", () => void setFollow(pickIso("m")), { ...hk, enabled: on && offers("m"), description: "Follow up next Monday" });
+  useHotkey("f 7", () => void setFollow(pickIso("7")), { ...hk, enabled: on && offers("7"), description: "Follow up in 1 week" });
+  useHotkey("f 2", () => void setFollow(pickIso("2")), { ...hk, enabled: on && offers("2"), description: "Follow up in 2 weeks" });
   const pickRef = useRef<HTMLDivElement>(null);
   useHotkey(
     "f d",
@@ -775,6 +824,8 @@ export function PipelineTriage({
     // Only real single decisions make a pace; a bulk move is said as one (critique 3).
     const head = `${num(n)} sorted in ${formatElapsed(Date.now() - sessionStart.current)}${bulkN ? `, ${num(bulkN)} of them in bulk` : ""}.`;
     if (!pace.perMs || !openCount) return head;
+    // Faster than the floor, plan at the floor and say so (critique 4: "1s each … 10 min").
+    if (pace.floored) return `${head} Planning at 10s each, the rest of ${openStage.label} takes ${formatRest(openCount * pace.perMs)}.`;
     return `${head} At ${formatEach(pace.perMs)}, the rest of ${openStage.label} takes ${formatRest(openCount * pace.perMs)}.`;
   })();
 
@@ -1004,7 +1055,7 @@ export function PipelineTriage({
         sameFirm={sameFirm}
         doneState={doneState}
         canWrite={canWrite}
-        draftHref={current ? draftHref(current, full?.investor, { workspaceName, round, sender: me?.name ?? null }) : null}
+        draftHref={current ? draftHref(reachPerson(current, full?.investor), { workspaceName, round, sender: me?.name ?? null }) : null}
         filter={<FilterMenu fields={filterFields} active={filterActive} onChange={onFilterChange} />}
         onExit={onExit}
         confirm={confirm ? { to: confirm.to, shortlist: targets.find((t) => t.stage.kind === "open") ?? null } : null}
@@ -1027,23 +1078,25 @@ export function PipelineTriage({
   }
 
   const where = `${openStage.label}${showSel && sel.length ? " · selection" : slice === "all" ? "" : ` · ${SLICE_LABEL[slice]}`}`;
-  // The body keeps a floor so the decision panel sits at the same height for most investors
-  // (only the rare long file pushes it down); below the pane is plain canvas, not a gap.
-  const bodyMin = height ? Math.max(0, Math.min(300, height - 300)) : 0;
+  // The pane runs the queue's full height with the decision panel pinned to its foot, so the
+  // panel never moves between investors (critique 4: "Also at" blocks moved it 100px under the
+  // pointer) and no dead canvas sits under it. With the file open beside it, the pane is only
+  // the panel and a line, as tall as that.
+  const fullPane = !fileOpen;
   return (
     <div
       ref={rootRef}
       className={cn(
         "grid min-h-0 items-start gap-16",
-        wide ? (squeezed ? "grid-cols-[288px_minmax(0,1fr)]" : roomy ? "grid-cols-[360px_minmax(0,1fr)]" : "grid-cols-[320px_minmax(0,1fr)]") : "grid-cols-1",
+        showQueue ? (squeezed ? "grid-cols-[288px_minmax(0,1fr)]" : roomy ? "grid-cols-[360px_minmax(0,1fr)]" : "grid-cols-[320px_minmax(0,1fr)]") : "grid-cols-1",
       )}
       style={{ height: height ?? "calc(100vh - 200px)" }}
     >
-      {wide ? queuePanel : null}
+      {showQueue ? queuePanel : null}
       <section
         aria-label={current ? `Triage: ${current.investor.name}` : "Triage"}
         className="flex min-h-0 min-w-0 flex-col overflow-clip rounded-md border border-line bg-surface"
-        style={{ maxHeight: height ?? undefined }}
+        style={fullPane ? { height: height ?? undefined } : { maxHeight: height ?? undefined }}
       >
         <header className="flex h-44 shrink-0 items-center gap-8 border-b border-line px-16">
           {!wide ? (
@@ -1080,7 +1133,7 @@ export function PipelineTriage({
             </Link>
           ) : null}
         </header>
-        <div className="relative min-h-0 shrink overflow-y-auto" style={{ minHeight: doneState || fileOpen || sel.length ? undefined : bodyMin }}>
+        <div className={cn("relative min-h-0 overflow-y-auto", fullPane ? "flex-1" : "shrink")}>
           {doneState ?? pane}
           {/* A soft edge where a long file scrolls under the decision panel. */}
           {doneState ? null : <div aria-hidden className="pointer-events-none sticky bottom-0 -mt-24 h-24 bg-linear-to-t from-surface to-transparent" />}
@@ -1094,33 +1147,6 @@ export function PipelineTriage({
       ) : null}
     </div>
   );
-}
-
-/** The intro email: a subject that says why, and a body with the ask (critique 3). */
-function draftHref(
-  p: Participant,
-  inv: Investor | undefined,
-  ctx: { workspaceName: string; round: Round; sender: string | null },
-): string | null {
-  const email = inv?.email ?? p.investor.email ?? null;
-  if (!email) return null;
-  const first = firstName(p.investor.name);
-  const raise = `${moneyCompact(ctx.round.target_amount, ctx.round.currency)} ${ctx.round.name}`;
-  const firm = inv?.firm ?? p.investor.firm;
-  const subject = `${ctx.workspaceName}: raising a ${raise}`;
-  const body = [
-    `Hi ${first},`,
-    "",
-    `I'm raising a ${raise} for ${ctx.workspaceName}.${firm ? ` ${firm} came up as a strong fit, so I wanted to reach out directly.` : ""}`,
-    "",
-    `[One line on what ${ctx.workspaceName} does and why now.]`,
-    "",
-    "Would you be open to a 20-minute call in the next two weeks? Happy to send the deck first.",
-    "",
-    "Thanks,",
-    ctx.sender ? firstName(ctx.sender) : "",
-  ].join("\n");
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.trimEnd() + "\n")}`;
 }
 
 const NAV =
@@ -1265,6 +1291,29 @@ function TriageQueue({
   }, [scrollReq]);
   const anySel = selected.size > 0;
   const pills: TriageSlice[] = ["all", "hw", "maybe", "low"];
+  // The pills stay on one line (critique 4: "Low fit 276" alone on a second line pushed the
+  // queue down at 1024 and beside the file): shorter words first, then All loses its count
+  // (the pane header says it).
+  const pillRow = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(0);
+  useLayoutEffect(() => {
+    const el = pillRow.current;
+    if (el && compact < 2 && el.scrollWidth > el.clientWidth + 1) setCompact((c) => c + 1);
+  }, [compact, sliceCounts, anySel]);
+  useEffect(() => {
+    const el = pillRow.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let w = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth !== w) {
+        w = el.clientWidth;
+        setCompact(0);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [anySel]);
+  const pillLabel = (sl: TriageSlice) => (compact && sl === "hw" ? "Hot+Warm" : compact && sl === "low" ? "Low" : SLICE_LABEL[sl]);
   const groupRow = (r: Extract<QRow, { kind: "group" }>, stuck = false) => {
     const allSel = r.ids.length > 0 && r.ids.every((id) => selected.has(id));
     return (
@@ -1362,7 +1411,7 @@ function TriageQueue({
             ) : null}
           </div>
         ) : (
-          <div role="group" aria-label="Slice" className="flex flex-wrap gap-4">
+          <div ref={pillRow} role="group" aria-label="Slice" className="flex flex-nowrap gap-4 overflow-hidden">
             {pills.map((s) => {
               const on = s === slice;
               return (
@@ -1373,12 +1422,15 @@ function TriageQueue({
                   onClick={() => onSlice(s)}
                   title={SLICE_LABEL[s]}
                   className={cn(
-                    "inline-flex h-26 shrink-0 items-center gap-4 rounded-pill border px-8 text-[12.5px] whitespace-nowrap",
+                    "inline-flex h-26 shrink-0 items-center gap-4 rounded-pill border text-[12.5px] whitespace-nowrap",
+                    compact ? "px-6" : "px-8",
                     on ? "border-fg bg-fg text-canvas" : "border-line bg-surface text-fg hover:border-muted",
                   )}
                 >
-                  {SLICE_LABEL[s]}
-                  <span className={cn("font-mono text-[11px]", on ? "text-canvas" : "text-muted")}>{num(sliceCounts[s])}</span>
+                  {pillLabel(s)}
+                  {compact >= 2 && s === "all" ? null : (
+                    <span className={cn("font-mono text-[11px]", on ? "text-canvas" : "text-muted")}>{num(sliceCounts[s])}</span>
+                  )}
                 </button>
               );
             })}
@@ -1576,7 +1628,8 @@ function InvestorPane({
   const notes = inv?.notes?.trim() ?? "";
   const [showAll, setShowAll] = useState(false);
   const who = [p.investor.title, p.investor.firm].filter(Boolean).join(" · ");
-  const draft = draftHref(p, inv, { workspaceName, round, sender: senderName });
+  const person = reachPerson(p, inv);
+  const draft = draftHref(person, { workspaceName, round, sender: senderName });
 
   return (
     <div className="flex flex-col gap-16 px-32 pt-22 pb-24 max-xl:px-20">
@@ -1607,7 +1660,7 @@ function InvestorPane({
       </div>
 
       {/* Reach out: the actions that come before "Contacted", one style and one order. */}
-      <ReachOut p={p} inv={inv} draft={draft} onDrafted={onDrafted} kbd />
+      <ReachOut person={person} draft={draft} onDrafted={onDrafted} kbd />
       {full?.error ? <p className="t-body-s text-bad">{full.error}</p> : null}
 
       {inv ? (
@@ -1709,81 +1762,6 @@ function InvestorPane({
 
 const ROW_BTN = "flex h-28 w-full min-w-0 items-center gap-8 border-0 bg-transparent px-0 text-left hover:text-accent";
 
-/**
- * The reach-out row, the same on desktop and phone (critique 3): LinkedIn (or a LinkedIn
- * search) first, then the intro email, the address to copy, website and X. One neutral
- * button style; cobalt stays for the decision itself.
- */
-function ReachOut({
-  p,
-  inv,
-  draft,
-  onDrafted,
-  kbd = false,
-  big = false,
-}: {
-  p: Participant;
-  inv: Investor | undefined;
-  draft: string | null;
-  onDrafted: () => void;
-  kbd?: boolean;
-  big?: boolean;
-}) {
-  const toast = useToast();
-  const linkedin = inv?.linkedin_url ?? p.investor.linkedin_url ?? null;
-  const search = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([p.investor.name, p.investor.firm].filter(Boolean).join(" "))}`;
-  const email = inv?.email ?? p.investor.email ?? null;
-  const web = [
-    ...(inv?.website_url ? [{ href: inv.website_url, label: "Website" }] : []),
-    ...(inv?.x_url ? [{ href: inv.x_url, label: "X" }] : []),
-  ].filter((l) => /^https?:\/\//i.test(l.href));
-  const btn = cn(
-    "inline-flex max-w-full min-w-0 items-center gap-6 rounded-sm border border-line bg-surface text-fg hover:border-accent",
-    big ? "h-40 px-12" : "h-32 px-12 text-base",
-  );
-  const arrow = (
-    <span aria-hidden className="text-muted">
-      ↗
-    </span>
-  );
-  return (
-    <div className="flex min-w-0 flex-wrap items-center gap-6">
-      <a href={linkedin ?? search} target="_blank" rel="noopener noreferrer" className={btn}>
-        {linkedin ? "LinkedIn" : "Search LinkedIn"} {arrow}
-        {kbd ? <Kbd>L</Kbd> : null}
-      </a>
-      {draft ? (
-        <a href={draft} className={btn} onClick={onDrafted}>
-          Draft intro email {arrow}
-        </a>
-      ) : null}
-      {email ? (
-        <button
-          type="button"
-          className={btn}
-          title={`Copy ${email}`}
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(email);
-              toast.show("Email copied.");
-            } catch {
-              toast.show(email);
-            }
-          }}
-        >
-          <span className="min-w-0 truncate text-muted">{email}</span>
-          <span className="shrink-0">Copy</span>
-        </button>
-      ) : null}
-      {web.map((l) => (
-        <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" className={btn}>
-          {l.label} {arrow}
-        </a>
-      ))}
-    </div>
-  );
-}
-
 function NextStepField({
   value,
   canWrite,
@@ -1851,7 +1829,8 @@ function SelectionPane({ rows, openLabel, onClear }: { rows: Participant[]; open
   const fitText =
     fitKeys.length === 1 ? `${num(rows.length)} at fit ${fitKeys[0]}` : `fit ${fitKeys[0]}–${fitKeys[fitKeys.length - 1]}`;
   // The parts add up: the three largest types, then "and 19 more" for the rest (critique 2).
-  const typeText = breakdown(rows.map((p) => shortType(p.investor.type)));
+  // The table's words ("Corporate VC", not "CVC"; critique 4).
+  const typeText = breakdown(rows.map((p) => (p.investor.type !== "other" ? INVESTOR_TYPE_LABEL[p.investor.type] : null)));
   const SHOW = 36;
   return (
     <div className="flex flex-col gap-12 px-32 py-24 max-xl:px-20">
@@ -2017,7 +1996,7 @@ function DecisionPanel({
             <b className="font-semibold">
               {confirm.n === 1 ? `Has ${who ?? "this investor"} heard from you?` : `Have all ${num(confirm.n)} heard from you?`}
             </b>{" "}
-            {confirm.to.label} means you already reached out.
+            {confirm.to.label} means you reached out.
           </p>
           {confirm.shortlist ? (
             <button type="button" className={smallBtn} onClick={() => onDecide(confirm.shortlist!.stage)}>
@@ -2115,7 +2094,15 @@ function DecisionPanel({
       </div>
       <p className="t-micro flex flex-wrap items-center gap-x-12 gap-y-4 text-muted">
         {(
-          (fileOpen
+          (bulk
+            ? [
+                // A selection has its own keys (critique 4: it listed Skip, Fit and LinkedIn).
+                [`1–${Math.min(9, targets.filter((t) => t.key).length)}`, `Move all ${num(bulk)}`],
+                ["F", "Follow-up with the move"],
+                ["X", "Add or drop the row"],
+                ["Esc", "Clear the selection"],
+              ]
+            : fileOpen
             ? [
                 [`1–${Math.min(9, targets.filter((t) => t.key).length)}`, "File"],
                 ["S", "Skip"],
@@ -2136,7 +2123,7 @@ function DecisionPanel({
             {l}
           </span>
         ))}
-        <span className="ml-auto hidden @[720px]/dp:inline">Every change saves at once.</span>
+        {bulk ? null : <span className="ml-auto hidden @[720px]/dp:inline">Every change saves at once.</span>}
       </p>
     </div>
   );
@@ -2299,7 +2286,7 @@ function TriagePhone({
                 ) : null}
                 {inv ? (
                   <div className="mt-12">
-                    <ReachOut p={p} inv={inv} draft={draft} onDrafted={onDrafted} big />
+                    <ReachOut person={reachPerson(p, inv)} draft={draft} onDrafted={onDrafted} big />
                   </div>
                 ) : (
                   <Skeleton className="mt-12" width="60%" />

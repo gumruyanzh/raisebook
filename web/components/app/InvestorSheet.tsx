@@ -8,7 +8,6 @@ import {
   DefList,
   FitMeter,
   Kbd,
-  LinkButtons,
   Loading,
   SaveState,
   SectionLabel,
@@ -31,9 +30,11 @@ import type { Activity, Investor, Member, Participant, Round } from "@/lib/api/t
 import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { money, moneyCompact, stageFocusLabel } from "@/lib/format";
 import { visibleIndustries } from "@/lib/pipeline";
+import { useOptionalSession, useWorkspace } from "@/lib/session";
 
 import { LogComposer } from "./LogComposer";
 import { ParticipantFields, useParticipantSave } from "./ParticipantFields";
+import { draftHref, ReachOut } from "./ReachOut";
 
 /** "$250k–$1M" from check_min/max, else the free-text note. */
 export function checkSize(inv: Pick<Investor, "check_min" | "check_max" | "check_note">, currency: string) {
@@ -130,6 +131,7 @@ export function InvestorSheet({
   timeZone,
   canWrite,
   order,
+  width,
   onNavigate,
   modal = true,
   top,
@@ -151,6 +153,8 @@ export function InvestorSheet({
   canWrite: boolean;
   /** Investor ids in the page's current (filtered, sorted) order, for J / K. */
   order?: string[];
+  /** The panel's width (Triage at 1024–1279px uses a narrower one, so the decision panel fits beside it). */
+  width?: number;
   onNavigate?: (investorId: string) => void;
   /** false at ≥1280px: a split panel beside the board or table (P2-3). */
   modal?: boolean;
@@ -282,6 +286,8 @@ export function InvestorSheet({
   }, [open, investorId, name, p?.stage.key, canWrite, stages, today, nextId, prevId]);
   useCommands("investor-sheet", commands);
 
+  const { workspace } = useWorkspace();
+  const me = useOptionalSession()?.user;
   const who = [investor?.firm ?? p?.investor.firm, investor?.title ?? p?.investor.title].filter(Boolean).join(" · ");
   const type = investor?.type ?? p?.investor.type;
   const otherRounds = (investor?.rounds ?? []).filter((r) => r.round_id !== round.id);
@@ -316,14 +322,25 @@ export function InvestorSheet({
     [runs, firstName],
   );
 
+  // Reach out in the sheet is Triage's row (critique 4): LinkedIn, Draft intro email, the
+  // address with Copy, Website, X; one style, one order.
+  const person = investor
+    ? {
+        name: investor.name,
+        firm: investor.firm,
+        fit: p?.fit ?? 0,
+        email: investor.email,
+        linkedin_url: investor.linkedin_url,
+        website_url: investor.website_url,
+        x_url: investor.x_url,
+      }
+    : null;
+  const draft = person ? draftHref(person, { workspaceName: workspace.name, round, sender: me?.name ?? null }) : null;
   const contactAndFacts = investor ? (
     <>
       <section aria-label="Contact">
         <SectionLabel>Contact</SectionLabel>
-        <LinkButtons linkedin={investor.linkedin_url} website={investor.website_url} x={investor.x_url} email={investor.email} />
-        {!investor.linkedin_url && !investor.website_url && !investor.x_url && !investor.email ? (
-          <p className="t-body-s text-muted">No contact details yet.</p>
-        ) : null}
+        <ReachOut person={person!} draft={draft} />
       </section>
       <section aria-label="Facts">
         <SectionLabel>Facts</SectionLabel>
@@ -390,13 +407,17 @@ export function InvestorSheet({
       focusTitle
       bodyRef={body}
       modal={modal}
+      width={width}
       top={modal ? undefined : top}
       subline={who || undefined}
       // Fit and type under the name, as in Triage (critique 3): industries live in Facts only,
       // so the header has one chip style and no repeats.
       chips={
         p || (type && type !== "other") ? (
+          // The type chip leads and the fit follows, so the fit's hover-only clear button and
+          // its save state trail at the end instead of pushing the chip 40px away (critique 4).
           <span className="flex flex-wrap items-center gap-10">
+            {type && type !== "other" ? <Chip tone="type">{INVESTOR_TYPE_LABEL[type]}</Chip> : null}
             {p ? (
               <span className="inline-flex items-center gap-6">
                 <span className="t-label" id={`fit-label-${p.investor.id}`}>
@@ -406,7 +427,6 @@ export function InvestorSheet({
                 <SaveState state={fit.state} />
               </span>
             ) : null}
-            {type && type !== "other" ? <Chip tone="type">{INVESTOR_TYPE_LABEL[type]}</Chip> : null}
           </span>
         ) : null
       }

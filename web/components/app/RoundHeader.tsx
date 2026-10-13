@@ -22,6 +22,7 @@ export function RoundHeader({
   className,
   children,
   aside,
+  compact = false,
 }: {
   wsSlug: string;
   round: Round;
@@ -31,6 +32,8 @@ export function RoundHeader({
   children?: ReactNode;
   /** Right-aligned with "Edit round", as one group (the pipeline's SET UP and Add investor). */
   aside?: ReactNode;
+  /** A narrow page (the split sheet at 1024px): the instrument terms step aside. */
+  compact?: boolean;
 }) {
   const { canWrite } = useWorkspace();
   const base = `/w/${encodeURIComponent(wsSlug)}/r/${encodeURIComponent(round.slug)}`;
@@ -53,7 +56,7 @@ export function RoundHeader({
         {round.name}
         {active === "settings" ? <span className="text-muted"> · Round settings</span> : null}
       </h1>
-      <span className="t-micro shrink-0 whitespace-nowrap text-muted uppercase">{terms}</span>
+      {compact ? null : <span className="t-micro shrink-0 whitespace-nowrap text-muted uppercase">{terms}</span>}
       {round.status === "closed" ? <Chip tone="mode">Closed</Chip> : null}
       {children}
       <span className="t-body-s ml-auto flex shrink-0 items-center gap-12 whitespace-nowrap">

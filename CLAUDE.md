@@ -174,3 +174,10 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   the queue. Pips only in not-contacted stages (`hiddenPipFit`); fit-sorted not-contacted
   columns of 12+ are grouped. Add investor lives in the title row in every view. Long dialogs
   use `Dialog scrollBody`; the Filter menu never scrolls an ancestor.
+- Critique 4 (`DECISION.md` §13): the Triage pane is full height with the decision panel pinned
+  (it never moves between investors); one Triage entry per screen besides the segment
+  (`shownBuckets`); bulk Undo returns to the pre-move cursor; the sheet's "N of M" in Triage is
+  the still-New walk; the pace plans at `PACE_FLOOR_MS` when faster. Reach out is one component
+  (`components/app/ReachOut.tsx`, `introFitLine`) in Triage, the sheet, phone and the investor
+  page. Talking columns sort by follow-up (`defaultColumnSort`). The Triage file is a split pane
+  from 1024px.

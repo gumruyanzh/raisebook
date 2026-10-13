@@ -67,15 +67,11 @@ export function ledgerFacts(rows: readonly Participant[], openKey: string | null
 }
 
 /** "40 Hot and Warm are still New. Start with them." and its siblings (DECISION §5.1). */
-export function stripMessage(f: LedgerFacts, openLabel: string, phone = false): { text: ReactNode; triage: boolean } {
+export function stripMessage(f: LedgerFacts, openLabel: string): { text: ReactNode; triage: boolean } {
   if (f.hwOpen > 0) {
     return {
-      text: phone ? (
-        <>
-          <b className="font-semibold text-fg">{f.hwOpen === 1 ? "1 Hot or Warm investor" : `${num(f.hwOpen)} Hot and Warm`}</b> {f.hwOpen === 1 ? "is" : "are"} waiting. Start with{" "}
-          {f.hwOpen === 1 ? "it" : "them"}.
-        </>
-      ) : (
+      // One sentence on desktop and phone (critique 4: "are waiting" on the phone).
+      text: (
         <>
           <b className="font-semibold text-fg">{f.hwOpen === 1 ? "1 Hot or Warm investor" : `${num(f.hwOpen)} Hot and Warm`}</b> {f.hwOpen === 1 ? "is" : "are"} still {openLabel}. Start with{" "}
           {f.hwOpen === 1 ? "it" : "them"}.
@@ -187,6 +183,23 @@ export function LedgerStrip({
   );
 }
 
+/**
+ * The Next up rows the desk shows at this width: up to four side by side, one in the compact
+ * band. The page uses it to keep one way into Triage per screen (critique 4): when the "still
+ * New → Triage" row is on screen, the New column drops its own link.
+ */
+export function shownBuckets(
+  rows: Parameters<typeof nextUpBuckets>[0],
+  openKey: string | null,
+  today: string,
+  nowMs: number,
+  canWrite: boolean,
+  width: number,
+): NextUpBucket[] {
+  const all = nextUpBuckets(rows, openKey, today, nowMs).filter((b) => canWrite || b.id !== "new");
+  return all.slice(0, width >= LEDGER_WIDE ? 4 : 1);
+}
+
 /** Next up sentences and their links. */
 export function bucketCopy(b: NextUpBucket, openLabel: string): { text: string; short: string; link: string } {
   switch (b.id) {
@@ -243,7 +256,7 @@ export function LedgerDesk({
   const next = rows
     .filter((p) => p.follow_up_on && p.follow_up_on > today)
     .sort((a, b) => (a.follow_up_on! < b.follow_up_on! ? -1 : 1))[0];
-  const buckets = nextUpBuckets(rows, openKey, today, nowMs).filter((b) => canWrite || b.id !== "new");
+  const buckets = shownBuckets(rows, openKey, today, nowMs, canWrite, width);
   const target = round.target_amount;
   const pctC = target > 0 ? Math.min(100, (facts.committed / target) * 100) : 0;
   const pctS = target > 0 ? Math.min(100 - pctC, (facts.soft / target) * 100) : 0;
@@ -412,7 +425,7 @@ export function LedgerDesk({
       <div className="min-w-0 p-14">
         <p className="t-label mb-6">Next up</p>
         {buckets.length ? (
-          <ul className="m-0 flex list-none flex-col p-0">{buckets.slice(0, 4).map((b) => bucketRow(b, false, width < 1360))}</ul>
+          <ul className="m-0 flex list-none flex-col p-0">{buckets.map((b) => bucketRow(b, false, width < 1360))}</ul>
         ) : (
           <p className="t-body-s text-muted">Nothing waiting on you.</p>
         )}

@@ -68,6 +68,18 @@ export function breakdown(labels: readonly (string | null)[], top = 3): string {
   return rest ? `${parts.join(", ")} and ${rest.toLocaleString("en-US")} more` : parts.join(", ");
 }
 
+/**
+ * The intro email's "why you" line, worded to the fit (critique 4: "came up as a strong fit"
+ * on a fit-0 investor was a lie the founder would send).
+ */
+export function introFitLine(firm: string | null | undefined, fit: number): string {
+  const f = firm?.trim();
+  if (!f) return "";
+  if (fit >= 4) return `${f} came up as a strong fit, so I wanted to reach out directly.`;
+  if (fit === 3) return `${f} looks like a good fit, so I wanted to reach out directly.`;
+  return `I wanted to reach out to you at ${f} directly.`;
+}
+
 /* ---------- stages ---------- */
 
 const byPos = (a: Pick<Stage, "position">, b: Pick<Stage, "position">) => a.position - b.position;
@@ -129,7 +141,7 @@ export function claimsContact(stage: Pick<Stage, "kind">): boolean {
 /** The line under a Triage decision button: what filing there means right now. */
 export const TRIAGE_MEANING: Record<string, string> = {
   research: "Shortlist, reach out later",
-  contacted: "You already reached out",
+  contacted: "You reached out",
   passed: "Not this round",
 };
 
@@ -227,6 +239,15 @@ export function hiddenPipFit(
   return best !== null && n >= fits.length * 0.7 ? best : null;
 }
 
+/**
+ * A board column's default order (critique 4): talking stages put the next follow-up first
+ * (overdue, then the soonest date), as the table does; the rest sort by fit, where fit decides
+ * who to contact next.
+ */
+export function defaultColumnSort(stage: Pick<Stage, "kind">): "due" | "fit" {
+  return stage.kind === "active" ? "due" : "fit";
+}
+
 /* ---------- priority groups and the triage queue (§4.2) ---------- */
 
 export const PRIORITY_ORDER: Priority[] = ["hot", "warm", "maybe", "low"];
@@ -284,9 +305,13 @@ export function nextCursor(order: readonly string[], from: string | null, done: 
 /** Seconds per investor before there is a pace of one's own. */
 export const START_SECONDS = 20;
 
-/** "15 min", "2h 40m"; rounded to 5 minutes, at least 5. */
+/**
+ * "3 min", "15 min", "2h 40m": to the minute under 10 minutes (at least 1), then rounded to 5
+ * minutes (critique 4: 9 investors at 20s each is 3 min, not "about 5").
+ */
 export function formatDuration(ms: number): string {
-  const min = Math.max(5, Math.round(ms / 60_000 / 5) * 5);
+  const raw = ms / 60_000;
+  const min = raw < 9.5 ? Math.max(1, Math.round(raw)) : Math.round(raw / 5) * 5;
   if (min < 60) return `${min} min`;
   const h = Math.floor(min / 60);
   const m = min % 60;
@@ -306,24 +331,32 @@ export function formatElapsed(ms: number): string {
 export const MAX_GAP_MS = 120_000;
 
 /**
+ * The slowest pace a plan assumes (critique 4): five Passes a second apart are real, but "the
+ * rest of New takes 10 min" for 406 investors is no plan. Faster than this, the estimate plans
+ * at this pace and says so.
+ */
+export const PACE_FLOOR_MS = 10_000;
+
+/**
  * The session pace (critique 3: no invented numbers). `times` are the moments of single
  * decisions only: a bulk move is one keypress for 86 investors and says nothing about how long
  * one investor takes. The pace is the median of the real gaps between them, breaks (over 2
  * minutes) left out, from the 5th decision and with at least 4 real gaps. `perMs` null before.
+ * `perMs` is never under `PACE_FLOOR_MS`; `floored` says the real median was quicker.
  */
-export function paceEstimate(times: readonly number[]): { sorted: number; perMs: number | null } {
+export function paceEstimate(times: readonly number[]): { sorted: number; perMs: number | null; floored: boolean } {
   const sorted = times.length;
-  if (sorted < 5) return { sorted, perMs: null };
+  if (sorted < 5) return { sorted, perMs: null, floored: false };
   const gaps: number[] = [];
   for (let i = 1; i < times.length; i++) {
     const g = times[i]! - times[i - 1]!;
     if (g >= 0 && g <= MAX_GAP_MS) gaps.push(g);
   }
-  if (gaps.length < 4) return { sorted, perMs: null };
+  if (gaps.length < 4) return { sorted, perMs: null, floored: false };
   gaps.sort((a, b) => a - b);
   const mid = gaps.length >> 1;
   const median = gaps.length % 2 ? gaps[mid]! : (gaps[mid - 1]! + gaps[mid]!) / 2;
-  return { sorted, perMs: Math.max(1000, median) };
+  return { sorted, perMs: Math.max(PACE_FLOOR_MS, median), floored: median < PACE_FLOOR_MS };
 }
 
 /** "about 25s each", "about 1 min each": a pace as people say it. */
