@@ -14,6 +14,8 @@ export interface ActivityRun {
   size: number;
   /** Distinct investors they touch. */
   investors: number;
+  /** Import runs: the file it came from. */
+  filename?: string | null;
 }
 
 /** What `/v1/activities` returns beyond the shared `Activity` shape. */

@@ -35,6 +35,7 @@ from raisebook.core.errors import (
 )
 from raisebook.models.activity import Activity
 from raisebook.models.enums import LOGGABLE_ACTIVITY_KINDS, ActorType, Role
+from raisebook.models.imports import ImportRun
 from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant
 from raisebook.schemas.activities import ActivityOut, ActorOut, RunOut
@@ -353,12 +354,27 @@ async def run_counts(
         .where(rk.in_(list(keys)))
         .group_by(rk)
     )
+    names: dict[str, str] = {}
+    imported = [UUID(k) for k, kind in keys.items() if kind == "import"]
+    if imported:
+        res = await db.execute(
+            select(ImportRun.id, ImportRun.filename).where(
+                ImportRun.workspace_id == ws.workspace_id, ImportRun.id.in_(imported)
+            )
+        )
+        names = {str(i): f for i, f in res.tuples() if f}
     out: dict[str, RunOut] = {}
     for key, size, investors in (await db.execute(q)).tuples():
         if key is None:
             continue
         k = str(key)
-        out[k] = RunOut(key=k, kind=keys[k], size=int(size), investors=int(investors))
+        out[k] = RunOut(
+            key=k,
+            kind=keys[k],
+            size=int(size),
+            investors=int(investors),
+            filename=names.get(k),
+        )
     return out
 
 

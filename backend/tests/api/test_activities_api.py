@@ -224,6 +224,7 @@ async def test_collapse_runs_groups_an_import_and_lists_it_back(
     run = runs[0]["run"]
     assert run["key"] == run_id and run["kind"] == "import"
     assert run["size"] == len(imported) and run["investors"] == 6
+    assert run["filename"] == "six.csv"
     assert any(a["kind"] == "note" and a["run"] is None for a in feed["data"])
     assert len(feed["data"]) == len(full) - len(imported) + 1
 
@@ -269,4 +270,5 @@ async def test_collapse_runs_groups_a_bulk_change(
         "kind": "bulk",
         "size": 3,
         "investors": 3,
+        "filename": None,
     }

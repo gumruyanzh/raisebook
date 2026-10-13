@@ -31,6 +31,7 @@ class RunOut(BaseModel):
     kind: Literal["import", "bulk"]
     size: int  # activities in the run (within the same filters)
     investors: int  # distinct investors they touch
+    filename: str | None = None  # import runs: the file it came from
 
 
 class ActivityOut(BaseModel):

@@ -106,11 +106,11 @@ export function activitySentence(
 }
 
 /** One line for a whole import run or bulk change ("imported 420 investors from x.csv"). */
-export function runSentence(head: Activity, run: Pick<ActivityRun, "kind" | "investors" | "size">): string {
+export function runSentence(head: Activity, run: Pick<ActivityRun, "kind" | "investors" | "size" | "filename">): string {
   const d = head.data ?? {};
   const n = plural(run.investors, "investor");
   if (run.kind === "import") {
-    const file = s(d.filename) || s(d.import_filename);
+    const file = run.filename || s(d.filename);
     return `imported ${n}${file ? ` from ${file}` : ""}`;
   }
   switch (head.kind) {
