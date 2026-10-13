@@ -162,3 +162,9 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   encoding per place. Runs of 2+ empty stages share one "Drop to file" track; the end-stage
   pill lives in the toolbar. The title row, ledger and table size to the page's measured width
   (the split sheet reflows them), never to viewport breakpoints alone.
+- Critique 2 (`DECISION.md` §11): fit pips are quiet (`faint`) and absent inside single-fit
+  groups; the type chip is neutral; a value every queued investor shares (source, the import
+  history) is hidden. Triage asks before a talking stage (`claimsContact`) unless the intro was
+  drafted; no preselected focus. The sheet is a split pane in every view, puts Contact and Facts
+  first for open-kind stages and folds Money; imports show once (`collapseImportRuns`). Solo
+  workspaces get no owner UI. `useHotkey({ listOnly })` lists keys a component handles itself.

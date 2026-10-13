@@ -610,3 +610,54 @@ Screenshots: `after-critique-1/`.
 - **Phone**: Follow up now is not repeated when the pills already show Due now; zero-count stage
   pills are hidden; a slim title line (the round picker already says "Seed"); Triage shows
   "321 left · 90 of 411 sorted", a 4px meter, same-firm and five tappable Up next rows.
+
+---
+
+## 11. Amendments after design critique 2 (2026-10-12)
+
+The review (`review-2/`) called the redo good, not excellent: noise and redundancy in every
+view and a few real bugs. These rules now win over §3–§10. Screenshots: `after-critique-2/`.
+
+- **Quiet fit**: pips are 5×9px, `faint` on `line`, the same in the sheet as everywhere. No
+  pips inside a single-fit group (the Triage queue, the grouped New column, the phone list,
+  Up next when every fit is the same); Low fit (0–2) keeps them. The sheet's meter has no
+  "5/5" and no bare "clear": "Not rated" when 0, a ✕ on hover or focus to clear.
+- **Static labels are neutral**: the type chip is outlined `line` with `muted` text, never the
+  cobalt tint (cobalt means "you can act").
+- **Shared values hide**: the source chip when every investor in the queue shares it, and the
+  Triage History when it holds only that shared import. The sheet words the import the same
+  way, in one line (`collapseImportRuns` + `importSentence`).
+- **Sheet order for New**: stage, follow-up and next step, Contact, Facts, Log, then Money as one
+  folded line ("Add") until they are talking or a value exists; Timeline; Notes. An overdue
+  follow-up reads "Overdue 2d · Oct 10" in `bad`. The sheet is a split pane in Triage too, with
+  "N of M" over the queue (no modal scrim).
+- **Triage never records contact by accident**: a talking-stage key (Contacted…Committed) asks
+  once; the same key again files, "Shortlist in Researching" is offered, "don't ask again"
+  lasts the session, and drafting the intro email skips the question. Primary buttons show
+  what they mean. No preselected focus ring until the panel is reached with Tab.
+- **Queue**: filed rows fold into "N sorted · 8 Contacted, 4 Passed" per group (a fully sorted
+  group says so in its header); J/K skip filed rows. The selection pane's breakdown adds up
+  ("46 VC, 13 Angel, 8 Scout and 19 more"), lists names with firms in two columns, and has no
+  ↑ ↓.
+- **Rail**: "$0 of $2,000,000 · nothing due" / "Closes Jan 15, 2027 · 95 days left", each part
+  unbroken, no repeated terms. Empty stages fold into "N other stages empty"; the "this
+  session" column appears with the first move. "Start here" says "the board fills in as you
+  go" only when nothing is sorted yet. Pace gaps are clamped to 20–120s.
+- **Title row**: SET UP, Add investor and Edit round are one right-aligned group. "My
+  investors", Owner and the bulk Owner menu need a second member. "Pick…" is `muted`, not
+  `faint`. The follow-up chord hints show at every width; at <1280px Up next leaves the pane
+  (the queue is beside it) and a 40px fade replaces the hard cut under the decision panel. The
+  top bar's search keeps a glass icon and its word from 1024px.
+- **Board**: the grouped New column drops the stacked bar (the legend carries the counts) and
+  each group offers "Triage these →"; the first card sits at y ≈ 325. The lost stage's track
+  is `minmax(208px, .7fr)`. Opening or closing the split sheet suspends hover until the
+  pointer moves, so a reflowed card under a still pointer never looks selected.
+- **Table**: Type and Industry leave before LinkedIn and Email when width is short (Firm moves
+  next to the name before Email goes); Email is body text; a row with no specific industry
+  shows "—".
+- **Phone**: a lone stage pill that repeats the list header is hidden; the current fit group
+  sticks under the top bar deep in a long list; Next up counts are left-aligned with the
+  card's label; long emails truncate inside the chip with "· copy" kept. Phone Triage asks the
+  same contact question in its bottom bar.
+- **Keys**: `?` lists T (Switch to Triage) and the board's M, Alt+→, Alt+←, X and Esc
+  (`useHotkey` `listOnly`: listed, handled by the card).

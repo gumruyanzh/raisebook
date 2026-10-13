@@ -5,9 +5,12 @@ import type { KeyboardEvent } from "react";
 import { cn } from "@/lib/cn";
 
 /**
- * Five 6×10px pips in a neutral ink (SYSTEM 3.7; green stays for committed money, so a board
- * of Hot investors does not read as money). Read-only by default. `editable` turns it
- * into a radio group of six values (0–5): click a pip, or use the arrow keys, Home/End or 0–5.
+ * Five 5×9px pips in a quiet ink (SYSTEM 3.7): `faint` filled on `line`, so a column of Hot
+ * investors does not read as a barcode louder than the names (critique 2), and green stays
+ * for committed money. One color everywhere, read-only or editable. Read-only by default.
+ * `editable` turns it into a radio group of six values (0–5): click a pip, or use the arrow
+ * keys, Home/End or 0–5. Fit is the pips alone: no "5/5" beside them; an unrated fit says
+ * "Not rated", and a rated one offers a small ✕ (on hover or focus) to clear it.
  */
 export function FitMeter({
   value,
@@ -30,7 +33,7 @@ export function FitMeter({
   const pips = [1, 2, 3, 4, 5].map((i) => (
     <i
       key={i}
-      className={cn("block h-10 w-6 rounded-xs not-italic", i <= v ? "bg-muted" : "bg-line")}
+      className={cn("block h-9 w-5 rounded-[1.5px] not-italic", i <= v ? "bg-faint" : "bg-line")}
     />
   ));
   const text = showLabel ? <span className="ml-4">{v}/5</span> : null;
@@ -41,7 +44,7 @@ export function FitMeter({
         role="img"
         aria-label={`${label} ${v} of 5`}
         title={`${label} ${v} of 5`}
-        className={cn("inline-flex items-center gap-2 font-mono text-xs font-medium text-muted", className)}
+        className={cn("inline-flex items-center gap-[2px] font-mono text-xs font-medium text-muted", className)}
       >
         {pips}
         {text}
@@ -71,8 +74,8 @@ export function FitMeter({
     set(n);
     focusValue(e.currentTarget, n);
   };
-  // A radio group of six (0–5): the "0" item (shown as a small "clear" once a fit is set)
-  // clears, pips 1–5 set the fit. Roving tabindex.
+  // A radio group of six (0–5): pips 1–5 set the fit; the "0" item (a small ✕ that shows on
+  // hover or focus once a fit is set) clears it. Roving tabindex.
   return (
     <span
       role="radiogroup"
@@ -80,7 +83,7 @@ export function FitMeter({
       aria-disabled={disabled || undefined}
       onKeyDown={onKey}
       className={cn(
-        "inline-flex items-center gap-2 font-mono text-xs font-medium text-muted",
+        "group/fit inline-flex items-center gap-2 font-mono text-xs font-medium text-muted",
         disabled && "opacity-60",
         className,
       )}
@@ -91,31 +94,36 @@ export function FitMeter({
           role="radio"
           data-fit={i}
           aria-checked={i === v}
-          aria-label={i === 0 ? "Unrated (clear fit)" : `${i} of 5`}
+          aria-label={i === 0 ? "Not rated (clear the fit)" : `${i} of 5`}
+          title={i === 0 ? "Clear the fit" : `Fit ${i} of 5`}
           tabIndex={disabled ? -1 : i === (v === 0 ? 1 : v) ? 0 : -1}
           onClick={() => set(i)}
           className={cn(
             "flex items-center justify-center rounded-xs",
             disabled ? "cursor-not-allowed" : "cursor-pointer",
-            i === 0 ? "order-last ml-6 h-14 font-body text-micro hover:text-fg focus-visible:text-fg" : "h-14 w-8",
-            i === 0 && v === 0 && "sr-only",
+            i === 0
+              ? "order-last ml-4 size-16 text-[11px] text-muted opacity-0 group-hover/fit:opacity-100 group-focus-within/fit:opacity-100 hover:bg-sunk hover:text-fg focus-visible:opacity-100"
+              : "h-14 w-7",
+            i === 0 && (v === 0 || disabled) && "sr-only",
           )}
         >
           {i === 0 ? (
-            <span aria-hidden>clear</span>
+            <span aria-hidden>✕</span>
           ) : (
             <i
               className={cn(
-                "block h-14 w-8 rounded-xs not-italic transition-colors duration-[120ms]",
-                i <= v ? "bg-muted" : "bg-line hover:bg-faint",
+                "block h-12 w-6 rounded-[1.5px] not-italic transition-colors duration-[120ms]",
+                i <= v ? "bg-faint group-hover/fit:bg-muted" : "bg-line hover:bg-faint",
               )}
             />
           )}
         </span>
       ))}
-      <span className="ml-4" aria-hidden>
-        {v ? `${v}/5` : "unrated"}
-      </span>
+      {v === 0 ? (
+        <span className="order-last ml-4 font-body text-micro text-muted" aria-hidden>
+          Not rated
+        </span>
+      ) : null}
     </span>
   );
 }

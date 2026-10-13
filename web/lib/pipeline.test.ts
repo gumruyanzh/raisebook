@@ -20,6 +20,9 @@ import {
   nextCursor,
   nextUpBuckets,
   paceEstimate,
+  sharedValue,
+  breakdown,
+  claimsContact,
   priorityGroups,
   quietColumns,
   triageTargets,
@@ -247,6 +250,9 @@ test("boardSegments: runs of 2+ empty stages share one track", () => {
   assert.equal(segmentTrack(mature[5]!, null), "minmax(136px, .6fr)");
   assert.equal(segmentTrack(seg[0]!, "s0"), "minmax(352px, 3fr)");
   assert.equal(segmentTrack(seg[3]!, "s0"), "minmax(184px, .7fr)");
+  // Passed never takes a full working width.
+  assert.equal(segmentTrack({ kind: "stage", key: "passed", empty: false }, "s0", "passed"), "minmax(208px, .7fr)");
+  assert.equal(segmentTrack({ kind: "stage", key: "contacted", empty: false }, "s0", "passed"), "minmax(232px, 1fr)");
   // Everyone in New: New plus one stacked track.
   assert.equal(boardSegments(cols([411, 0, 0, 0, 0, 0, 0, 0])).length, 2);
 });
@@ -284,12 +290,14 @@ test("nextCursor: next undecided, skips done, wraps, null when all done", () => 
   assert.equal(nextCursor([], null, () => false), null);
 });
 
-test("paceEstimate: median gap clamped to 8s–120s, from the 5th decision", () => {
+test("paceEstimate: median gap clamped to 20s–120s, from the 5th decision", () => {
   assert.deepEqual(paceEstimate([0, 10_000, 20_000, 30_000]), { sorted: 4, perMs: null });
   // Gaps 10s, 10s, 20s, 600s(→120s): median of [10,10,20,120] = 15s.
-  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000]), { sorted: 5, perMs: 15_000 });
-  // Six quick Passes a second apart are not a 1s pace: each gap counts as 8s.
-  assert.deepEqual(paceEstimate([0, 1_000, 2_000, 3_000, 4_000, 5_000]), { sorted: 6, perMs: 8_000 });
+  assert.deepEqual(paceEstimate([0, 10_000, 20_000, 40_000, 640_000]), { sorted: 5, perMs: 20_000 });
+  // Six quick Passes a second apart are not a 1s pace: each gap counts as 20s.
+  assert.deepEqual(paceEstimate([0, 1_000, 2_000, 3_000, 4_000, 5_000]), { sorted: 6, perMs: 20_000 });
+  // Steady 45s reads are the pace.
+  assert.deepEqual(paceEstimate([0, 45_000, 90_000, 135_000, 180_000]), { sorted: 5, perMs: 45_000 });
   assert.equal(formatDuration(40 * 20_000), "15 min");
   assert.equal(formatDuration(371 * 26_000), "2h 40m");
   assert.equal(formatDuration(1000), "5 min");
@@ -315,4 +323,25 @@ test("quietColumns: all empty, or the same value on 20+ rows", () => {
   // A constant column can be kept on purpose, and a short list never counts as constant.
   assert.deepEqual([...quietColumns(["stage", "soft"], rows, v, ["stage"])], ["soft"]);
   assert.deepEqual([...quietColumns(["stage"], rows.slice(0, 5), v)], []);
+});
+
+test("sharedValue: the one value all share, else null", () => {
+  assert.equal(sharedValue(["SF Tech Week", "sf tech week ", "SF Tech Week"]), "SF Tech Week");
+  assert.equal(sharedValue(["SF Tech Week", "Demo Day"]), null);
+  assert.equal(sharedValue(["SF Tech Week", null]), null);
+  assert.equal(sharedValue([]), null);
+});
+
+test("breakdown: the top three, then the rest, adding up to the whole", () => {
+  const labels = [...Array(46).fill("VC"), ...Array(13).fill("Angel"), ...Array(8).fill("Scout"), ...Array(4).fill("CVC"), ...Array(15).fill(null)];
+  assert.equal(breakdown(labels), "46 VC, 13 Angel, 8 Scout and 19 more");
+  assert.equal(breakdown(["VC", "VC", "Angel"]), "2 VC, 1 Angel");
+  assert.equal(breakdown([null, null]), "");
+});
+
+test("claimsContact: talking and committed stages, not open or lost ones", () => {
+  assert.equal(claimsContact({ kind: "active" }), true);
+  assert.equal(claimsContact({ kind: "won" }), true);
+  assert.equal(claimsContact({ kind: "open" }), false);
+  assert.equal(claimsContact({ kind: "lost" }), false);
 });

@@ -22,7 +22,8 @@ import {
 import { useCommands, type Command } from "@/lib/commands";
 import { quickPicks } from "@/lib/dates";
 import { useHotkey } from "@/lib/hotkeys";
-import { listActivities } from "@/lib/api/activities";
+import { collapseImportRuns, importRunOf, importSentence, listActivities } from "@/lib/api/activities";
+import { importRunsCached, type ImportRun } from "@/lib/api/data";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
 import { getInvestor, updateInvestor } from "@/lib/api/investors";
 import { sortedStages } from "@/lib/api/rounds";
@@ -289,6 +290,99 @@ export function InvestorSheet({
   const navBtn =
     "inline-flex size-28 items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg disabled:opacity-40 disabled:hover:text-muted";
 
+  // Not contacted yet (an open-kind stage): Contact and Facts move up, Money folds away.
+  const fresh = p?.stage.kind === "open";
+  const hasMoney = Boolean(p && ((p.amount_soft ?? 0) > 0 || (p.amount_committed ?? 0) > 0 || p.probability != null || p.owner));
+  const [moneyOpen, setMoneyOpen] = useState(false);
+  useEffect(() => setMoneyOpen(false), [investorId]);
+  const moneyShown = !fresh || hasMoney || moneyOpen;
+
+  // The import shows once ("Rowan imported Calla from x.csv with 410 others"), as in Triage.
+  const [runs, setRuns] = useState<ImportRun[] | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void importRunsCached(client).then((r) => live && setRuns(r));
+    return () => {
+      live = false;
+    };
+  }, [open, client]);
+  const shownTimeline = useMemo(() => collapseImportRuns(timeline), [timeline]);
+  const firstName = name.split(/\s+/)[0] ?? name;
+  const importLine = useCallback(
+    (a: Activity) => {
+      const run = importRunOf(a);
+      return run ? importSentence(firstName, runs?.find((r) => r.id === run)) : null;
+    },
+    [runs, firstName],
+  );
+
+  const contactAndFacts = investor ? (
+    <>
+      <section aria-label="Contact">
+        <SectionLabel>Contact</SectionLabel>
+        <LinkButtons linkedin={investor.linkedin_url} website={investor.website_url} x={investor.x_url} email={investor.email} />
+        {!investor.linkedin_url && !investor.website_url && !investor.x_url && !investor.email ? (
+          <p className="t-body-s text-muted">No contact details yet.</p>
+        ) : null}
+      </section>
+      <section aria-label="Facts">
+        <SectionLabel>Facts</SectionLabel>
+        <DefList
+          items={[
+            { term: "Invests at", value: investor.stage_focus.map(stageFocusLabel).join(", ") },
+            { term: "Check size", value: checkSize(investor, round.currency) },
+            { term: "Industries", value: visibleIndustries(investor.industries).join(", ") },
+            {
+              term: "Tags",
+              value: investor.tags.length ? (
+                <span className="flex flex-wrap gap-4">
+                  {investor.tags.map((t) => (
+                    <Chip key={t} tone="tag">
+                      {t}
+                    </Chip>
+                  ))}
+                </span>
+              ) : null,
+            },
+            { term: "Location", value: investor.location },
+            { term: "Source", value: investor.source },
+            { term: "Warm intro by", value: investor.warm_intro_by },
+            {
+              term: "Other rounds",
+              value: otherRounds.length ? (
+                <span className="flex flex-col gap-2">
+                  {otherRounds.map((r) => (
+                    <Link
+                      key={r.round_id}
+                      href={`${base}/r/${encodeURIComponent(r.round_slug)}?investor=${investor.id}`}
+                      className="inline-flex items-center gap-6 hover:underline"
+                    >
+                      {r.round_name} · <StagePill color={r.stage.color} label={r.stage.label} />
+                      {r.amount_committed ? (
+                        <span className="t-data text-good-ink" title={money(r.amount_committed, round.currency)}>
+                          {moneyCompact(r.amount_committed, round.currency)}
+                        </span>
+                      ) : null}
+                    </Link>
+                  ))}
+                </span>
+              ) : null,
+            },
+            { term: "Added", value: formatDate(isoDate(investor.created_at, timeZone), today) },
+          ]}
+        />
+      </section>
+    </>
+  ) : loading ? (
+    <section aria-label="Loading contact and facts" className="flex flex-col gap-10">
+      <SectionLabel>Contact</SectionLabel>
+      <Skeleton width="60%" />
+      <SectionLabel>Facts</SectionLabel>
+      <Skeleton lines={4} />
+    </section>
+  ) : null;
+
   return (
     <Sheet
       open={open}
@@ -384,6 +478,10 @@ export function InvestorSheet({
         </p>
       ) : null}
 
+      {/* Not contacted yet: who they are and how to reach them come before the log and the
+          money (critique 2), and the money fields wait behind one line. */}
+      {fresh ? contactAndFacts : null}
+
       {investorId ? (
         <section aria-label="Log">
           <SectionLabel aside={canWrite ? <Kbd>N</Kbd> : null}>Log</SectionLabel>
@@ -406,18 +504,34 @@ export function InvestorSheet({
       ) : null}
 
       {p ? (
-        <ParticipantFields
-          key={`money-${p.investor.id}`}
-          section="money"
-          client={client}
-          round={round}
-          participant={p}
-          investorName={name}
-          members={members}
-          canWrite={canWrite}
-          onSaved={onSaved}
-          timeZone={timeZone}
-        />
+        moneyShown ? (
+          <ParticipantFields
+            key={`money-${p.investor.id}`}
+            section="money"
+            client={client}
+            round={round}
+            participant={p}
+            investorName={name}
+            members={members}
+            canWrite={canWrite}
+            onSaved={onSaved}
+            timeZone={timeZone}
+          />
+        ) : (
+          <section aria-label="Money">
+            <button
+              type="button"
+              aria-expanded={false}
+              onClick={() => setMoneyOpen(true)}
+              disabled={!canWrite}
+              className="flex w-full items-center gap-8 border-0 bg-transparent p-0 text-left disabled:cursor-default"
+            >
+              <span className="t-label">{members.length > 1 ? "Money and owner" : "Money"}</span>
+              <span className="t-body-s text-muted">Soft, committed and probability, once they are talking</span>
+              {canWrite ? <span className="link t-body-s ml-auto">Add</span> : null}
+            </button>
+          </section>
+        )
       ) : null}
 
       <section aria-label="Timeline">
@@ -435,89 +549,29 @@ export function InvestorSheet({
         {loading ? (
           <Loading>Loading timeline…</Loading>
         ) : (
-          <Timeline items={timeline} timeZone={timeZone} currency={round.currency} empty="No activity yet. Log the first note above." />
+          <Timeline
+            items={shownTimeline}
+            timeZone={timeZone}
+            currency={round.currency}
+            sentenceFor={importLine}
+            empty="No activity yet. Log the first note above."
+          />
         )}
       </section>
 
+      {fresh ? null : contactAndFacts}
+
       {investor ? (
-        <>
-          <section aria-label="Contact">
-            <SectionLabel>Contact</SectionLabel>
-            <LinkButtons
-              linkedin={investor.linkedin_url}
-              website={investor.website_url}
-              x={investor.x_url}
-              email={investor.email}
-            />
-            {!investor.linkedin_url && !investor.website_url && !investor.x_url && !investor.email ? (
-              <p className="t-body-s text-muted">No contact details yet.</p>
-            ) : null}
-          </section>
-          <section aria-label="Facts">
-            <SectionLabel>Facts</SectionLabel>
-            <DefList
-              items={[
-                { term: "Invests at", value: investor.stage_focus.map(stageFocusLabel).join(", ") },
-                { term: "Check size", value: checkSize(investor, round.currency) },
-                { term: "Industries", value: visibleIndustries(investor.industries).join(", ") },
-                {
-                  term: "Tags",
-                  value: investor.tags.length ? (
-                    <span className="flex flex-wrap gap-4">
-                      {investor.tags.map((t) => (
-                        <Chip key={t} tone="tag">
-                          {t}
-                        </Chip>
-                      ))}
-                    </span>
-                  ) : null,
-                },
-                { term: "Location", value: investor.location },
-                { term: "Source", value: investor.source },
-                { term: "Warm intro by", value: investor.warm_intro_by },
-                {
-                  term: "Other rounds",
-                  value: otherRounds.length ? (
-                    <span className="flex flex-col gap-2">
-                      {otherRounds.map((r) => (
-                        <Link
-                          key={r.round_id}
-                          href={`${base}/r/${encodeURIComponent(r.round_slug)}?investor=${investor.id}`}
-                          className="inline-flex items-center gap-6 hover:underline"
-                        >
-                          {r.round_name} · <StagePill color={r.stage.color} label={r.stage.label} />
-                          {r.amount_committed ? (
-                            <span className="t-data text-good-ink" title={money(r.amount_committed, round.currency)}>
-                              {moneyCompact(r.amount_committed, round.currency)}
-                            </span>
-                          ) : null}
-                        </Link>
-                      ))}
-                    </span>
-                  ) : null,
-                },
-                { term: "Added", value: formatDate(isoDate(investor.created_at, timeZone), today) },
-              ]}
-            />
-          </section>
-          <NotesEditor
-            key={investor.id}
-            client={client}
-            investor={investor}
-            canWrite={canWrite}
-            onSaved={(inv) => {
-              setInvestor(inv);
-              onInvestorChange?.(inv);
-            }}
-          />
-        </>
-      ) : loading ? (
-        <section aria-label="Loading contact and facts" className="flex flex-col gap-10">
-          <SectionLabel>Contact</SectionLabel>
-          <Skeleton width="60%" />
-          <SectionLabel>Facts</SectionLabel>
-          <Skeleton lines={4} />
-        </section>
+        <NotesEditor
+          key={investor.id}
+          client={client}
+          investor={investor}
+          canWrite={canWrite}
+          onSaved={(inv) => {
+            setInvestor(inv);
+            onInvestorChange?.(inv);
+          }}
+        />
       ) : null}
     </Sheet>
   );

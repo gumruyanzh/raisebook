@@ -20,7 +20,16 @@ import type { Participant, Priority, Round, Stage } from "@/lib/api/types";
 import { PRIORITY_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { moneyCompact, num, priorityFromFit } from "@/lib/format";
-import { boardSegments, cardSlot, GROUP_LABEL, PRIORITY_ORDER, segmentTrack, STAGE_MEANING, triageTargets } from "@/lib/pipeline";
+import {
+  boardSegments,
+  cardSlot,
+  GROUP_LABEL,
+  PRIORITY_ORDER,
+  segmentTrack,
+  STAGE_MEANING,
+  triageTargets,
+  type TriageSlice,
+} from "@/lib/pipeline";
 
 import { byFit } from "./util";
 
@@ -134,8 +143,8 @@ export function PipelineBoard({
   dominantKey: string | null;
   activePrio?: Priority | "";
   onPrioFilter?: (p: Priority | null) => void;
-  /** "Triage →" in the New header (writers, while New has investors). */
-  onTriage?: () => void;
+  /** "Triage →" in the New header and its fit groups (writers, while New has investors). */
+  onTriage?: (slice?: TriageSlice) => void;
   selected: Set<string> | null;
   onSelectedChange: (next: Set<string>) => void;
   onOpen: (investorId: string) => void;
@@ -158,8 +167,28 @@ export function PipelineBoard({
   const sel = selected ?? EMPTY;
   const anySelected = sel.size > 0;
 
+  // Opening or closing the split sheet reflows the board under a still pointer, which would
+  // hover a different card than the open one (two highlights read as two selections). Hover
+  // styles wait for the pointer to move.
+  const [hoverOff, setHoverOff] = useState(false);
+  const sheetOpen = Boolean(openId);
+  const lastSheet = useRef(sheetOpen);
+  useEffect(() => {
+    if (lastSheet.current === sheetOpen) return;
+    lastSheet.current = sheetOpen;
+    setHoverOff(true);
+    const on = () => setHoverOff(false);
+    window.addEventListener("pointermove", on, { once: true });
+    window.addEventListener("wheel", on, { once: true, passive: true });
+    return () => {
+      window.removeEventListener("pointermove", on);
+      window.removeEventListener("wheel", on);
+    };
+  }, [sheetOpen]);
+
   const segments = useMemo(() => boardSegments(columns.map((c) => ({ key: c.stage.key, count: c.cards.length }))), [columns]);
-  const template = segments.map((g) => segmentTrack(g, dominantKey)).join(" ");
+  const lostKey = useMemo(() => columns.find((c) => c.stage.kind === "lost")?.stage.key ?? null, [columns]);
+  const template = segments.map((g) => segmentTrack(g, dominantKey, lostKey)).join(" ");
   const colByKey = useMemo(() => new Map(columns.map((c, i) => [c.stage.key, { c, i }])), [columns]);
 
   /* ---------- the right edge: fade and the end-stage pill ---------- */
@@ -377,7 +406,8 @@ export function PipelineBoard({
         columns={template}
         onScroll={updateEdge}
         className="min-h-0! grid-rows-[100%] pb-6!"
-        style={{ height: height ?? "70vh" }}
+        // No hit-testing (so no :hover) until the pointer moves again.
+        style={{ height: height ?? "70vh", ...(hoverOff ? { pointerEvents: "none" } : null) }}
       >
         {segments.map((seg) => {
           if (seg.kind === "empty") {
@@ -437,11 +467,12 @@ export function PipelineBoard({
               activePrio={activePrio ?? ""}
               onPrioFilter={grouped ? onPrioFilter : undefined}
               onSelectGroup={canWrite && selected ? selectMany : undefined}
+              onTriageGroup={grouped && onTriage ? onTriage : undefined}
               headerAction={
                 isOpen && onTriage && cards.length > 0 ? (
                   <button
                     type="button"
-                    onClick={onTriage}
+                    onClick={() => onTriage()}
                     className="t-body-s ml-4 shrink-0 border-0 bg-transparent p-0 font-medium whitespace-nowrap text-accent hover:underline"
                     title="Sort New one investor at a time (T)"
                   >
@@ -559,7 +590,7 @@ export function PipelineBoard({
 }
 
 const EMPTY = new Set<string>();
-const GROUP_H = 30;
+const GROUP_H = 28;
 
 /** A wide dominant column lays cards out in columns at least this wide. */
 const GRID_MIN_W = 236;
@@ -593,6 +624,7 @@ function StageColumn({
   activePrio,
   onPrioFilter,
   onSelectGroup,
+  onTriageGroup,
   headerAction,
   registerApi,
   onDragOver,
@@ -628,6 +660,8 @@ function StageColumn({
   activePrio: Priority | "";
   onPrioFilter?: (p: Priority | null) => void;
   onSelectGroup?: (ids: string[]) => void;
+  /** "Triage these →" on a fit group of the dominant New column. */
+  onTriageGroup?: (slice: TriageSlice) => void;
   headerAction?: ReactNode;
   registerApi: (api: ColumnApi | null) => void;
   onDragOver?: (e: DragEvent<HTMLElement>) => void;
@@ -757,37 +791,40 @@ function StageColumn({
         <span aria-hidden className={cn("inline-block size-7 rounded-pill", PRIO_FILL[g.priority])} />
         <span className="t-label">{GROUP_LABEL[g.priority]}</span>
         <span className="font-mono text-[11.5px] text-muted">{num(g.ids.length)}</span>
-        {onSelectGroup ? (
-          <button
-            type="button"
-            onClick={() => onSelectGroup(g.ids)}
-            className={cn(
-              "t-body-s ml-auto border-0 bg-transparent p-0 text-accent hover:underline",
-              !anySelected && "opacity-0 group-hover/gh:opacity-100 focus-visible:opacity-100",
-            )}
-          >
-            {all ? "Clear" : `Select ${num(g.ids.length)}`}
-          </button>
-        ) : null}
+        <span className="ml-auto flex items-center gap-12">
+          {onSelectGroup ? (
+            <button
+              type="button"
+              onClick={() => onSelectGroup(g.ids)}
+              className={cn(
+                "t-body-s border-0 bg-transparent p-0 text-accent hover:underline",
+                !anySelected && "opacity-0 group-hover/gh:opacity-100 focus-visible:opacity-100",
+              )}
+            >
+              {all ? "Clear" : `Select ${num(g.ids.length)}`}
+            </button>
+          ) : null}
+          {onTriageGroup ? (
+            // The way through a group of 95 near-identical cards is Triage, one at a time.
+            <button
+              type="button"
+              onClick={() => onTriageGroup(g.priority === "hot" || g.priority === "warm" ? "hw" : g.priority)}
+              className="t-body-s border-0 bg-transparent p-0 font-medium whitespace-nowrap text-accent hover:underline"
+              title={`Sort the ${PRIORITY_LABEL[g.priority]} group one investor at a time`}
+            >
+              Triage these →
+            </button>
+          ) : null}
+        </span>
       </div>
     );
   };
 
   const prioBar =
     grouped && cards.length ? (
-      <div className="flex shrink-0 flex-col gap-5 px-10 pb-2">
-        <div className="flex h-6 overflow-hidden rounded-pill bg-surface" aria-hidden>
-          {PRIORITY_ORDER.map((pr) =>
-            groupCounts[pr] ? (
-              <i
-                key={pr}
-                className={cn("block h-full not-italic", PRIO_FILL[pr])}
-                style={{ width: `${(groupCounts[pr] / cards.length) * 100}%` }}
-              />
-            ) : null,
-          )}
-        </div>
-        <div className="flex flex-wrap gap-x-10 gap-y-2" role="group" aria-label="Filter New by fit">
+      // The legend alone (its swatches and counts are the breakdown; a bar repeated them).
+      <div className="flex shrink-0 flex-col px-10 pb-2">
+        <div className="flex flex-wrap gap-x-12 gap-y-2" role="group" aria-label="Filter New by fit">
           {PRIORITY_ORDER.filter((pr) => groupCounts[pr] > 0 || activePrio === pr).map((pr) => (
             <button
               key={pr}
@@ -881,7 +918,7 @@ function StageColumn({
               nextStep={p.next_step}
               showNextStep={showNextStep}
               won={won}
-              hidePips={hidePips}
+              hidePips={hidePips || (grouped && priorityFromFit(p.fit) !== "low")}
               current={openId === id}
               selected={isSel}
               inset={anySelected}

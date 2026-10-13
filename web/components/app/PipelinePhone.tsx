@@ -49,6 +49,7 @@ export function PipelinePhone({
   onSearch,
   base,
   onListChange,
+  stickyTop = 0,
 }: {
   round: Round;
   stages: Stage[];
@@ -78,6 +79,8 @@ export function PipelinePhone({
   base: string;
   /** The ids in the list on screen (the sheet's ↑/↓ walk this list, not the whole round). */
   onListChange?: (ids: string[]) => void;
+  /** Height of the sticky top bar: a long list's group header sticks under it. */
+  stickyTop?: number;
 }) {
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -109,6 +112,8 @@ export function PipelinePhone({
   // Windowing against the page scroll (fixed row heights).
   const listRef = useRef<HTMLDivElement>(null);
   const [win, setWin] = useState({ start: 0, end: 30 });
+  /** How far the list's top is scrolled under the top bar (for the sticky group header). */
+  const [under, setUnder] = useState(0);
   const tops = useMemo(() => {
     const t: number[] = [0];
     for (const r of list.rows) t.push(t[t.length - 1]! + (r.kind === "group" ? GROUP_H : ROW_H));
@@ -120,6 +125,7 @@ export function PipelinePhone({
       if (!el) return;
       const top = -el.getBoundingClientRect().top;
       const bottom = top + window.innerHeight;
+      setUnder(top + stickyTop);
       let start = 0;
       while (start < list.rows.length && tops[start + 1]! < top) start++;
       let end = start;
@@ -133,7 +139,16 @@ export function PipelinePhone({
       window.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
     };
-  }, [list.rows, tops]);
+  }, [list.rows, tops, stickyTop]);
+  // Deep in 300 rows the group header has scrolled away: the current group sticks instead.
+  const stuck = (() => {
+    if (!list.grouped || under <= 0) return null;
+    let cur: Extract<Row, { kind: "group" }> | null = null;
+    list.rows.forEach((r, i) => {
+      if (r.kind === "group" && tops[i]! < under) cur = r;
+    });
+    return cur as Extract<Row, { kind: "group" }> | null;
+  })();
 
   // Long-press starts selection.
   const press = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -176,6 +191,35 @@ export function PipelinePhone({
       </button>
     );
   };
+
+  const groupHead = (r: Extract<Row, { kind: "group" }>, style?: React.CSSProperties) => {
+    const allSel = selected && r.ids.every((id) => selected.has(id));
+    return (
+      <div key={`g-${r.priority}`} style={{ ...style, height: GROUP_H }} className="flex items-center gap-8 border-b border-line bg-sunk px-14">
+        <span className="t-label">{GROUP_LABEL[r.priority]}</span>
+        <span className="font-mono text-[12px] text-muted">{num(r.ids.length)}</span>
+        {canWrite && selected ? (
+          <button
+            type="button"
+            className="link ml-auto border-0 bg-transparent p-0"
+            onClick={() => {
+              const n = new Set(selected);
+              for (const id of r.ids) {
+                if (allSel) n.delete(id);
+                else n.add(id);
+              }
+              onSelectedChange(n);
+            }}
+          >
+            {allSel ? "Clear" : "Select"}
+          </button>
+        ) : null}
+      </div>
+    );
+  };
+  // One pill that only repeats the list header below it ("New 411") is left out.
+  const pillStages = stages.filter((s) => (counts[s.key] ?? 0) > 0 || s.key === pick);
+  const showPills = dueTotal > 0 || pillStages.length > 1;
 
   return (
     <div className="flex flex-col gap-12">
@@ -253,10 +297,12 @@ export function PipelinePhone({
         </section>
       ) : null}
 
-      <div className="-mx-16 flex gap-8 overflow-x-auto px-16 scrollbar-none" role="group" aria-label="Stage">
-        {dueTotal > 0 ? pill("due", "Due now", dueTotal, undefined, true) : null}
-        {stages.filter((s) => (counts[s.key] ?? 0) > 0 || s.key === pick).map((s) => pill(s.key, s.label, counts[s.key] ?? 0, s.color))}
-      </div>
+      {showPills ? (
+        <div className="-mx-16 flex gap-8 overflow-x-auto px-16 scrollbar-none" role="group" aria-label="Stage">
+          {dueTotal > 0 ? pill("due", "Due now", dueTotal, undefined, true) : null}
+          {pillStages.map((s) => pill(s.key, s.label, counts[s.key] ?? 0, s.color))}
+        </div>
+      ) : null}
 
       <div className="flex gap-8">
         <SearchInput placeholder="Search investors…" aria-label="Search investors" value={search} onChange={(e) => onSearch(e.target.value)} />
@@ -265,7 +311,8 @@ export function PipelinePhone({
         </Button>
       </div>
 
-      <section aria-label={pick === "due" ? "Due now" : (pickStage?.label ?? "")} className="overflow-hidden rounded-md border border-line bg-surface">
+      {/* overflow-clip (not hidden): the sticky group header follows the page scroll. */}
+      <section aria-label={pick === "due" ? "Due now" : (pickStage?.label ?? "")} className="overflow-clip rounded-md border border-line bg-surface">
         {pickStage && pick === openKey && triageOk && list.rows.length ? (
           <div className="flex h-40 items-center gap-8 border-b border-line px-14">
             <StageDot color={pickStage.color} />
@@ -280,34 +327,15 @@ export function PipelinePhone({
           <p className="t-body-s p-14 text-muted">{pick === "due" ? "Nothing due." : `Nobody in ${pickStage?.label ?? "this stage"} yet.`}</p>
         ) : null}
         <div ref={listRef} style={{ height: tops[tops.length - 1], position: "relative" }}>
+          {stuck ? (
+            <div className="sticky z-[2] h-0 overflow-visible" style={{ top: stickyTop }}>
+              {groupHead(stuck)}
+            </div>
+          ) : null}
           {list.rows.slice(win.start, win.end).map((r, k) => {
             const i = win.start + k;
             const style = { position: "absolute" as const, top: tops[i], left: 0, right: 0 };
-            if (r.kind === "group") {
-              const allSel = selected && r.ids.every((id) => selected.has(id));
-              return (
-                <div key={`g-${r.priority}`} style={{ ...style, height: GROUP_H }} className="flex items-center gap-8 border-b border-line bg-sunk px-14">
-                  <span className="t-label">{GROUP_LABEL[r.priority]}</span>
-                  <span className="font-mono text-[12px] text-muted">{num(r.ids.length)}</span>
-                  {canWrite && selected ? (
-                    <button
-                      type="button"
-                      className="link ml-auto border-0 bg-transparent p-0"
-                      onClick={() => {
-                        const n = new Set(selected);
-                        for (const id of r.ids) {
-                          if (allSel) n.delete(id);
-                          else n.add(id);
-                        }
-                        onSelectedChange(n);
-                      }}
-                    >
-                      {allSel ? "Clear" : "Select"}
-                    </button>
-                  ) : null}
-                </div>
-              );
-            }
+            if (r.kind === "group") return groupHead(r, style);
             const p = r.p;
             const id = p.investor.id;
             const slot = cardSlot(p, today, round.currency);
@@ -345,7 +373,8 @@ export function PipelinePhone({
                 >
                   <span className="flex min-w-0 items-center gap-8">
                     <span className="min-w-0 flex-1 truncate font-semibold">{p.investor.name}</span>
-                    {p.stage.kind === "won" ? null : <FitMeter value={p.fit} />}
+                    {/* Inside Hot, Warm or Maybe every row has the same fit: the header says it. */}
+                    {p.stage.kind === "won" || (list.grouped && priorityFromFit(p.fit) !== "low") ? null : <FitMeter value={p.fit} />}
                   </span>
                   <span className="flex min-w-0 items-center gap-8">
                     <span className="t-body-s min-w-0 flex-1 truncate text-muted">{p.investor.firm || p.investor.title || ""}</span>
@@ -370,9 +399,10 @@ export function PipelinePhone({
           {buckets.slice(0, 3).map((b) => {
             const c = bucketCopy(b, stages.find((s) => s.key === openKey)?.label ?? "New");
             return (
-              <div key={b.id} className="flex min-h-40 items-center gap-8">
-                <b className="w-36 shrink-0 text-right font-mono text-[12.5px] tnum">{num(b.count)}</b>
-                <span className="t-body-s min-w-0 flex-1">
+              // Counts sit on the card's left edge, under the label, on the sentence's first line.
+              <div key={b.id} className="grid min-h-40 grid-cols-[minmax(28px,auto)_minmax(0,1fr)_auto] items-baseline gap-x-10 py-6">
+                <b className="font-mono text-[12.5px] tnum">{num(b.count)}</b>
+                <span className="t-body-s min-w-0">
                   {c.text}
                   {b.id === "ready" && b.next ? (
                     <>

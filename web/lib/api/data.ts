@@ -210,6 +210,24 @@ export const runImport = (c: ApiClient, body: ImportRequest) =>
 
 export const listImports = (c: ApiClient) => c.get<DataList<ImportRun>>("/v1/imports");
 
+const importCache = new WeakMap<ApiClient, { at: number; runs: Promise<ImportRun[]> }>();
+/**
+ * The workspace's import runs, shared for a minute by every timeline that words an import
+ * ("imported Calla from x.csv with 410 others"), so opening ten files asks once.
+ */
+export function importRunsCached(c: ApiClient): Promise<ImportRun[]> {
+  const hit = importCache.get(c);
+  if (hit && Date.now() - hit.at < 60_000) return hit.runs;
+  const runs = listImports(c)
+    .then((r) => r.data)
+    .catch(() => {
+      importCache.delete(c);
+      return [] as ImportRun[];
+    });
+  importCache.set(c, { at: Date.now(), runs });
+  return runs;
+}
+
 /* ---------- exports ---------- */
 
 export type ExportKind =

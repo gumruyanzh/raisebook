@@ -148,6 +148,7 @@ export function ParticipantFields({
   section = "work",
   timeZone,
   followUpId,
+  hideLabel,
 }: {
   client: ApiClient;
   round: Round;
@@ -163,7 +164,11 @@ export function ParticipantFields({
   timeZone: string;
   /** id for the follow-up trigger (the sheet's F key opens it). */
   followUpId?: string;
+  /** The caller shows the section label (the sheet's collapsible Money row). */
+  hideLabel?: boolean;
 }) {
+  // A solo founder owns everything: "No owner" is noise until there is someone else (critique 2).
+  const showOwner = members.length > 1 || Boolean(participant.owner);
   const p = participant;
   const investorId = p.investor.id;
   const { state, error, save, run } = useParticipantSave(client, round.id, investorId, onSaved);
@@ -260,6 +265,7 @@ export function ParticipantFields({
                 placeholder={ro ? "No follow-up" : "Set follow-up"}
                 disabled={ro}
                 aria-label={`Follow up with ${investorName}`}
+                pastIsOverdue
                 onChange={(iso) => void save({ follow_up_on: iso })}
               />
             </Field>
@@ -301,10 +307,18 @@ export function ParticipantFields({
     );
   }
 
+  const moneyTitle = title ?? (showOwner ? "Money and owner" : "Money");
   return (
-    <section className={className} aria-label={title ?? "Money and owner"}>
-      <SectionLabel aside={<SaveState state={state} />}>{title ?? "Money and owner"}</SectionLabel>
-      <div className="grid grid-cols-2 gap-8 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,72px)_minmax(0,1.2fr)]">
+    <section className={className} aria-label={moneyTitle}>
+      {hideLabel ? null : <SectionLabel aside={<SaveState state={state} />}>{moneyTitle}</SectionLabel>}
+      <div
+        className={cn(
+          "grid grid-cols-2 gap-8",
+          showOwner
+            ? "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,72px)_minmax(0,1.2fr)]"
+            : "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,88px)]",
+        )}
+      >
         <Field label={`Soft (${round.currency})`} error={fieldErr.soft}>
           <Input
             inputMode="decimal"
@@ -348,6 +362,7 @@ export function ParticipantFields({
             onBlur={blurProb}
           />
         </Field>
+        {showOwner ? (
         <Field label="Owner">
           <Select
             value={p.owner?.user_id ?? ""}
@@ -364,6 +379,7 @@ export function ParticipantFields({
             ))}
           </Select>
         </Field>
+        ) : null}
       </div>
       {error ? <p className={cn("t-body-s mt-8 text-bad")}>{error}</p> : null}
       <CommitmentDialog

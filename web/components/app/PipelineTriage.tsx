@@ -23,9 +23,9 @@ import {
 import { FilterMenu, type FilterField } from "@/components/ui/FilterBar";
 import { useVirtualRows } from "@/components/ui/useVirtualRows";
 import { activitySentence } from "@/components/ui/Timeline";
-import { listActivities } from "@/lib/api/activities";
+import { importRunOf, importSentence, listActivities } from "@/lib/api/activities";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
-import { listImports, type ImportRun } from "@/lib/api/data";
+import { importRunsCached, type ImportRun } from "@/lib/api/data";
 import { getInvestor } from "@/lib/api/investors";
 import {
   bulkUpdateParticipants,
@@ -36,13 +36,15 @@ import {
   type BulkItem,
 } from "@/lib/api/rounds";
 import type { Activity, Investor, Participant, Priority, Round, Stage } from "@/lib/api/types";
-import { INSTRUMENT_LABEL, INVESTOR_TYPE_LABEL } from "@/lib/api/types";
+import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { quickPicks } from "@/lib/dates";
-import { followUpState, formatDate, isoDate, money, moneyCompact, num, priorityFromFit, stageFocusLabel } from "@/lib/format";
+import { followUpState, formatDate, isoDate, money, num, priorityFromFit, stageFocusLabel } from "@/lib/format";
 import { useHotkey } from "@/lib/hotkeys";
 import { useWorkspace } from "@/lib/session";
 import {
+  breakdown,
+  claimsContact,
   cursorAfterMove,
   followOptions,
   formatDuration,
@@ -54,8 +56,11 @@ import {
   pressedOption,
   PRIORITY_ORDER,
   queuePosition,
+  sharedValue,
+  shortType,
   SLICE_LABEL,
   START_SECONDS,
+  TRIAGE_MEANING,
   triageTargets,
   visibleIndustries,
   type FollowOption,
@@ -159,13 +164,15 @@ export function PipelineTriage({
   onExit,
   store,
   keysEnabled,
+  squeezed = false,
+  onOrder,
 }: {
   round: Round;
   stages: Stage[];
   rows: Participant[];
   /** The page filters minus stage (search, type, industry…). */
   matches: (p: Participant) => boolean;
-  extras: Record<string, { industries: string[] }>;
+  extras: Record<string, { industries: string[]; source?: string }>;
   agentMarks: Record<string, { tip: string }>;
   today: string;
   timeZone: string;
@@ -188,13 +195,17 @@ export function PipelineTriage({
   store: TriageStore;
   /** False while the investor sheet is open (its keys win). */
   keysEnabled: boolean;
+  /** The split sheet takes the right of the page: no rail, a narrower queue. */
+  squeezed?: boolean;
+  /** The queue's order (the slice on screen), for the sheet's "3 of 190" and ↑ ↓. */
+  onOrder?: (ids: string[]) => void;
 }) {
   const toast = useToast();
   const { workspace } = useWorkspace();
   const workspaceName = workspace.name;
   const phone = useMediaQuery("(max-width: 639px)") === true;
   const wide = useMediaQuery("(min-width: 1024px)") !== false;
-  const railOn = useMediaQuery("(min-width: 1280px)") !== false;
+  const railOn = useMediaQuery("(min-width: 1280px)") !== false && !squeezed;
   const openStage = stages.find((s) => s.key === openKey)!;
   const targets = useMemo(() => triageTargets(stages), [stages]);
   const byKey = useMemo(() => new Map(stages.map((s) => [s.key, s])), [stages]);
@@ -240,6 +251,7 @@ export function PipelineTriage({
     [queue, slice, showSel, showSel ? selected : null],
   );
   const order = useMemo(() => sliceRows.map((p) => p.investor.id), [sliceRows]);
+  useEffect(() => onOrder?.(order), [order, onOrder]);
   const rowById = useMemo(() => new Map(queue.map((p) => [p.investor.id, p])), [queue]);
   const done = useCallback(
     (id: string) => {
@@ -310,15 +322,15 @@ export function PipelineTriage({
   const [runs, setRuns] = useState<ImportRun[] | null>(null);
   useEffect(() => {
     let live = true;
-    listImports(client)
-      .then((r) => live && setRuns(r.data))
-      .catch(() => live && setRuns([]));
+    void importRunsCached(client).then((r) => live && setRuns(r));
     return () => {
       live = false;
     };
   }, [client]);
 
   /* ---------- writes ---------- */
+  /** "Draft intro email" was clicked for this investor: Contacted needs no confirm. */
+  const [drafted, setDrafted] = useState<string | null>(null);
   const [nextStepFocus, setNextStepFocus] = useState(0);
   const [followPick, setFollowPick] = useState<string | null | undefined>(undefined);
 
@@ -480,7 +492,29 @@ export function PipelineTriage({
     }
   };
 
+  /**
+   * "Contacted" and later stages say you are already talking. Filing someone there from a
+   * fresh import asks once (press the key again to confirm), unless the intro email was just
+   * drafted or the founder said not to ask again this session (critique 2).
+   */
+  const [confirm, setConfirm] = useState<{ to: Stage; n: number } | null>(null);
+  const [trustContact, setTrustContact] = useState(false);
+  useEffect(() => setConfirm(null), [cursor, selected.size]);
   const decide = (to: Stage) => {
+    const n = selected.size || (current ? 1 : 0);
+    if (!n) return;
+    const asked = confirm?.to.key === to.key;
+    setConfirm(null);
+    const draftedThis = !selected.size && current && drafted === current.investor.id;
+    if (!asked && !trustContact && !draftedThis && claimsContact(to)) {
+      setConfirm({ to, n });
+      store.announce(
+        n === 1
+          ? `${to.label} means you already reached out. Press ${targets.find((t) => t.stage.key === to.key)?.key ?? "it"} again to confirm.`
+          : `${to.label} means you already reached out to all ${num(n)}. Press again to confirm.`,
+      );
+      return;
+    }
     if (selected.size) return void decideMany([...selected], to);
     if (current) void decideOne(current, to);
   };
@@ -572,12 +606,14 @@ export function PipelineTriage({
     if (first) setScrollReq((r) => ({ id: first, n: (r?.n ?? 0) + 1 }));
   };
 
+  // J / K walk the rows still in New (filed rows fold into "12 sorted" in the queue).
   const step = (dir: 1 | -1, extend = false) => {
-    if (!order.length) return;
-    const i = cursor ? order.indexOf(cursor) : -1;
-    const j = Math.max(0, Math.min(order.length - 1, i + dir));
-    if (extend && cursor) selectIds([cursor, order[j]!]);
-    go(order[j]!);
+    const walk = order.filter((id) => id === cursor || (rowById.get(id) && isOpen(rowById.get(id)!)));
+    if (!walk.length) return;
+    const i = cursor ? walk.indexOf(cursor) : -1;
+    const j = Math.max(0, Math.min(walk.length - 1, i + dir));
+    if (extend && cursor) selectIds([cursor, walk[j]!]);
+    go(walk[j]!);
   };
 
   const linkedin = () => {
@@ -618,7 +654,11 @@ export function PipelineTriage({
   useHotkey("shift+k", () => step(-1, true), { ...hk, enabled: on });
   useHotkey("shift+arrowdown", () => step(1, true), { ...hk, enabled: on });
   useHotkey("shift+arrowup", () => step(-1, true), { ...hk, enabled: on });
-  useHotkey("escape", () => setSelected(new Set()), { ...hk, enabled: selected.size > 0 });
+  useHotkey("escape", () => (confirm ? setConfirm(null) : setSelected(new Set())), {
+    ...hk,
+    enabled: selected.size > 0 || Boolean(confirm),
+    description: "Clear the selection",
+  });
   const picks = quickPicks("followup", today);
   const pickIso = (k: string) => picks.find((p) => p.kbd === k)?.iso ?? null;
   const follows = followOptions(picks);
@@ -671,6 +711,8 @@ export function PipelineTriage({
   })();
 
   const sel = selected.size ? queue.filter((p) => selected.has(p.investor.id)) : [];
+  // A source every investor in the queue shares ("SF Tech Week" on all 411) is not shown.
+  const sharedSource = useMemo(() => sharedValue(queue.map((p) => extras[p.investor.id]?.source)), [queue, extras]);
 
   // Who comes after this one (the pane and the phone show them, so the empty space helps).
   const upNext = useMemo(() => {
@@ -694,7 +736,6 @@ export function PipelineTriage({
       .filter((p) => p.investor.id !== current!.investor.id && p.investor.firm?.trim().toLowerCase() === firm)
       .sort((a, b) => b.stage.position - a.stage.position || b.fit - a.fit);
   }, [allRows, current]);
-  const [drafted, setDrafted] = useState<string | null>(null);
   const goTo = (id: string) => (order.includes(id) ? go(id) : onOpenFile(id));
 
   const panelRef = useRef<HTMLDivElement>(null);
@@ -719,6 +760,26 @@ export function PipelineTriage({
         const t = targets.find((x) => x.stage.kind === "active" && x.key);
         return t ? { key: t.key!, label: t.stage.label } : null;
       })()}
+      confirm={
+        confirm
+          ? {
+              to: confirm.to,
+              n: confirm.n,
+              key: targets.find((t) => t.stage.key === confirm.to.key)?.key ?? null,
+              shortlist: targets.find((t) => t.stage.kind === "open") ?? null,
+            }
+          : null
+      }
+      onCancelConfirm={() => setConfirm(null)}
+      onTrust={() => {
+        setTrustContact(true);
+        if (confirm) {
+          const to = confirm.to;
+          setConfirm(null);
+          if (selected.size) void decideMany([...selected], to);
+          else if (current) void decideOne(current, to);
+        }
+      }}
       onDecide={decide}
       onFollow={(iso) => void setFollow(iso)}
     />
@@ -742,8 +803,9 @@ export function PipelineTriage({
       nextStepFocus={nextStepFocus}
       onSaveNextStep={saveNextStep}
       decidedStage={!isOpen(current) ? current.stage : null}
-      upNext={upNext.slice(0, 3)}
+      upNext={railOn ? upNext.slice(0, 3) : []}
       sameFirm={sameFirm}
+      sharedSource={sharedSource}
       onGo={goTo}
       onDrafted={() => setDrafted(current.investor.id)}
     />
@@ -865,6 +927,15 @@ export function PipelineTriage({
         canWrite={canWrite}
         filter={<FilterMenu fields={filterFields} active={filterActive} onChange={onFilterChange} />}
         onExit={onExit}
+        confirm={confirm ? { to: confirm.to, shortlist: targets.find((t) => t.stage.kind === "open") ?? null } : null}
+        onTrust={() => {
+          setTrustContact(true);
+          if (confirm && current) {
+            const to = confirm.to;
+            setConfirm(null);
+            void decideOne(current, to);
+          }
+        }}
         onDecide={decide}
         onSkip={skip}
         onGo={goTo}
@@ -880,7 +951,13 @@ export function PipelineTriage({
       ref={rootRef}
       className={cn(
         "grid min-h-0 gap-16",
-        wide ? (railOn ? "grid-cols-[360px_minmax(0,1fr)_260px]" : "grid-cols-[320px_minmax(0,1fr)]") : "grid-cols-1",
+        wide
+          ? railOn
+            ? "grid-cols-[360px_minmax(0,1fr)_260px]"
+            : squeezed
+              ? "grid-cols-[288px_minmax(0,1fr)]"
+              : "grid-cols-[320px_minmax(0,1fr)]"
+          : "grid-cols-1",
       )}
       style={{ height: height ?? "calc(100vh - 200px)" }}
     >
@@ -904,14 +981,16 @@ export function PipelineTriage({
                   ? `${num(place.left)} left in ${where} · this one is in ${current.stage.label}`
                   : `${num(place.left)} left in ${where}`}
           </span>
-          <span className="flex shrink-0 items-center gap-4">
-            <button type="button" className={NAV} onClick={() => step(-1)} aria-label="Previous investor" title="Previous (K)">
-              ↑
-            </button>
-            <button type="button" className={NAV} onClick={() => step(1)} aria-label="Next investor" title="Next (J)">
-              ↓
-            </button>
-          </span>
+          {sel.length ? null : (
+            <span className="flex shrink-0 items-center gap-4">
+              <button type="button" className={NAV} onClick={() => step(-1)} aria-label="Previous investor" title="Previous (K)">
+                ↑
+              </button>
+              <button type="button" className={NAV} onClick={() => step(1)} aria-label="Next investor" title="Next (J)">
+                ↓
+              </button>
+            </span>
+          )}
           {current && !sel.length ? (
             <Link
               href={`/w/${encodeURIComponent(wsSlug)}/investors/${current.investor.id}`}
@@ -927,7 +1006,7 @@ export function PipelineTriage({
         <div className="relative min-h-0 flex-1 overflow-y-auto">
           {doneState ?? pane}
           {/* A soft edge where the body scrolls under the decision panel. */}
-          {doneState ? null : <div aria-hidden className="pointer-events-none sticky bottom-0 h-16 bg-linear-to-t from-surface to-transparent" />}
+          {doneState ? null : <div aria-hidden className="pointer-events-none sticky bottom-0 -mt-40 h-40 bg-linear-to-t from-surface via-surface/80 to-transparent" />}
         </div>
         {doneState ? null : decisionPanel}
       </section>
@@ -960,7 +1039,11 @@ const NAV =
 
 /* ---------- queue ---------- */
 
-type QRow = { kind: "group"; priority: Priority; left: number; ids: string[] } | { kind: "row"; p: Participant };
+type QRow =
+  | { kind: "group"; priority: Priority; left: number; ids: string[]; sorted: number; summary: string; open: boolean }
+  /** The rows of a group that were filed this session, folded into one line (critique 2). */
+  | { kind: "done"; priority: Priority; n: number; summary: string; open: boolean }
+  | { kind: "row"; p: Participant };
 
 function TriageQueue({
   rows,
@@ -1024,19 +1107,38 @@ function TriageQueue({
   height: number | null;
 }) {
   const body = useRef<HTMLDivElement>(null);
+  // Filed rows fold into "12 sorted · 8 Contacted, 4 Passed" per group, so the current row
+  // stays near the top instead of under a block of finished names. "Show" unfolds them.
+  const [unfolded, setUnfolded] = useState<Set<Priority>>(new Set());
+  const toggleFold = (pr: Priority) =>
+    setUnfolded((u) => {
+      const n = new Set(u);
+      if (n.has(pr)) n.delete(pr);
+      else n.add(pr);
+      return n;
+    });
   const list = useMemo(() => {
     const by: Record<Priority, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
     for (const p of rows) by[priorityFromFit(fitAtSeen(p))].push(p);
+    const cursorGroup = (() => {
+      const c = rows.find((p) => p.investor.id === cursor);
+      return c && c.stage.key !== openKey ? priorityFromFit(fitAtSeen(c)) : null;
+    })();
     const out: QRow[] = [];
     for (const pr of PRIORITY_ORDER) {
       if (!by[pr].length) continue;
       const open = by[pr].filter((p) => p.stage.key === openKey && !skipped.has(p.investor.id));
-      out.push({ kind: "group", priority: pr, left: open.length, ids: open.map((p) => p.investor.id) });
-      for (const p of by[pr]) out.push({ kind: "row", p });
+      const moved = by[pr].filter((p) => p.stage.key !== openKey);
+      const isOpen = unfolded.has(pr) || cursorGroup === pr;
+      const summary = breakdown(moved.map((p) => byKey.get(p.stage.key)?.label ?? p.stage.label));
+      const allDone = moved.length > 0 && moved.length === by[pr].length;
+      out.push({ kind: "group", priority: pr, left: open.length, ids: open.map((p) => p.investor.id), sorted: allDone ? moved.length : 0, summary, open: isOpen });
+      if (moved.length && !allDone) out.push({ kind: "done", priority: pr, n: moved.length, summary, open: isOpen });
+      for (const p of by[pr]) if (isOpen || p.stage.key === openKey) out.push({ kind: "row", p });
     }
     return out;
-  }, [rows, fitAtSeen, openKey, skipped]);
-  const heightAt = useCallback((i: number) => (list[i]?.kind === "group" ? GROUP_H : ROW_H), [list]);
+  }, [rows, fitAtSeen, openKey, skipped, unfolded, cursor, byKey]);
+  const heightAt = useCallback((i: number) => (list[i]?.kind === "row" ? ROW_H : GROUP_H), [list]);
   const v = useVirtualRows({ scrollRef: body, count: list.length, height: heightAt, initial: 24 });
   const { topOf } = v;
   // Scroll a row into view below the sticky group header (it covers the top 32px).
@@ -1076,8 +1178,19 @@ function TriageQueue({
         className="group/qg sticky top-0 z-[1] flex items-center gap-8 border-b border-line bg-sunk px-14"
         style={{ height: GROUP_H }}
       >
-        <span className="t-label">{GROUP_LABEL[r.priority]}</span>
-        <span className="t-micro ml-auto text-muted">{num(r.left)} left</span>
+        <span className="t-label shrink-0">{GROUP_LABEL[r.priority]}</span>
+        {r.sorted ? (
+          <>
+            <span className="t-micro min-w-0 truncate text-muted" title={r.summary}>
+              · {r.sorted === 1 ? "1 sorted" : `all ${num(r.sorted)} sorted`}
+            </span>
+            <button type="button" onClick={() => toggleFold(r.priority)} aria-expanded={r.open} className="link t-body-s ml-auto shrink-0 border-0 bg-transparent p-0">
+              {r.open ? "Hide" : "Show"}
+            </button>
+          </>
+        ) : (
+          <span className="t-micro ml-auto text-muted">{num(r.left)} left</span>
+        )}
         {canWrite && r.left > 0 ? (
           <button
             type="button"
@@ -1180,6 +1293,26 @@ function TriageQueue({
         {stuckGroup ? <div className="sticky top-0 z-[2] h-0 overflow-visible">{groupRow(stuckGroup, true)}</div> : null}
         {list.slice(v.start, v.end).map((r) => {
           if (r.kind === "group") return groupRow(r);
+          if (r.kind === "done") {
+            return (
+              <button
+                key={`d-${r.priority}`}
+                type="button"
+                aria-expanded={r.open}
+                onClick={() => toggleFold(r.priority)}
+                className="flex w-full min-w-0 items-center gap-8 border-0 border-b border-line bg-canvas px-14 text-left hover:bg-sunk"
+                style={{ height: GROUP_H }}
+              >
+                <span aria-hidden className="text-good-ink">
+                  ✓
+                </span>
+                <span className="t-body-s min-w-0 flex-1 truncate text-muted">
+                  <b className="font-semibold text-fg">{num(r.n)} sorted</b> · {r.summary}
+                </span>
+                <span className="link t-body-s shrink-0">{r.open ? "Hide" : "Show"}</span>
+              </button>
+            );
+          }
           const p = r.p;
           const id = p.investor.id;
           const isCur = id === cursor;
@@ -1223,9 +1356,10 @@ function TriageQueue({
                 </span>
               ) : skipped.has(id) ? (
                 <span className="t-micro shrink-0 text-muted">Skipped</span>
-              ) : (
+              ) : priorityFromFit(fitAtSeen(p)) === "low" ? (
+                // Only Low fit (0–2) varies inside its group; Hot, Warm and Maybe headers already say it.
                 <FitMeter value={p.fit} className="shrink-0" />
-              )}
+              ) : null}
             </div>
           );
         })}
@@ -1247,21 +1381,18 @@ function TriageQueue({
 
 /* ---------- the investor pane ---------- */
 
-function historyLines(acts: Activity[], runs: ImportRun[] | null, name: string): { at: string; who: string; text: string }[] {
-  const out: { at: string; who: string; text: string }[] = [];
+/** The latest three, an import worded once ("imported Calla from x.csv with 410 others"). */
+function historyLines(acts: Activity[], runs: ImportRun[] | null, name: string): { at: string; who: string; text: string; imported: boolean }[] {
+  const out: { at: string; who: string; text: string; imported: boolean }[] = [];
   const seenRuns = new Set<string>();
   for (const a of acts) {
-    const run = (a as Activity & { import_run_id?: string | null }).import_run_id ?? (typeof a.data?.import_run_id === "string" ? a.data.import_run_id : null);
+    const run = importRunOf(a);
     if (run) {
       if (seenRuns.has(run)) continue;
       seenRuns.add(run);
-      const r = runs?.find((x) => x.id === run);
-      const n = r ? (r.counts.created ?? 0) + (r.counts.updated ?? 0) : 0;
-      const file = r?.filename ? ` from ${r.filename}` : "";
-      const others = n > 1 ? ` with ${num(n - 1)} others` : "";
-      out.push({ at: a.occurred_at, who: a.actor.label, text: `imported ${firstName(name)}${file}${others}` });
+      out.push({ at: a.occurred_at, who: a.actor.label, text: importSentence(firstName(name), runs?.find((x) => x.id === run)), imported: true });
     } else {
-      out.push({ at: a.occurred_at, who: a.actor.label, text: activitySentence(a) });
+      out.push({ at: a.occurred_at, who: a.actor.label, text: activitySentence(a), imported: false });
     }
     if (out.length >= 3) break;
   }
@@ -1284,6 +1415,7 @@ function InvestorPane({
   decidedStage,
   upNext,
   sameFirm,
+  sharedSource,
   onGo,
   onDrafted,
 }: {
@@ -1302,10 +1434,17 @@ function InvestorPane({
   decidedStage: Stage | null;
   upNext: Participant[];
   sameFirm: Participant[];
+  sharedSource: string | null;
   onGo: (id: string) => void;
   onDrafted: () => void;
 }) {
   const inv = full?.investor;
+  const source = inv?.source && inv.source.trim().toLowerCase() !== sharedSource?.toLowerCase() ? inv.source : null;
+  const history = full?.acts ? historyLines(full.acts, runs, p.investor.name) : null;
+  // Only the import that every investor here shares says nothing: the section hides.
+  const historyShown = !history || history.some((h) => !h.imported);
+  // Pips that all say the same (Up next inside the Hot group) are left out.
+  const upNextPips = new Set([p.fit, ...upNext.map((x) => x.fit)]).size > 1;
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setSlow(true), 300);
@@ -1344,7 +1483,7 @@ function InvestorPane({
   const btn = "inline-flex h-32 items-center gap-6 rounded-sm border border-line bg-surface px-12 text-base text-fg hover:border-accent";
 
   return (
-    <div className="flex flex-col gap-16 px-32 pt-22 pb-8 max-xl:px-20">
+    <div className="flex flex-col gap-16 px-32 pt-22 pb-40 max-xl:px-20">
       <div>
         <h2 className="font-display text-[28px] leading-[1.1] font-bold tracking-[-0.02em]">{p.investor.name}</h2>
         {who ? <p className="mt-4 text-lg text-muted">{who}</p> : null}
@@ -1362,7 +1501,7 @@ function InvestorPane({
           </Chip>
         ))}
         {industries.length > 3 ? <span className="t-micro text-muted">+{industries.length - 3}</span> : null}
-        {inv?.source ? <Chip tone="tag">{inv.source}</Chip> : null}
+        {source ? <Chip tone="tag">{source}</Chip> : null}
         {decidedStage ? (
           <span className="t-body-s ml-auto inline-flex items-center gap-6 text-muted">
             <StageDot color={decidedStage.color} />
@@ -1432,12 +1571,13 @@ function InvestorPane({
         onSave={onSaveNextStep}
       />
 
+      {historyShown ? (
       <section aria-label="History" className="grid grid-cols-[120px_minmax(0,1fr)] items-baseline gap-x-12">
         <p className="t-label">History</p>
-        {full?.acts ? (
-          full.acts.length ? (
+        {history ? (
+          history.length ? (
             <ul className="m-0 flex list-none flex-col gap-4 p-0">
-              {historyLines(full.acts, runs, p.investor.name).map((h, i) => (
+              {history.map((h, i) => (
                 <li key={i} className="t-body-s min-w-0">
                   <span className="mr-8 font-mono text-[11.5px] text-muted">{formatDate(isoDate(h.at, timeZone), today)}</span>
                   <b className="font-semibold">{h.who}</b> {h.text}
@@ -1451,6 +1591,7 @@ function InvestorPane({
           <Skeleton width="70%" />
         )}
       </section>
+      ) : null}
 
       {sameFirm.length || upNext.length ? (
         <div className={cn("grid grid-cols-1 gap-x-24 gap-y-14 border-t border-line pt-14", sameFirm.length && upNext.length && "min-[1180px]:grid-cols-2")}>
@@ -1485,7 +1626,7 @@ function InvestorPane({
                     <button type="button" onClick={() => onGo(x.investor.id)} className={ROW_BTN}>
                       <span className="min-w-0 truncate font-medium">{x.investor.name}</span>
                       <span className="t-body-s min-w-0 flex-1 truncate text-muted">{x.investor.firm ?? ""}</span>
-                      <FitMeter value={x.fit} className="shrink-0" />
+                      {upNextPips ? <FitMeter value={x.fit} className="shrink-0" /> : null}
                     </button>
                   </li>
                 ))}
@@ -1565,19 +1706,13 @@ function NextStepField({
 
 function SelectionPane({ rows, openLabel, onClear }: { rows: Participant[]; openLabel: string; onClear: () => void }) {
   const fits = new Map<number, number>();
-  const types = new Map<string, number>();
-  for (const p of rows) {
-    fits.set(p.fit, (fits.get(p.fit) ?? 0) + 1);
-    const t = p.investor.type === "other" ? null : INVESTOR_TYPE_LABEL[p.investor.type];
-    if (t) types.set(t, (types.get(t) ?? 0) + 1);
-  }
+  for (const p of rows) fits.set(p.fit, (fits.get(p.fit) ?? 0) + 1);
+  const fitKeys = [...fits.keys()].sort((a, b) => a - b);
   const fitText =
-    fits.size === 1 ? `${num(rows.length)} at fit ${[...fits.keys()][0]}` : `fit ${Math.min(...fits.keys())}–${Math.max(...fits.keys())}`;
-  const typeText = [...types.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([t, n]) => `${num(n)} ${t}`)
-    .join(", ");
+    fitKeys.length === 1 ? `${num(rows.length)} at fit ${fitKeys[0]}` : `fit ${fitKeys[0]}–${fitKeys[fitKeys.length - 1]}`;
+  // The parts add up: the three largest types, then "and 19 more" for the rest (critique 2).
+  const typeText = breakdown(rows.map((p) => shortType(p.investor.type)));
+  const SHOW = 36;
   return (
     <div className="flex flex-col gap-12 px-32 py-24 max-xl:px-20">
       <h2 className="font-display text-[28px] leading-[1.1] font-bold tracking-[-0.02em]">{num(rows.length)} selected</h2>
@@ -1589,14 +1724,15 @@ function SelectionPane({ rows, openLabel, onClear }: { rows: Participant[]; open
         </button>{" "}
         <Kbd>Esc</Kbd>
       </p>
-      <ul className="m-0 flex list-none flex-wrap gap-x-12 gap-y-2 p-0">
-        {rows.slice(0, 24).map((p) => (
-          <li key={p.investor.id} className="t-body-s text-muted">
-            {p.investor.name}
+      <ul className="m-0 grid list-none grid-cols-1 gap-x-24 border-t border-line p-0 pt-8 min-[1180px]:grid-cols-2">
+        {rows.slice(0, SHOW).map((p) => (
+          <li key={p.investor.id} className="flex h-26 min-w-0 items-baseline gap-8">
+            <span className="shrink-0 truncate font-medium">{p.investor.name}</span>
+            <span className="t-body-s min-w-0 truncate text-muted">{p.investor.firm ?? ""}</span>
           </li>
         ))}
-        {rows.length > 24 ? <li className="t-body-s text-muted">and {num(rows.length - 24)} more</li> : null}
       </ul>
+      {rows.length > SHOW ? <p className="t-body-s text-muted">and {num(rows.length - SHOW)} more</p> : null}
     </div>
   );
 }
@@ -1618,6 +1754,9 @@ function DecisionPanel({
   pickRef,
   drafted,
   contacted,
+  confirm,
+  onCancelConfirm,
+  onTrust,
   onDecide,
   onFollow,
 }: {
@@ -1638,6 +1777,11 @@ function DecisionPanel({
   drafted: boolean;
   /** The first talking stage and its key ("2", Contacted). */
   contacted: { key: string; label: string } | null;
+  /** A move to a talking stage waiting for its second press. */
+  confirm: { to: Stage; n: number; key: string | null; shortlist: TriageTarget | null } | null;
+  onCancelConfirm: () => void;
+  /** "Don't ask again this session": file now and stop asking. */
+  onTrust: () => void;
   onDecide: (s: Stage) => void;
   onFollow: (iso: string | null) => void;
 }) {
@@ -1645,32 +1789,47 @@ function DecisionPanel({
   const secondary = targets.filter((t) => !t.primary && t.key);
   const overflow = targets.filter((t) => !t.key);
   const firstBtn = useRef<HTMLButtonElement>(null);
+  // No stage is preselected (critique 2: a ring on Researching read as the suggested answer).
+  // Once someone Tabs into the panel, each new investor puts focus back on the first button.
+  const keyboardUser = useRef(false);
   useEffect(() => {
-    // The first primary target takes focus when an investor loads (unless typing elsewhere).
+    if (!keyboardUser.current) return;
     const a = document.activeElement;
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.closest("[role=dialog]"))) return;
     firstBtn.current?.focus({ preventScroll: true });
   }, [focusKey]);
-  const btn = (t: TriageTarget, big: boolean, i: number) => (
-    <button
-      key={t.stage.key}
-      ref={big && i === 0 ? firstBtn : undefined}
-      type="button"
-      disabled={disabled}
-      aria-keyshortcuts={t.key ?? undefined}
-      aria-pressed={currentStage === t.stage.key || undefined}
-      onClick={() => onDecide(t.stage)}
-      className={cn(
-        "flex min-w-0 items-center gap-8 rounded-sm border bg-surface text-left hover:border-accent disabled:opacity-55",
-        currentStage === t.stage.key || (drafted && t.key === contacted?.key) ? "border-fg" : "border-line",
-        big ? "h-44 px-14 text-[15px] font-medium" : "h-36 px-10 text-base",
-      )}
-    >
-      <StageDot color={t.stage.color} />
-      <span className="min-w-0 flex-1 truncate">{t.stage.label}</span>
-      {t.key ? <Kbd>{t.key}</Kbd> : null}
-    </button>
-  );
+  const btn = (t: TriageTarget, big: boolean, i: number) => {
+    const asking = confirm?.to.key === t.stage.key;
+    const meaning = big ? (TRIAGE_MEANING[t.stage.key] ?? null) : null;
+    return (
+      <button
+        key={t.stage.key}
+        ref={big && i === 0 ? firstBtn : undefined}
+        type="button"
+        disabled={disabled}
+        aria-keyshortcuts={t.key ?? undefined}
+        aria-pressed={currentStage === t.stage.key || undefined}
+        onClick={() => onDecide(t.stage)}
+        className={cn(
+          "flex min-w-0 items-center gap-8 rounded-sm border bg-surface text-left hover:border-accent disabled:opacity-55",
+          asking
+            ? "border-warm bg-warm-soft"
+            : currentStage === t.stage.key || (drafted && t.key === contacted?.key)
+              ? "border-fg"
+              : "border-line",
+          big ? cn("px-14", meaning ? "h-44 @[600px]/dp:h-52" : "h-44") : "h-36 px-10 text-base",
+        )}
+      >
+        <StageDot color={t.stage.color} />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className={cn("truncate", big && "text-[15px] leading-[20px] font-medium")}>{t.stage.label}</span>
+          {/* The meaning needs room; a narrow panel (the split sheet is open) keeps the label. */}
+          {meaning ? <span className="t-body-s hidden truncate leading-[16px] text-muted @[600px]/dp:block">{meaning}</span> : null}
+        </span>
+        {t.key ? <Kbd>{t.key}</Kbd> : null}
+      </button>
+    );
+  };
   // Follow-up picks: None + three different dates; one pressed button per value.
   const options = [{ label: "None", iso: null as string | null, hint: null as string | null }, ...follows.map((f) => ({ label: f.label, iso: f.iso as string | null, hint: `f ${f.kbd}` }))];
   const pressed = pressedOption(options, followUp);
@@ -1679,12 +1838,44 @@ function DecisionPanel({
     : drafted && contacted
       ? `sent it? ${contacted.key} files ${who ?? "them"} in ${contacted.label}`
       : "one key, then the next investor opens";
+  const smallBtn = "inline-flex h-28 shrink-0 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-sm text-fg hover:border-muted";
   return (
-    <div ref={ref} className="flex shrink-0 flex-col gap-10 border-t border-line bg-sunk px-32 pt-14 pb-12 max-xl:px-20">
-      <p className="flex min-w-0 items-baseline gap-10">
-        <span className="t-label shrink-0">{who ? `Where does ${who} go?` : `Where do the ${num(bulk)} go?`}</span>
-        <span className={cn("t-micro min-w-0 truncate", drafted ? "text-accent" : "text-muted")}>{sub}</span>
-      </p>
+    <div
+      ref={ref}
+      onKeyDown={(e) => {
+        if (e.key === "Tab") keyboardUser.current = true;
+      }}
+      className="@container/dp flex shrink-0 flex-col gap-10 border-t border-line bg-sunk px-32 pt-14 pb-12 max-xl:px-20"
+    >
+      {confirm ? (
+        <div role="alert" className="flex min-w-0 flex-wrap items-center gap-x-10 gap-y-6 rounded-sm border border-warm bg-warm-soft px-12 py-8">
+          <p className="t-body-s min-w-0 flex-1 text-warm-ink">
+            <b className="font-semibold">
+              {confirm.n === 1 ? `Has ${who ?? "this investor"} heard from you?` : `Have all ${num(confirm.n)} heard from you?`}
+            </b>{" "}
+            {confirm.to.label} means you already reached out.
+          </p>
+          {confirm.shortlist ? (
+            <button type="button" className={smallBtn} onClick={() => onDecide(confirm.shortlist!.stage)}>
+              Shortlist in {confirm.shortlist.stage.label} {confirm.shortlist.key ? <Kbd>{confirm.shortlist.key}</Kbd> : null}
+            </button>
+          ) : null}
+          <button type="button" className={smallBtn} onClick={() => onDecide(confirm.to)}>
+            Yes, {confirm.to.label} {confirm.key ? <Kbd>{confirm.key}</Kbd> : null}
+          </button>
+          <button type="button" className="t-body-s border-0 bg-transparent p-0 text-warm-ink underline-offset-2 hover:underline" onClick={onTrust}>
+            Yes, and don&apos;t ask again
+          </button>
+          <button type="button" className="sr-only" onClick={onCancelConfirm}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <p className="flex min-w-0 items-baseline gap-10">
+          <span className="t-label shrink-0">{who ? `Where does ${who} go?` : `Where do the ${num(bulk)} go?`}</span>
+          <span className={cn("t-micro min-w-0 truncate", drafted ? "text-accent" : "text-muted")}>{sub}</span>
+        </p>
+      )}
       <div className="grid grid-cols-3 gap-8">{primary.map((t, i) => btn(t, true, i))}</div>
       {secondary.length || overflow.length ? (
         <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(124px, 1fr))` }}>
@@ -1699,8 +1890,9 @@ function DecisionPanel({
           ) : null}
         </div>
       ) : null}
-      <div className="flex flex-wrap items-center gap-6" ref={pickRef}>
-        <span className="t-label mr-6">Follow up</span>
+      {/* One line at every width (the chord hints stay; a narrow panel tightens the padding). */}
+      <div className="flex flex-wrap items-center gap-4 @[640px]/dp:gap-6" ref={pickRef}>
+        <span className="t-label mr-4 @[640px]/dp:mr-6">Follow up</span>
         {options.map((o, i) => (
           <button
             key={o.label}
@@ -1709,13 +1901,13 @@ function DecisionPanel({
             aria-pressed={i === pressed}
             onClick={() => onFollow(o.iso)}
             className={cn(
-              "inline-flex h-32 items-center gap-6 rounded-sm border px-10 text-base disabled:opacity-55",
+              "inline-flex h-32 items-center gap-4 rounded-sm border px-8 text-base disabled:opacity-55 @[640px]/dp:gap-6 @[640px]/dp:px-10",
               i === pressed ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface hover:border-muted",
             )}
             title={o.iso ? formatDate(o.iso, today) : "No follow-up"}
           >
             {o.label}
-            {o.hint ? <Kbd className="max-[1279px]:hidden">{o.hint}</Kbd> : null}
+            {o.hint ? <Kbd>{o.hint}</Kbd> : null}
           </button>
         ))}
         <DateField
@@ -1724,7 +1916,7 @@ function DecisionPanel({
           timeZone={timeZone}
           quickPicks="followup"
           placeholder="Pick…"
-          size="sm"
+          placeholderTone="muted"
           tone="toolbar"
           disabled={disabled}
           aria-label="Follow up on a date"
@@ -1747,7 +1939,7 @@ function DecisionPanel({
             {l}
           </span>
         ))}
-        <span className="ml-auto max-[1279px]:hidden">Every change saves at once.</span>
+        <span className="ml-auto hidden @[720px]/dp:inline">Every change saves at once.</span>
       </p>
     </div>
   );
@@ -1791,44 +1983,66 @@ function TriageRail({
     if (p.follow_up_state === "overdue" || p.follow_up_state === "today") due++;
   }
   const days = round.target_close_on ? Math.round((Date.parse(round.target_close_on) - Date.parse(today)) / 86_400_000) : null;
-  const terms = [
-    INSTRUMENT_LABEL[round.instrument],
-    round.valuation_cap ? `${moneyCompact(round.valuation_cap, round.currency)} cap` : null,
-    round.target_close_on ? `closes ${formatDate(round.target_close_on, today)}` : null,
-    days !== null && days >= 0 ? `${num(days)} days` : null,
-  ].filter(Boolean);
   const largest = (["hw", "maybe", "low"] as const).find((k) => sliceCounts[k] > 0);
   const startN = hwLeft || (largest ? sliceCounts[largest] : 0);
-  const startLabel = hwLeft ? "are Hot or Warm" : largest === "maybe" ? "are Maybe" : "are Low fit";
+  const verb = startN === 1 ? "is" : "are";
+  const startLabel = `${verb} ${hwLeft ? "Hot or Warm" : largest === "maybe" ? "Maybe" : "Low fit"}`;
+  const sortedBefore = rows.length - (c[openKey] ?? 0);
+  const moved = Object.values(counts).some((n) => n > 0);
+  // Stages with nobody in them fold into one line until something moves there (critique 2:
+  // seven rows of "0" said nothing).
+  const shown = stages.filter((s) => s.key === openKey || (c[s.key] ?? 0) > 0 || (counts[s.key] ?? 0) > 0);
+  const emptyN = stages.length - shown.length;
+  const nw = "whitespace-nowrap";
   return (
     <aside aria-label="Round and progress" className="flex min-h-0 flex-col gap-18 overflow-y-auto pr-2">
       <section>
         <p className="t-label mb-6">The round</p>
+        {/* The terms are in the title row; here the money and the clock, each part unbroken. */}
         <p className="t-micro text-muted">
-          <span className={committed + soft > 0 ? "text-good-ink" : "text-fg"}>{money(committed, round.currency)}</span> of{" "}
-          {money(round.target_amount, round.currency)} · {due ? `${num(due)} due` : "nothing due"}
+          <span className={nw}>
+            <span className={committed + soft > 0 ? "text-good-ink" : "text-fg"}>{money(committed, round.currency)}</span> of{" "}
+            {money(round.target_amount, round.currency)}
+          </span>{" "}
+          · <span className={nw}>{due ? `${num(due)} due` : "nothing due"}</span>
         </p>
-        <p className="t-micro mt-2 text-muted">{terms.join(" · ")}</p>
+        {round.target_close_on ? (
+          <p className="t-micro mt-2 text-muted">
+            <span className={nw}>Closes {formatDate(round.target_close_on, today)}</span>
+            {days !== null && days >= 0 ? (
+              <>
+                {" "}
+                · <span className={nw}>{num(days)} days left</span>
+              </>
+            ) : null}
+          </p>
+        ) : null}
       </section>
       <section>
         <p className="t-label mb-6 flex">
-          Where they are<span className="ml-auto normal-case tracking-normal">this session</span>
+          Where they are
+          {moved ? <span className="ml-auto normal-case tracking-normal">this session</span> : null}
         </p>
         <ul className="m-0 flex list-none flex-col p-0">
-          {stages.map((s) => {
+          {shown.map((s) => {
             const isO = s.key === openKey;
             const add = counts[s.key] ?? 0;
             const n = c[s.key] ?? 0;
             return (
               <li key={s.key} className="flex h-28 items-center gap-8 border-b border-line px-2 last:border-b-0">
                 <StageDot color={s.color} />
-                <span className={cn("min-w-0 flex-1 truncate", isO ? "font-semibold" : n ? "text-fg" : "text-muted")}>{s.label}</span>
-                <span className={cn("w-40 text-right font-mono text-[12px] tnum", n ? "text-fg" : "text-faint")}>{num(n)}</span>
-                <span className="w-36 text-right font-mono text-[11.5px] text-good-ink">{add ? `+${num(add)}` : ""}</span>
+                <span className={cn("min-w-0 flex-1 truncate", isO ? "font-semibold" : "text-fg")}>{s.label}</span>
+                <span className="w-40 text-right font-mono text-[12px] text-fg tnum">{num(n)}</span>
+                {moved ? <span className="w-36 text-right font-mono text-[11.5px] text-good-ink">{add ? `+${num(add)}` : ""}</span> : null}
               </li>
             );
           })}
         </ul>
+        {emptyN > 0 ? (
+          <p className="t-body-s mt-6 px-2 text-muted">
+            {num(emptyN)} other {emptyN === 1 ? "stage" : "stages"} empty
+          </p>
+        ) : null}
       </section>
       <section>
         {sessionLine ? (
@@ -1848,7 +2062,8 @@ function TriageRail({
               <b className="font-semibold text-fg">
                 {num(startN)} {startLabel}.
               </b>{" "}
-              Deciding those first takes about {formatDuration(startN * START_SECONDS * 1000)}; the board fills in as you go.
+              Deciding those first takes about {formatDuration(startN * START_SECONDS * 1000)}
+              {sortedBefore === 0 ? "; the board fills in as you go." : "."}
             </p>
           </>
         ) : null}
@@ -1877,6 +2092,8 @@ function TriagePhone({
   canWrite,
   filter,
   onExit,
+  confirm,
+  onTrust,
   onDecide,
   onSkip,
   onGo,
@@ -1886,7 +2103,7 @@ function TriagePhone({
   round: Round;
   current: Participant | null;
   full: FullInvestor | undefined;
-  extras: Record<string, { industries: string[] }>;
+  extras: Record<string, { industries: string[]; source?: string }>;
   today: string;
   timeZone: string;
   targets: TriageTarget[];
@@ -1901,6 +2118,9 @@ function TriagePhone({
   canWrite: boolean;
   filter: ReactNode;
   onExit: () => void;
+  /** A tap on a talking stage waiting for "Yes" (see the desktop decision panel). */
+  confirm: { to: Stage; shortlist: TriageTarget | null } | null;
+  onTrust: () => void;
   onDecide: (s: Stage) => void;
   onSkip: () => void;
   onGo: (id: string) => void;
@@ -2048,7 +2268,7 @@ function TriagePhone({
                         <button type="button" onClick={() => onGo(x.investor.id)} className="flex h-40 w-full min-w-0 items-center gap-8 border-0 border-b border-line bg-transparent px-0 text-left">
                           <span className="shrink-0 font-medium">{x.investor.name}</span>
                           <span className="t-body-s min-w-0 flex-1 truncate text-muted">{x.investor.firm}</span>
-                          <FitMeter value={x.fit} />
+                          {new Set([p.fit, ...upNext.map((y) => y.fit)]).size > 1 ? <FitMeter value={x.fit} /> : null}
                         </button>
                       </li>
                     ))}
@@ -2063,6 +2283,23 @@ function TriagePhone({
           ref={bar}
           className="fixed inset-x-0 bottom-0 z-[41] flex flex-col gap-8 border-t border-line bg-surface px-12 pt-10 pb-[calc(10px+env(safe-area-inset-bottom))]"
         >
+          {confirm && p ? (
+            <div role="alert" className="flex flex-col gap-8 rounded-sm border border-warm bg-warm-soft p-10">
+              <p className="t-body-s text-warm-ink">
+                <b className="font-semibold">Has {p.investor.name.split(/\s+/)[0]} heard from you?</b> {confirm.to.label} means you already
+                reached out.
+              </p>
+              <div className="grid grid-cols-2 gap-8">
+                {confirm.shortlist ? (
+                  <Button onClick={() => onDecide(confirm.shortlist!.stage)}>Shortlist</Button>
+                ) : null}
+                <Button onClick={() => onDecide(confirm.to)}>Yes, {confirm.to.label}</Button>
+              </div>
+              <button type="button" className="t-body-s self-start border-0 bg-transparent p-0 text-warm-ink underline" onClick={onTrust}>
+                Yes, and don&apos;t ask again
+              </button>
+            </div>
+          ) : null}
           <div className="grid grid-cols-3 gap-8">
             {primary.map((t) => (
               <button

@@ -59,7 +59,7 @@ export const TABLE_COLS: { key: TableCol; label: string; width: number; required
   { key: "owner", label: "Owner", width: 128 },
   { key: "last_activity", label: "Last activity", width: 112 },
   { key: "next_step", label: "Next step", width: 220 },
-  { key: "email", label: "Email", width: 270 },
+  { key: "email", label: "Email", width: 240 },
   { key: "links", label: "LinkedIn", width: 92, unsortable: true },
 ];
 
@@ -67,7 +67,9 @@ export const TABLE_COLS: { key: TableCol; label: string; width: number; required
  * When the columns do not fit, these go first (first in the list, first dropped); the
  * Investor, Firm, Stage, Fit, Follow-up, money and Next step columns stay longest.
  */
-const DROP_ORDER: TableCol[] = ["title", "last_activity", "links", "email", "type", "industry", "owner", "firm", "soft", "next_step", "follow_up", "committed", "stage"];
+// For people not contacted yet the contact columns matter more than Type (critique 2), so
+// Type and Industry leave first and Email stays longest (Firm moves next to the name).
+const DROP_ORDER: TableCol[] = ["title", "last_activity", "type", "industry", "owner", "links", "soft", "next_step", "firm", "email", "follow_up", "committed", "stage"];
 /** Only these may hide for holding one value on every row (Stage: "New" ×411). */
 const CONSTANT_HIDES: TableCol[] = ["stage", "last_activity"];
 
@@ -514,15 +516,20 @@ export function PipelineTable({
         );
       case "industry": {
         const list = industriesOf(p);
+        // "Other" is never shown; an em dash says "nothing specific" instead of looking lost.
         return list.length ? (
           <span className={cn(one, "block text-muted")} title={list.join(", ")}>
             {list.join(", ")}
           </span>
-        ) : null;
+        ) : (
+          <span className="text-muted" title="No specific industry">
+            —
+          </span>
+        );
       }
       case "email":
         return p.investor.email ? (
-          <span className={cn(one, "t-data block text-muted")} title={p.investor.email}>
+          <span className={cn(one, "t-body-s block text-muted")} title={p.investor.email}>
             {p.investor.email}
           </span>
         ) : null;

@@ -293,12 +293,16 @@ export interface PipelineItem {
   updated_at: string;
   industries: string[];
   search: string;
+  /** Where the investor came from ("SF Tech Week"), only when set. */
+  source?: string;
 }
 
 /** Investor fields the pipeline keeps per row (filters and search), by investor id. */
 export interface PipelineExtra {
   industries: string[];
   search: string;
+  /** Triage hides the source chip when every investor in the queue shares it. */
+  source?: string;
 }
 
 const NOTES_IN_SEARCH = 400;
@@ -345,6 +349,7 @@ export function toPipelineItems(participants: Participant[], investors: Investor
     if (p.next_step) item.next_step = p.next_step;
     if (p.owner) item.owner = p.owner;
     if (p.last_activity_at) item.last_activity_at = p.last_activity_at;
+    if (inv?.source) item.source = inv.source;
     return item;
   });
 }
@@ -359,8 +364,8 @@ export function expandPipelineItems(
   const fallback = sortedStages(round.stages)[0]!;
   const extras: Record<UUID, PipelineExtra> = {};
   const participants = items.map((it) => {
-    const { industries, search, stage, ...rest } = it;
-    extras[it.investor.id] = { industries, search };
+    const { industries, search, source, stage, ...rest } = it;
+    extras[it.investor.id] = source ? { industries, search, source } : { industries, search };
     return {
       ...rest,
       round_id: round.id,

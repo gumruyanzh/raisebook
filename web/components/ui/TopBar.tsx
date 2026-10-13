@@ -261,7 +261,12 @@ export function TopBar(p: TopBarProps) {
               aria-keyshortcuts="Meta+K Control+K"
               className="hidden h-32 items-center gap-8 rounded-sm border border-line bg-surface px-8 text-muted transition-colors duration-[120ms] hover:border-muted hover:text-fg sm:inline-flex"
             >
-              <span className="hidden 2xl:inline">Search</span>
+              {/* Never a bare "⌘K": a glass always, the word from 1024px (critique 2). */}
+              <svg aria-hidden viewBox="0 0 16 16" className="size-14 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="m10.5 10.5 3.5 3.5" strokeLinecap="round" />
+              </svg>
+              <span className="hidden xl:[@media(pointer:fine)]:inline">Search</span>
               <kbd className="inline-flex h-18 items-center rounded-kbd border border-line px-4 font-mono text-xs leading-none text-muted [@media(pointer:coarse)]:hidden">
                 {comboLabel("mod+k")}
               </kbd>

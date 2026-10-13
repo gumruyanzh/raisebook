@@ -21,6 +21,7 @@ export function RoundHeader({
   active,
   className,
   children,
+  aside,
 }: {
   wsSlug: string;
   round: Round;
@@ -28,6 +29,8 @@ export function RoundHeader({
   className?: string;
   /** Between the title and "Edit round" (the pipeline's saved views). */
   children?: ReactNode;
+  /** Right-aligned with "Edit round", as one group (the pipeline's SET UP and Add investor). */
+  aside?: ReactNode;
 }) {
   const { canWrite } = useWorkspace();
   const base = `/w/${encodeURIComponent(wsSlug)}/r/${encodeURIComponent(round.slug)}`;
@@ -53,7 +56,8 @@ export function RoundHeader({
       <span className="t-micro shrink-0 whitespace-nowrap text-muted uppercase">{terms}</span>
       {round.status === "closed" ? <Chip tone="mode">Closed</Chip> : null}
       {children}
-      <span className="t-body-s ml-auto shrink-0 whitespace-nowrap">
+      <span className="t-body-s ml-auto flex shrink-0 items-center gap-12 whitespace-nowrap">
+        {aside}
         {active === "settings" ? (
           <Link href={`${base}/overview`} className="link">
             ← {round.name} overview

@@ -72,11 +72,13 @@ export function stripMessage(f: LedgerFacts, openLabel: string, phone = false): 
     return {
       text: phone ? (
         <>
-          <b className="font-semibold text-fg">{num(f.hwOpen)} Hot and Warm</b> are waiting. Start with them.
+          <b className="font-semibold text-fg">{f.hwOpen === 1 ? "1 Hot or Warm investor" : `${num(f.hwOpen)} Hot and Warm`}</b> {f.hwOpen === 1 ? "is" : "are"} waiting. Start with{" "}
+          {f.hwOpen === 1 ? "it" : "them"}.
         </>
       ) : (
         <>
-          <b className="font-semibold text-fg">{num(f.hwOpen)} Hot and Warm</b> are still {openLabel}. Start with them.
+          <b className="font-semibold text-fg">{f.hwOpen === 1 ? "1 Hot or Warm investor" : `${num(f.hwOpen)} Hot and Warm`}</b> {f.hwOpen === 1 ? "is" : "are"} still {openLabel}. Start with{" "}
+          {f.hwOpen === 1 ? "it" : "them"}.
         </>
       ),
       triage: true,
@@ -86,7 +88,7 @@ export function stripMessage(f: LedgerFacts, openLabel: string, phone = false): 
     return {
       text: (
         <>
-          <b className="font-semibold text-fg">{num(f.openCount)}</b> are still {openLabel}, highest fit first.
+          <b className="font-semibold text-fg">{num(f.openCount)}</b> {f.openCount === 1 ? "is" : "are"} still {openLabel}, highest fit first.
         </>
       ),
       triage: true,

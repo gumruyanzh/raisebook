@@ -10,7 +10,7 @@ export interface LinkButtonItem {
 }
 
 const BTN =
-  "inline-flex h-28 items-center rounded-sm border border-line bg-surface px-9 text-sm text-accent hover:border-accent";
+  "inline-flex h-28 max-w-full min-w-0 items-center rounded-sm border border-line bg-surface px-9 text-sm whitespace-nowrap text-accent hover:border-accent";
 
 /**
  * The prototype `.links` (SYSTEM 3.32): small bordered link buttons with accent text
@@ -40,7 +40,7 @@ export function LinkButtons({
   ].filter((l) => /^https?:\/\//i.test(l.href));
   if (!links.length && !email) return null;
   return (
-    <div className={cn("flex flex-wrap gap-6", className)}>
+    <div className={cn("flex min-w-0 flex-wrap gap-6", className)}>
       {links.map((l) => (
         <a key={l.href + l.label} href={l.href} target="_blank" rel="noopener noreferrer" className={BTN}>
           {l.label} <span aria-hidden className="ml-4">↗</span>
@@ -50,6 +50,7 @@ export function LinkButtons({
         <button
           type="button"
           className={BTN}
+          title={`Copy ${email}`}
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(email);
@@ -59,7 +60,9 @@ export function LinkButtons({
             }
           }}
         >
-          {email} · copy
+          {/* A long address truncates inside the chip; "· copy" always stays on the line. */}
+          <span className="min-w-0 truncate">{email}</span>
+          <span className="shrink-0">&nbsp;· copy</span>
         </button>
       ) : null}
     </div>

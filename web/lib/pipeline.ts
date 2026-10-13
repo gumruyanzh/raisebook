@@ -34,6 +34,40 @@ export function shortType(type: string | null | undefined): string | null {
   return SHORT_TYPE[type] ?? null;
 }
 
+/**
+ * The one value every item shares (trimmed, case-insensitive), else null. A chip whose value
+ * is the same on all 411 investors ("SF Tech Week") says nothing, so callers hide it.
+ */
+export function sharedValue(values: readonly (string | null | undefined)[]): string | null {
+  let first: string | null = null;
+  for (const v of values) {
+    const t = v?.trim();
+    if (!t) return null;
+    if (first === null) first = t;
+    else if (t.toLowerCase() !== first.toLowerCase()) return null;
+  }
+  return first;
+}
+
+/**
+ * "46 VC, 13 Angel, 8 Scout and 19 more": the three largest groups, then the rest as one
+ * count, so the parts always add up to the whole (types without a label are in the rest).
+ */
+export function breakdown(labels: readonly (string | null)[], top = 3): string {
+  const m = new Map<string, number>();
+  let unlabeled = 0;
+  for (const l of labels) {
+    if (l) m.set(l, (m.get(l) ?? 0) + 1);
+    else unlabeled++;
+  }
+  const sorted = [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const shown = sorted.slice(0, top);
+  const rest = unlabeled + sorted.slice(top).reduce((n, [, c]) => n + c, 0);
+  const parts = shown.map(([l, c]) => `${c.toLocaleString("en-US")} ${l}`);
+  if (!parts.length) return "";
+  return rest ? `${parts.join(", ")} and ${rest.toLocaleString("en-US")} more` : parts.join(", ");
+}
+
 /* ---------- stages ---------- */
 
 const byPos = (a: Pick<Stage, "position">, b: Pick<Stage, "position">) => a.position - b.position;
@@ -82,6 +116,22 @@ export function triageTargets<S extends Pick<Stage, "key" | "kind" | "position">
     primary: i < 2 || stage.kind === "lost",
   }));
 }
+
+/**
+ * Stages that say you are already talking to them (Contacted and later, or Committed). Filing a
+ * fresh import there from Triage asks first, so "I'd contact them" never records "Contacted"
+ * for someone nobody has emailed (critique 2).
+ */
+export function claimsContact(stage: Pick<Stage, "kind">): boolean {
+  return stage.kind === "active" || stage.kind === "won";
+}
+
+/** The line under a Triage decision button: what filing there means right now. */
+export const TRIAGE_MEANING: Record<string, string> = {
+  research: "Shortlist, reach out later",
+  contacted: "You already reached out",
+  passed: "Not this round",
+};
 
 /** One line under "Drop here" on an empty default column (a custom stage gets none). */
 export const STAGE_MEANING: Record<string, string> = {
@@ -232,13 +282,17 @@ export function formatElapsed(ms: number): string {
   return min % 60 ? `${h}h ${min % 60}m` : `${h}h`;
 }
 
-/** A decision takes at least this long when estimating the rest (a burst of Passes is not a pace). */
-export const MIN_GAP_MS = 8_000;
+/**
+ * A decision takes at least this long when estimating the rest: a burst of quick Passes is not
+ * a pace, and the investors still to come need reading (critique 2: 8s promised 40 minutes
+ * for 285 investors, which nobody reading profiles manages).
+ */
+export const MIN_GAP_MS = START_SECONDS * 1000;
 /** …and at most this long (a coffee break is not a pace either). */
 export const MAX_GAP_MS = 120_000;
 
 /**
- * The session pace: the median gap between decisions, each gap clamped to 8s–120s, from the
+ * The session pace: the median gap between decisions, each gap clamped to 20s–120s, from the
  * 5th decision on. `perMs` null before that.
  */
 export function paceEstimate(times: readonly number[]): { sorted: number; perMs: number | null } {
@@ -416,11 +470,15 @@ export function boardSegments(columns: readonly { key: string; count: number }[]
   return out;
 }
 
-/** The grid track for a segment. */
-export function segmentTrack(seg: BoardSegment, dominantKey: string | null): string {
+/**
+ * The grid track for a segment. The lost stage (Passed) is the least useful place to work, so
+ * it never takes a full working width next to Researching and Contacted (critique 2).
+ */
+export function segmentTrack(seg: BoardSegment, dominantKey: string | null, lostKey: string | null = null): string {
   if (seg.kind === "empty") return "minmax(184px, .7fr)";
   if (seg.key === dominantKey) return "minmax(352px, 3fr)";
-  return seg.empty ? "minmax(136px, .6fr)" : "minmax(232px, 1fr)";
+  if (seg.empty) return "minmax(136px, .6fr)";
+  return seg.key === lostKey ? "minmax(208px, .7fr)" : "minmax(232px, 1fr)";
 }
 
 /* ---------- table columns that fit (critique 1) ---------- */

@@ -149,3 +149,40 @@ export const logActivity = (c: ApiClient, body: LogActivityInput) =>
 
 /** Manual kinds only (note, email, call, meeting); otherwise 409 `not_deletable`. */
 export const deleteActivity = (c: ApiClient, id: UUID) => c.del<void>(`/v1/activities/${seg(id)}`);
+
+/* ---------- an import on one investor's timeline (critique 2) ---------- */
+
+/** The import run an activity was written by, else null. */
+export function importRunOf(a: Activity): string | null {
+  const f = a as FeedActivity;
+  if (f.import_run_id) return f.import_run_id;
+  const d = a.data?.import_run_id;
+  return typeof d === "string" ? d : null;
+}
+
+/**
+ * One investor's timeline shows an import once: "added this investor" and "added them to the
+ * round in New" from the same run collapse to the first of them (newest first, as the API
+ * returns them), which the timeline then words as the import ({@link importSentence}).
+ */
+export function collapseImportRuns<T extends Activity>(acts: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return acts.filter((a) => {
+    const run = importRunOf(a);
+    if (!run) return true;
+    if (seen.has(run)) return false;
+    seen.add(run);
+    return true;
+  });
+}
+
+/** "imported Calla from sf-tech-week-411.csv with 410 others" (Triage and the sheet say it the same way). */
+export function importSentence(
+  firstName: string,
+  run: { filename?: string | null; counts?: Record<string, number> } | null | undefined,
+): string {
+  const n = run?.counts ? (run.counts.created ?? 0) + (run.counts.updated ?? 0) : 0;
+  const file = run?.filename ? ` from ${run.filename}` : "";
+  const others = n > 1 ? ` with ${(n - 1).toLocaleString("en-US")} others` : "";
+  return `imported ${firstName}${file}${others}`;
+}

@@ -752,10 +752,11 @@ export function Pipeline(props: PipelineProps) {
     () => [
       { id: "all", name: "All", query: "", builtin: true },
       { id: "due", name: "Due now", query: "follow=due", builtin: true },
-      ...(me ? [{ id: "mine", name: "My investors", query: `owner=${me.user_id}`, builtin: true }] : []),
+      // "My investors" means something once there is someone else to own investors.
+      ...(me && props.members.length > 1 ? [{ id: "mine", name: "My investors", query: `owner=${me.user_id}`, builtin: true }] : []),
       { id: "hot", name: "Hot", query: "prio=hot", builtin: true },
     ],
-    [me],
+    [me, props.members.length],
   );
   const allViews = useMemo(() => [...builtins, ...saved], [builtins, saved]);
   const currentQuery = (keys: readonly string[]) => normQuery(params, keys);
@@ -870,10 +871,15 @@ export function Pipeline(props: PipelineProps) {
   const onPhoneList = useCallback((ids: string[]) => {
     phoneOrder.current = ids;
   }, []);
+  // Triage's queue (the slice on screen), so the sheet's "3 of 190" walks the queue.
+  const triageOrder = useRef<string[]>([]);
+  const onTriageOrder = useCallback((ids: string[]) => {
+    triageOrder.current = ids;
+  }, []);
   useEffect(() => {
     if (openId && !sheetOrder) {
       const col = view === "board" ? boardColumns.find((c) => c.cards.some((p) => p.investor.id === openId)) : undefined;
-      const list = phone ? phoneOrder.current : col ? col.cards.map((p) => p.investor.id) : order;
+      const list = phone ? phoneOrder.current : view === "triage" ? triageOrder.current : col ? col.cards.map((p) => p.investor.id) : order;
       setSheetOrder(list.includes(openId) ? list : order);
     }
     if (!openId && sheetOrder) setSheetOrder(null);
@@ -1170,7 +1176,8 @@ export function Pipeline(props: PipelineProps) {
   const isNarrow = useMediaQuery("(max-width: 899px)");
   // ≥1280px the sheet is a split panel: the list stays usable and follows the keyboard (P2-3).
   const split = useMediaQuery("(min-width: 1280px)") === true;
-  const splitOpen = split && Boolean(openId) && view !== "triage";
+  // Triage opens the file the same way (critique 2: a modal there, a split pane elsewhere).
+  const splitOpen = split && Boolean(openId);
   const working = !empty && view !== "triage";
   useHotkey("/", () => searchRef.current?.focus(), {
     description: "Search this round",
@@ -1191,15 +1198,23 @@ export function Pipeline(props: PipelineProps) {
     enabled: canWrite,
   });
   useHotkey("t", () => setView("triage"), {
-    description: `Triage ${oStage?.label ?? "New"}`,
+    description: `Switch to Triage (${oStage?.label ?? "New"}, one at a time)`,
     group: "Pipeline",
     blockedByModals: true,
-    enabled: working && !phone && triageOk && openCount > 0,
+    enabled: !empty && !phone && triageOk && openCount > 0,
+    listOnly: view === "triage",
   });
+  // The board's own keys live on the focused card; list them in "?" all the same (critique 2).
+  const boardKeys = !empty && !phone;
+  useHotkey("m", () => {}, { description: "Move the card (or the selection) to…", group: "Board", listOnly: true, enabled: boardKeys && (view !== "board" || n === 0) });
+  useHotkey("alt+arrowright", () => {}, { description: "Move the card one stage on", group: "Board", listOnly: true, enabled: boardKeys });
+  useHotkey("alt+arrowleft", () => {}, { description: "Move the card one stage back", group: "Board", listOnly: true, enabled: boardKeys });
+  useHotkey("x", () => {}, { description: "Select the card or row", group: "Board", listOnly: true, enabled: boardKeys && view !== "triage" });
   useHotkey("escape", () => setSelected(new Set()), {
     blockedByModals: true,
     enabled: n > 0 && view !== "triage",
   });
+  useHotkey("escape", () => {}, { description: "Clear the selection", group: "Board", listOnly: true, enabled: boardKeys && n === 0 });
   const [bulkMenu, setBulkMenu] = useState<null | "move" | "follow">(null);
   useHotkey("m", () => setBulkMenu("move"), {
     description: "Move the selection to…",
@@ -1412,11 +1427,27 @@ export function Pipeline(props: PipelineProps) {
             onSearch={onSearch}
             base={base}
             onListChange={onPhoneList}
+            stickyTop={stickyTop}
           />
         )
       ) : (
         <div ref={headRef} className="flex flex-col gap-14">
-          <RoundHeader wsSlug={workspace.slug} round={round} active="pipeline" className="mb-0 flex-nowrap items-center">
+          <RoundHeader
+            wsSlug={workspace.slug}
+            round={round}
+            active="pipeline"
+            className="mb-0 flex-nowrap items-center"
+            aside={
+              <>
+                {setupNode}
+                {view === "triage" && canWrite ? (
+                  <Button size="sm" onClick={() => setAdding(true)} kbd="C" aria-keyshortcuts="C" className="shrink-0">
+                    Add investor
+                  </Button>
+                ) : null}
+              </>
+            }
+          >
             {viewSegment}
             {autoTriage && triageNote && headW >= 1180 ? (
               <span className="t-micro min-w-0 truncate text-muted">
@@ -1439,12 +1470,6 @@ export function Pipeline(props: PipelineProps) {
                   if (v) toast.show(`Deleted the view “${v.name}”.`, { label: "Undo", onClick: () => storeSaved([...saved]) });
                 }}
               />
-            ) : null}
-            {setupNode ? <span className="ml-auto shrink-0">{setupNode}</span> : null}
-            {view === "triage" && canWrite ? (
-              <Button size="sm" onClick={() => setAdding(true)} kbd="C" aria-keyshortcuts="C" className={cn("shrink-0", setupNode ? undefined : "ml-auto")}>
-                Add investor
-              </Button>
             ) : null}
           </RoundHeader>
 
@@ -1620,6 +1645,8 @@ export function Pipeline(props: PipelineProps) {
             onExit={() => setParams({ view: null, tq: null, at: null })}
             store={triageStore}
             keysEnabled={!openId}
+            squeezed={splitOpen}
+            onOrder={onTriageOrder}
           />
         </div>
       ) : phone ? null : (
@@ -1643,7 +1670,7 @@ export function Pipeline(props: PipelineProps) {
               dominantKey={dominantKey}
               activePrio={prio}
               onPrioFilter={(pr) => setParams({ prio: pr })}
-              onTriage={triageOk && openCount > 0 ? () => setView("triage") : undefined}
+              onTriage={triageOk && openCount > 0 ? (sl) => (sl ? startTriage(sl) : setView("triage")) : undefined}
               selected={canWrite ? selected : null}
               onSelectedChange={setSelected}
               onOpen={openInvestor}
@@ -1701,9 +1728,9 @@ export function Pipeline(props: PipelineProps) {
         today={today}
         timeZone={tz}
         canWrite={canWrite}
-        order={view === "triage" ? undefined : navOrder}
+        order={navOrder}
         onNavigate={openInvestor}
-        modal={!split || view === "triage"}
+        modal={!split}
         top={stickyTop}
         onClose={closeSheet}
         onParticipantChange={(p) => {
@@ -1719,7 +1746,10 @@ export function Pipeline(props: PipelineProps) {
                 : p,
             ),
           );
-          setExtras((e) => ({ ...e, [inv.id]: { industries: inv.industries, search: e[inv.id]?.search ?? "" } }));
+          setExtras((e) => ({
+            ...e,
+            [inv.id]: { industries: inv.industries, search: e[inv.id]?.search ?? "", ...(inv.source ? { source: inv.source } : {}) },
+          }));
         }}
         onChanged={() => {
           dirty.current = true;
@@ -2130,6 +2160,7 @@ function BulkBar({
             { label: "Clear follow-up", onSelect: () => onFollowUp(null) },
           ]}
         />
+        {members.length > 1 ? (
         <Menu
           label="Assign owner"
           trigger="Owner"
@@ -2144,6 +2175,7 @@ function BulkBar({
             { label: "No owner", onSelect: () => onOwner(null) },
           ]}
         />
+        ) : null}
         <Menu
           label="Set fit"
           trigger="Fit"

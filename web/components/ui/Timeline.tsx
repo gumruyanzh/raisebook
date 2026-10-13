@@ -245,6 +245,7 @@ export function Timeline({
   now,
   groupRuns,
   loadRun,
+  sentenceFor,
   className,
 }: {
   items: Activity[];
@@ -268,6 +269,8 @@ export function Timeline({
   groupRuns?: boolean;
   /** Loads the entries of a run the API collapsed (`listActivities({run})`). */
   loadRun?: (key: string) => Promise<Activity[]>;
+  /** Words an activity differently (an import on one investor's timeline); null keeps the default. */
+  sentenceFor?: (a: Activity) => string | null;
   className?: string;
 }) {
   const [filter, setFilter] = useState<TimelineFilter>(defaultFilter);
@@ -304,7 +307,11 @@ export function Timeline({
           <p className="flex flex-wrap items-baseline gap-x-6">
             {nested ? null : <ActorName actor={a.actor} />}
             <span className="text-fg">
-              {linkName(activitySentence(a, { withInvestor: withInvestor || nested, currency }), a, withInvestor || nested ? investorHref : undefined)}
+              {linkName(
+                (!nested && sentenceFor?.(a)) || activitySentence(a, { withInvestor: withInvestor || nested, currency }),
+                a,
+                withInvestor || nested ? investorHref : undefined,
+              )}
               {roundLabel?.(a) ? <span className="text-muted"> · in {roundLabel(a)}</span> : null}
             </span>
             {renderExtra ? <span className="ml-auto">{renderExtra(a)}</span> : null}

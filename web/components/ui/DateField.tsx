@@ -15,7 +15,7 @@ import {
   todayIn,
   weekday,
 } from "@/lib/dates";
-import { formatDate } from "@/lib/format";
+import { daysBetween, formatDate } from "@/lib/format";
 
 import { useAnchoredPopover, useDismissOnOutsidePointer } from "./Combobox";
 import { Kbd } from "./Kbd";
@@ -41,6 +41,16 @@ export interface DateFieldProps {
   /** Bounds for the calendar and typed dates (ISO). */
   min?: string;
   max?: string;
+  /**
+   * A past date is late (a follow-up): the trigger reads "Overdue 2d · Oct 10" in `bad`, the
+   * way the card and Follow up now say it, instead of a neutral "Oct 10 · 2d ago".
+   */
+  pastIsOverdue?: boolean;
+  /**
+   * The empty trigger's text: `faint` (a form placeholder) or `muted` when the empty trigger
+   * is itself the action ("Pick…" in Triage must not look disabled).
+   */
+  placeholderTone?: "faint" | "muted";
   className?: string;
 }
 
@@ -80,6 +90,8 @@ export function DateField({
   "aria-invalid": invalid,
   min,
   max,
+  pastIsOverdue,
+  placeholderTone = "faint",
   className,
 }: DateFieldProps) {
   const auto = useId();
@@ -221,7 +233,9 @@ export function DateField({
   const month = Number(cursor.slice(5, 7));
   const year = Number(cursor.slice(0, 4));
 
-  const display = valid ? dateFieldLabel(valid, todayIn(timeZone)) : null;
+  const nowDay = todayIn(timeZone);
+  const late = pastIsOverdue && valid ? daysBetween(valid, nowDay) : 0;
+  const display = valid ? (late > 0 ? `Overdue ${late}d · ${formatDate(valid, nowDay)}` : dateFieldLabel(valid, nowDay)) : null;
 
   return (
     <div ref={wrap} className={cn("relative min-w-0", className)}>
@@ -261,11 +275,16 @@ export function DateField({
           "disabled:cursor-not-allowed disabled:opacity-60 data-[invalid=true]:border-bad",
           TONE[tone],
           open && "border-accent",
+          late > 0 && !open && "border-bad/50",
           size === "sm" ? "h-28 px-8 text-sm" : "h-32 px-9 text-base",
           clearable && valid && "pr-28",
         )}
       >
-        <span id={valueId} className={cn("min-w-0 flex-1 truncate", valid ? "t-data" : "text-faint")} suppressHydrationWarning>
+        <span
+          id={valueId}
+          className={cn("min-w-0 flex-1 truncate", valid ? cn("t-data", late > 0 && "text-bad") : placeholderTone === "muted" ? "text-muted" : "text-faint")}
+          suppressHydrationWarning
+        >
           {display ?? placeholder}
         </span>
       </button>

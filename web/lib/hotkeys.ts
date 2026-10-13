@@ -42,6 +42,11 @@ export interface HotkeyOptions {
    * page's even when both mount together (a deep-linked sheet registers before its parent).
    */
   priority?: number;
+  /**
+   * Listed in the `?` sheet but never handled here: keys a component handles itself (the
+   * board's M and Alt+→ live on the focused card's onKeyDown).
+   */
+  listOnly?: boolean;
 }
 
 export interface HotkeyInfo {
@@ -105,7 +110,7 @@ export function modalOpen(): boolean {
 }
 
 function eligible(r: Registration, typing: boolean, inPopup: boolean, modal: boolean): boolean {
-  if (r.opts.enabled === false) return false;
+  if (r.opts.enabled === false || r.opts.listOnly) return false;
   if ((typing || inPopup) && !r.opts.allowInInputs) return false;
   if (modal && r.opts.blockedByModals) return false;
   return true;
@@ -170,7 +175,7 @@ function install() {
 export function useHotkey(combo: string, handler: (e: KeyboardEvent) => void, opts: HotkeyOptions = {}): void {
   const ref = useRef(handler);
   ref.current = handler;
-  const { enabled = true, allowInInputs, description, group, blockedByModals, allowDefault, priority } = opts;
+  const { enabled = true, allowInInputs, description, group, blockedByModals, allowDefault, priority, listOnly } = opts;
   useEffect(() => {
     if (!enabled) return;
     install();
@@ -179,7 +184,7 @@ export function useHotkey(combo: string, handler: (e: KeyboardEvent) => void, op
       combo,
       steps: parseCombo(combo),
       handler: ref,
-      opts: { enabled, allowInInputs, description, group, blockedByModals, allowDefault, priority },
+      opts: { enabled, allowInInputs, description, group, blockedByModals, allowDefault, priority, listOnly },
     };
     regs.push(reg);
     emit();
@@ -188,7 +193,7 @@ export function useHotkey(combo: string, handler: (e: KeyboardEvent) => void, op
       if (i >= 0) regs.splice(i, 1);
       emit();
     };
-  }, [combo, enabled, allowInInputs, description, group, blockedByModals, allowDefault, priority]);
+  }, [combo, enabled, allowInInputs, description, group, blockedByModals, allowDefault, priority, listOnly]);
 }
 
 const subscribe = (l: () => void) => {

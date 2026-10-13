@@ -38,10 +38,10 @@ under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` 
 | `line` | `#D5DCE6` | `#2A3444` | Every 1px border and row rule. |
 | `fg` | `#16202E` | `#E6EBF2` | Primary text; "ink" fills (active segmented button, toast). |
 | `muted` | `#5B6778` | `#9AA6B8` | Secondary text, labels, metadata. Passes 4.5:1 on canvas, surface and sunk. |
-| `faint` | `#8994A5` | `#6E7A8C` | **Not for meaningful text** (about 3:1). Placeholders, disabled, decorative dots, empty fit pips. |
+| `faint` | `#8994A5` | `#6E7A8C` | **Not for meaningful text** (about 3:1). Placeholders, disabled, decorative dots, filled fit pips (on `line` for empty ones). |
 | `accent` | `#2F55D4` | `#7C9BFF` | Cobalt: links, the primary button, focus ring, selected state, drop target. |
 | `accent-ink` | `#FFFFFF` | `#0F141C` | Text on an accent fill. |
-| `accent-soft` | `#E3E9FB` | `#1F2A4A` | Row hover, type chip, selected row. |
+| `accent-soft` | `#E3E9FB` | `#1F2A4A` | Row hover, selected row. (Never a static label: the type chip is neutral, outlined `line` with `muted` text.) |
 
 ### 1.2 Color: meaning
 
@@ -50,7 +50,7 @@ under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` 
 | `hot` / `hot-soft` | `#C2410C` / `#FDE7DB` | `#FF8A5B` / `#3A2218` | Priority chip "Hot" (fit 5). |
 | `warm` / `warm-soft` | `#B7791F` / `#FBF0D5` | `#F0B54E` / `#33291A` | Priority "Warm" (fit 4); follow-up "soon" chip. |
 | `maybe` / `maybe-soft` | `#6B7A8F` / `#E9EDF2` | `#A3AFC0` / `#232B38` | Priority "Maybe" (fit 3). |
-| `good` / `good-soft` | `#15803D` / `#DCF3E3` | `#4ADE80` / `#15301F` | Committed money, meter fill, "Saved". (Fit pips are `muted` ink, §3.7.) |
+| `good` / `good-soft` | `#15803D` / `#DCF3E3` | `#4ADE80` / `#15301F` | Committed money, meter fill, "Saved". (Fit pips are quiet `faint` ink, §3.7.) |
 | `bad` / `bad-soft` | `#B42318` / `#FBE1DE` | `#F87171` / `#3A1C1C` | Overdue follow-up, errors, destructive buttons. |
 | `hot-ink`, `warm-ink`, `maybe-ink`, `good-ink` | `#A3360A`, `#8A5A0F`, `#4F5D70`, `#11652F` | same as the base hue | **Text** in these hues: chip labels on the soft tints, follow-up dates and amounts on canvas or surface. They clear 4.5:1 in light mode (5.2–6.1:1), where the base hues do not (3.2–4.4:1). Fills, the meter, pips and stage dots keep the base hue. Never write `text-warm` etc.; write `text-warm-ink`. |
 | `agent` / `agent-soft` | `#A1307A` / `#F8E4F0` | `#F08BC8` / `#3A1E31` | **Orchid = an agent did this.** Agent names, agent timeline nodes, agent-made rows (a 2px left rule), the agent marker glyph. Text, rules and soft tints only; never a button fill. |
@@ -175,9 +175,11 @@ UI. It shows up through position and through the ledger math.
 | 3 | Maybe | `maybe-soft` / `maybe` |
 | 0–2 | Low fit | `sunk` bg, `muted` text (not `faint`; it must stay readable) |
 
-Fit has **one encoding per place**: the FitMeter (five 6×10px pips in `muted` ink) on cards,
+Fit has **one encoding per place**: the FitMeter (five 5×9px pips, `faint` on `line`) on cards,
 rows, the Triage pane and the sheet; the priority words (Hot, Warm…) only where fit is grouped
-(group headers, the priority bar, filters). Never a Hot chip, pips and "5/5" side by side.
+(group headers, filters). Never a Hot chip, pips and "5/5" side by side. Inside a single-fit
+group (Hot, Warm, Maybe in the Triage queue, the grouped New column and the phone list) rows
+carry no pips: the header already says it. Only Low fit (0–2) varies, so only it shows pips.
 
 ### 2.3 Follow-up state
 | State | Render |
@@ -233,7 +235,7 @@ tokens, and works with the keyboard. The live inventory is `/design` (dev only, 
 | 3.4 | `RoundPicker` | The prototype `.round-pick`: a `sunk` pill track with surface-pill active items, plus a "+ Round" ghost item at the end (opens the new-round dialog, for editors). It overflows into a menu after 4 rounds. Closed rounds are listed last at full strength (`muted`) with a mono `closed` suffix, never faded (≥ 4.5:1). When the track would overlap the nav (measured with a `ResizeObserver`, not a breakpoint) it collapses to "Seed ▾", a Menu with every round (closed ones under a CLOSED label) and "+ New round". |
 | 3.5 | `Chip` | §2.4. Props `tone`, `size` (sm 11.5px is the default). Never interactive unless rendered as a `<button>` (the due strip), and then it gets the hover underline. |
 | 3.6 | `StageDot` | A 9px circle, `bg-stage-<color>`, `aria-hidden`. Always next to a text label. |
-| 3.7 | `FitMeter` | Five 6×10px pips (radius 2), filled `muted` (neutral ink: green is money), empty `line`, with an optional "4/5" mono label. Hidden where it cannot vary (the won and lost stages, a column where every card has the same fit). Read-only by default. `editable` turns it into a radio group of six (0–5), where the arrow keys change the value. |
+| 3.7 | `FitMeter` | Five 5×9px pips (radius 1.5), filled `faint`, empty `line`: quieter than the name next to it (a column of fives must not read as a barcode). Hidden where it cannot vary (the won and lost stages, a column or group where every row has the same fit). Read-only by default. `editable` (the sheet) is a radio group of six (0–5) in the same colors, with no "5/5" beside it: an unrated fit reads "Not rated", a rated one offers a small ✕ on hover or focus to clear it. |
 | 3.8 | `Meter` | Ledger meter: an 8px `sunk` pill track with a `good` fill (width animated). Props `value`, `max`, `label`. Over 100%: the fill is full and a mono "112% of target" appears in `good`. |
 | 3.9 | `FunnelBar` | The prototype funnel: a 26px bar of stage-colored flex segments (radius 6 on the container), with a legend row under it (dot, label, bold count). Every segment and legend item is a button that filters the pipeline by stage. Zero-count stages appear only in the legend. |
 | 3.10 | `Ledger` | The round summary strip. Grid `1.2fr / 2fr` (stacked under 860px). Left: mono label "COMMITTED TOWARD SEED", `amount` "$750,000 of $2,000,000", Meter, a sub-row of stats (`b` tabular): "18 in conversation · 4 committed · $400k soft · 41 days to close". Right: label "PIPELINE", FunnelBar, a due strip ("Follow up now:" + up to 8 due chips + "+3 more"). Full variant (with the FunnelBar) on the overview only. The pipeline page uses its own two states (`PipelineLedger`, design/pipeline-redo/DECISION.md §5.1): before money exists (soft + committed = 0 and nobody in the won stage) a 52px **strip** (Target · Sorted meter "0 of 411" · "40 Hot and Warm are still New. Start with them." · [Start triage T]; no "$0 committed" cell; under 1000px of page width the Target cell steps aside); once money exists the **desk** (Committed with the soft tint · Follow up now · Next up: "63 researched, not contacted yet · next Bram Keel", "38 still New, 9 Hot or Warm → Triage", gone quiet, no follow-up). The desk is full from 1180px of page width and one compact band below that (1024px, or the split sheet open). Widths are the page's, measured, not the viewport's. No FunnelBar on the pipeline page. |
@@ -323,9 +325,19 @@ This is the prototype page, made real, with the pipeline redo on top
   weeks", `f 2`), X select, Enter file, L LinkedIn). The pane also offers LinkedIn (or a
   LinkedIn search), "Draft intro email" (a `mailto:`), others at the same firm and the next
   three in the queue. Counts everywhere are "left" (still New, not skipped). A bulk move keeps
-  the cursor on an undecided row. The rail shows where everyone is with this session's +N (no
-  keys; the decision panel is the one key map) and the pace (gaps clamped to 8–120s). The next
-  two investors are prefetched. Phones get a full-screen takeover.
+  the cursor on an undecided row. The rail shows the money and the clock (the terms are in the
+  title row), where everyone is with this session's +N (empty stages fold into "4 other stages
+  empty"; no keys, the decision panel is the one key map) and the pace (gaps clamped to
+  20–120s). The next two investors are prefetched. Phones get a full-screen takeover.
+- Triage decides, it does not invent history: filing someone in a talking stage (Contacted and
+  later, or Committed) asks once ("Has Calla heard from you?", the same key again confirms,
+  "Shortlist in Researching" is one click, "don't ask again" lasts the session), unless the
+  intro email was just drafted. The primary buttons carry their meaning ("Shortlist, reach out
+  later", "You already reached out", "Not this round"). No stage is preselected: focus moves to
+  the panel only once someone Tabs into it.
+- Filed rows fold into one "12 sorted · 8 Contacted, 4 Passed" line per group (Show unfolds
+  them); J/K walk the rows still in New. A value every investor in the queue shares (the
+  source "SF Tech Week") and a history that is only the shared import are not shown.
 - An Undo writes `data.undo` on its activities; a timeline drops the change and its undo as a
   pair (`dropUndone`), so an undone move leaves no history rows.
 - "Get set up" lives in the title row as a small "SET UP 1/4" Menu (all four steps and
@@ -333,6 +345,15 @@ This is the prototype page, made real, with the pipeline redo on top
   auto-Triage note shows once per round and browser.
 - The bulk bar is pinned to the bottom of the work surface (Board and Table) and lifts the
   toast.
+- The title row's right side is one group: SET UP n/4, Add investor (Triage), Edit round
+  (`RoundHeader` `aside`). "My investors", the Owner field and the bulk Owner menu appear only
+  once the workspace has a second member.
+- The investor sheet opens the same way from every view (a split pane at ≥1280px, with "N of M"
+  over the list it came from, the Triage queue included). For someone not contacted yet
+  (an open-kind stage) Contact and Facts come right after the follow-up, and Money folds into
+  one line until they are talking or a value exists. An overdue follow-up reads "Overdue 2d ·
+  Oct 10" in `bad` (`DateField pastIsOverdue`). An import shows once on a timeline ("imported
+  Calla from x.csv with 410 others", `collapseImportRuns`).
 - Phones have no board: a Sorted card (or the compact ledger), Follow up now, stage pills
   and one stage as a list (grouped by priority when New is long).
 ```
