@@ -7,6 +7,8 @@
  * whole units of the round currency (250000 = $250k). `?` fields may be absent or null.
  */
 
+import type { ResearchSummary } from "./research";
+
 export type UUID = string;
 /** RFC 3339 UTC timestamp, e.g. "2026-10-10T17:04:05Z". */
 export type Timestamp = string;
@@ -54,7 +56,9 @@ export type ActivityKind =
   | "investor_updated"
   | "added_to_round"
   | "removed_from_round"
-  | "participant_updated";
+  | "participant_updated"
+  /** Research: `data.event` is "identity" or "dossier". */
+  | "research";
 export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
 
 /* ============================== labels (SPEC §3.8) ============================== */
@@ -286,6 +290,8 @@ export interface Investor extends InvestorCompact {
   source?: string | null;
   warm_intro_by?: string | null;
   rounds: ParticipationBrief[];
+  /** Identity, verdict, dossier date, pending suggestions and "from research" fields. */
+  research?: ResearchSummary | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }

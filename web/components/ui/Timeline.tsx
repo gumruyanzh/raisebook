@@ -100,6 +100,20 @@ export function activitySentence(
       const list = changes.length ? changes.join(", ").replaceAll("_", " ") : "round details";
       return `changed ${list}${who ? ` for ${who}` : ""}`;
     }
+    case "research": {
+      const filled = Array.isArray(d.filled) ? d.filled.length : 0;
+      const suggested = Array.isArray(d.suggested) ? d.suggested.length : 0;
+      const tail = [filled ? `filled ${filled === 1 ? "1 field" : `${filled} fields`}` : "", suggested ? `suggested ${suggested === 1 ? "1 change" : `${suggested} changes`}` : ""]
+        .filter(Boolean)
+        .join(", ");
+      if (d.event === "identity") {
+        const verb = s(d.status) === "matched" ? "matched" : "confirmed";
+        return `${verb} ${who ? `${who}'s` : "the"} identity${tail ? `; ${tail}` : ""}`;
+      }
+      const verdict = s(d.verdict);
+      const word = verdict === "strong" ? "Strong fit" : verdict === "possible" ? "Possible fit" : verdict === "poor" ? "Poor fit" : "";
+      return `researched ${who || "them"}${word ? `: ${word}` : ""}${tail ? `; ${tail}` : ""}`;
+    }
     default:
       return String(a.kind).replaceAll("_", " ");
   }
@@ -316,7 +330,7 @@ export function Timeline({
             </span>
             {renderExtra ? <span className="ml-auto">{renderExtra(a)}</span> : null}
           </p>
-          {a.body ? <p className="mt-3 max-w-[65ch] whitespace-pre-wrap text-muted">{a.body}</p> : null}
+          {a.body && a.kind !== "research" ? <p className="mt-3 max-w-[65ch] whitespace-pre-wrap text-muted">{a.body}</p> : null}
         </div>
       </li>
     );
