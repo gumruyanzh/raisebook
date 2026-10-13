@@ -214,7 +214,7 @@ export function AppKeyboard({
     if (!ws) return undefined;
     const client = api.ws(ws.slug);
     return async (q: string, signal: AbortSignal): Promise<PaletteItem[]> => {
-      const page = await client.get<{ data: Investor[] }>("/v1/investors", { q, limit: 25, sort: "name" }, { signal });
+      const page = await client.get<{ data: Investor[] }>("/v1/investors", { q, limit: 25, sort: "relevance" }, { signal });
       const ranked = rankBy(page.data, q, (i) => i.name, (i) => [i.firm ?? "", i.email ?? "", i.title ?? ""]);
       return ranked.slice(0, 12).map((inv) => {
         const here = activeRound ? inv.rounds.find((r) => r.round_slug === activeRound) : inv.rounds[0];
