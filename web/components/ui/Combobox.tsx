@@ -84,6 +84,8 @@ export interface ComboboxProps<V = string> {
   fullScreenOnMobile?: boolean;
   /** Called when the popover opens (e.g. to load data lazily). */
   onOpen?: () => void;
+  /** Minimum popover width in px (default 320); it is never narrower than the trigger. */
+  popoverMinWidth?: number;
   className?: string;
 }
 
@@ -271,6 +273,7 @@ export function Combobox<V = string>({
   maxResults = 200,
   fullScreenOnMobile = true,
   onOpen,
+  popoverMinWidth = 320,
   className,
 }: ComboboxProps<V>) {
   const auto = useId();
@@ -290,7 +293,7 @@ export function Combobox<V = string>({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
-  const placement = useAnchoredPopover(wrap, open, { fullScreen: fullScreenOnMobile });
+  const placement = useAnchoredPopover(wrap, open, { fullScreen: fullScreenOnMobile, minWidth: popoverMinWidth });
   const sheet = placement?.sheet ?? false;
 
   // The last option the user picked (async sources may not list it again).
@@ -309,7 +312,7 @@ export function Combobox<V = string>({
   useEffect(() => {
     if (!open || !loadOptions) return;
     const my = ++reqId.current;
-    setAsyncState((s) => ({ ...s, status: "loading", query }));
+    setAsyncState((s) => ({ status: "loading", query, items: s.query === query ? s.items : [] }));
     const t = setTimeout(
       () => {
         ctrl.current?.abort();
@@ -333,11 +336,12 @@ export function Combobox<V = string>({
 
   /* ---- results ---- */
   const results = useMemo<ComboboxOption<V>[]>(() => {
-    if (loadOptions) return asyncState.items.slice(0, maxResults);
+    // Only results for the current query: while a newer query loads, older results are hidden.
+    if (loadOptions) return asyncState.query === query ? asyncState.items.slice(0, maxResults) : [];
     const all = options ?? [];
     if (!query.trim()) return all.slice(0, Math.max(maxResults, all.length));
     return (filter ? filter(all, query) : rankOptions(all, query)).slice(0, maxResults);
-  }, [loadOptions, asyncState.items, options, query, filter, maxResults]);
+  }, [loadOptions, asyncState.items, asyncState.query, options, query, filter, maxResults]);
 
   const showPinned = !query.trim() && pinned && pinned.length > 0;
   const { rows, optionRows } = useMemo(

@@ -30,7 +30,7 @@ export function RoundSettings({ round: initial }: { round: Round }) {
   const base = `/w/${encodeURIComponent(workspace.slug)}`;
 
   const saveTerms = async () => {
-    const { body, errors: errs } = roundBody(draft);
+    const { body, errors: errs } = roundBody(draft, { update: true });
     setErrors(errs);
     if (!body) return;
     setState("saving");

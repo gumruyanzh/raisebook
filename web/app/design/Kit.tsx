@@ -67,6 +67,7 @@ import { STAGE_COLORS } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { formatDate, money, moneyCompact } from "@/lib/format";
 
+import { PickersDemo } from "./Pickers";
 import { ACTIVITIES, CARDS, MCP_SNIPPETS, NOW, STAGES, TODAY, TZ } from "./sample";
 
 /* ---------- layout helpers ---------- */
@@ -76,6 +77,7 @@ const SECTIONS = [
   ["type", "Type"],
   ["buttons", "Buttons"],
   ["fields", "Fields"],
+  ["pickers", "Pickers"],
   ["chips", "Chips and stages"],
   ["meters", "Meters"],
   ["ledger", "Ledger"],
@@ -543,6 +545,14 @@ export function Kit() {
               </div>
             )}
           </Specimen>
+        </Section>
+
+        <Section
+          id="pickers"
+          title="Pickers"
+          note="Combobox for lists longer than about 12 options or whenever search helps; native Select for short fixed lists. Keyboard: ↑↓ wrap, Home/End, PageUp/PageDown, Enter, Esc (clears the query first), Tab selects and moves on. Under 640px they open full screen."
+        >
+          <Specimen>{() => <PickersDemo />}</Specimen>
         </Section>
 
         <Section id="chips" title="Chips and stages" note="Stage colors appear only as dots, funnel segments and column rules, never as fills behind text.">

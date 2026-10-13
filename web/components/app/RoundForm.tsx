@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
-import { Field, Input, Segmented, Select, Textarea } from "@/components/ui";
+import { CurrencyPicker, DateField, Field, Input, Segmented, Textarea } from "@/components/ui";
 import type { InputProps } from "@/components/ui/Field";
 import type { RoundInput } from "@/lib/api/rounds";
 import type { Instrument, Round } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
+import { currencySymbol } from "@/lib/format";
+import { useOptionalWorkspace } from "@/lib/session";
+import { browserTimeZone } from "@/lib/tz";
 
 import { moneyInput, parseMoney } from "./util";
-
-export const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "SGD", "INR", "CHF", "SEK", "JPY", "ILS", "BRL", "AMD"];
 
 export interface RoundDraft {
   name: string;
@@ -26,7 +27,8 @@ export interface RoundDraft {
 export function draftFromRound(r?: Partial<Round> | null, defaultCurrency = "USD"): RoundDraft {
   return {
     name: r?.name ?? "Seed",
-    target: moneyInput(r?.target_amount ?? null),
+    // 0 is how the API stores "no target"; show it as empty.
+    target: r?.target_amount ? moneyInput(r.target_amount) : "",
     currency: r?.currency ?? defaultCurrency,
     instrument: r?.instrument ?? "safe",
     cap: moneyInput(r?.valuation_cap ?? null),
@@ -38,9 +40,13 @@ export function draftFromRound(r?: Partial<Round> | null, defaultCurrency = "USD
 
 /**
  * Validate a draft into an API body. Returns field errors keyed by draft field when the input
- * cannot be read.
+ * cannot be read. An empty target is left out on create (the round has no target) and sent as
+ * 0 on update (which clears it: the API stores "no target" as 0).
  */
-export function roundBody(d: RoundDraft): { body?: RoundInput & { name: string }; errors: Partial<Record<keyof RoundDraft, string>> } {
+export function roundBody(
+  d: RoundDraft,
+  { update = false }: { update?: boolean } = {},
+): { body?: RoundInput & { name: string }; errors: Partial<Record<keyof RoundDraft, string>> } {
   const errors: Partial<Record<keyof RoundDraft, string>> = {};
   const name = d.name.trim();
   if (!name) errors.name = "Give the round a name, like Seed or Pre-seed.";
@@ -52,34 +58,18 @@ export function roundBody(d: RoundDraft): { body?: RoundInput & { name: string }
   if (Number.isNaN(pre)) errors.preMoney = "Use a number like 12M.";
   if (Object.keys(errors).length) return { errors };
   const priced = d.instrument === "priced";
-  return {
-    errors,
-    body: {
-      name,
-      target_amount: target ?? 0,
-      currency: d.currency,
-      instrument: d.instrument,
-      valuation_cap: priced ? null : (cap || null),
-      pre_money_valuation: priced ? (pre || null) : null,
-      target_close_on: d.closeOn || null,
-      notes: d.notes.trim() ? d.notes : null,
-    },
+  const body: RoundInput & { name: string } = {
+    name,
+    currency: d.currency,
+    instrument: d.instrument,
+    valuation_cap: priced ? null : (cap || null),
+    pre_money_valuation: priced ? (pre || null) : null,
+    target_close_on: d.closeOn || null,
+    notes: d.notes.trim() ? d.notes : null,
   };
-}
-
-function currencySymbol(currency: string): string {
-  try {
-    const part = new Intl.NumberFormat("en", {
-      style: "currency",
-      currency,
-      currencyDisplay: "narrowSymbol",
-    })
-      .formatToParts(0)
-      .find((p) => p.type === "currency");
-    return part?.value ?? currency;
-  } catch {
-    return currency;
-  }
+  if (target !== null) body.target_amount = target;
+  else if (update) body.target_amount = 0;
+  return { errors, body };
 }
 
 /** A money input with the currency symbol inside the box, so "2,000,000" reads as money. */
@@ -120,6 +110,7 @@ export function RoundFields({
   showNotes,
   hint,
   className,
+  timeZone,
 }: {
   draft: RoundDraft;
   onChange: (d: RoundDraft) => void;
@@ -128,16 +119,19 @@ export function RoundFields({
   showNotes?: boolean;
   hint?: ReactNode;
   className?: string;
+  /** Calendar for the close date's quick picks; defaults to the workspace's (or the browser's). */
+  timeZone?: string;
 }) {
   const set = <K extends keyof RoundDraft>(k: K, v: RoundDraft[K]) => onChange({ ...draft, [k]: v });
   const priced = draft.instrument === "priced";
-  const [curList] = useState(() => (CURRENCIES.includes(draft.currency) ? CURRENCIES : [draft.currency, ...CURRENCIES]));
+  const ws = useOptionalWorkspace();
+  const tz = timeZone ?? ws?.workspace.timezone ?? browserTimeZone();
   return (
     <div className={cn("grid grid-cols-1 gap-12 sm:grid-cols-2", className)}>
       <Field label="Round name" error={errors.name} className="sm:col-span-2">
         <Input value={draft.name} maxLength={80} disabled={disabled} onChange={(e) => set("name", e.target.value)} placeholder="Seed" />
       </Field>
-      <Field label="Target amount" error={errors.target} hint="2M, 750k or 2,000,000 all work.">
+      <Field label="Target amount" optional error={errors.target} hint="2M, 750k or 2,000,000 all work.">
         <MoneyInput
           currency={draft.currency}
           value={draft.target}
@@ -151,13 +145,7 @@ export function RoundFields({
         />
       </Field>
       <Field label="Currency">
-        <Select value={draft.currency} disabled={disabled} onChange={(e) => set("currency", e.target.value)}>
-          {curList.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </Select>
+        <CurrencyPicker value={draft.currency} disabled={disabled} onChange={(c) => set("currency", c)} />
       </Field>
       <div className="flex flex-col gap-4 sm:col-span-2">
         <span className="text-[12px] text-muted" id="instrument-label">
@@ -201,7 +189,14 @@ export function RoundFields({
         </Field>
       )}
       <Field label="Target close date" optional>
-        <Input type="date" mono max="9999-12-31" value={draft.closeOn} disabled={disabled} onChange={(e) => set("closeOn", e.target.value)} />
+        <DateField
+          value={draft.closeOn || null}
+          timeZone={tz}
+          quickPicks="deadline"
+          placeholder="Set a close date"
+          disabled={disabled}
+          onChange={(d) => set("closeOn", d ?? "")}
+        />
       </Field>
       {showNotes ? (
         <Field label="Notes" optional className="sm:col-span-2">

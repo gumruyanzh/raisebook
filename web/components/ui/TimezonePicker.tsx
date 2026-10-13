@@ -152,6 +152,7 @@ export function TimezonePicker({
       pinned={pinned}
       filter={filter}
       onOpen={() => setOpen(true)}
+      popoverMinWidth={460}
       onChange={(v) => v && onChange(canonicalZone(v))}
       searchPlaceholder="City, country, or UTC+4"
       emptyText={(q) => (

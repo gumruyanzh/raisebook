@@ -19,7 +19,7 @@ export interface CurrencyOption {
 }
 
 /** Pinned under the current value and the guess, in this order. */
-export const COMMON_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "SGD", "INR", "CHF", "ILS", "JPY"] as const;
+export const COMMON_CURRENCY_CODES = ["USD", "EUR", "GBP", "CAD", "AUD", "SGD", "INR", "CHF", "ILS", "JPY"] as const;
 
 /** Search keywords for the ~40 currencies founders use most ("|"-separated). */
 const KEYWORDS: Record<string, string> = {
@@ -77,8 +77,8 @@ const KEYWORDS: Record<string, string> = {
 
 /** Order for ties: the common ones first, then the ones with keywords, then A–Z. */
 const POPULAR = [
-  ...COMMON_CURRENCIES,
-  ...Object.keys(KEYWORDS).filter((c) => !(COMMON_CURRENCIES as readonly string[]).includes(c)),
+  ...COMMON_CURRENCY_CODES,
+  ...Object.keys(KEYWORDS).filter((c) => !(COMMON_CURRENCY_CODES as readonly string[]).includes(c)),
 ];
 
 /** Country (ISO 3166) → currency, for `guessCurrency`. Pairs packed as "CC:CUR". */

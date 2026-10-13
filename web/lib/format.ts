@@ -11,30 +11,60 @@ import type { FollowUpState, Priority } from "./api/types";
 
 const LOCALE = "en-US";
 
-function currencyFormatter(currency: string, opts: Intl.NumberFormatOptions = {}) {
+const FORMATTERS = new Map<string, Intl.NumberFormat>();
+
+/**
+ * Currency display: the locale's symbol (`$`, `€`, `CA$`), except where en-US only has the
+ * bare code and a narrow symbol exists (`NGN` → `₦`, `AMD` → `֏`, `SEK` → `kr`). A bare `$`
+ * is never borrowed this way (SGD stays `SGD`, not an ambiguous `$`).
+ */
+function currencyDisplay(currency: string): "symbol" | "narrowSymbol" {
   try {
-    return new Intl.NumberFormat(LOCALE, {
+    const sym = (d: "symbol" | "narrowSymbol") =>
+      new Intl.NumberFormat(LOCALE, { style: "currency", currency, currencyDisplay: d })
+        .formatToParts(0)
+        .find((p) => p.type === "currency")?.value;
+    const normal = sym("symbol");
+    if (normal !== currency) return "symbol";
+    const narrow = sym("narrowSymbol");
+    return narrow && narrow !== currency && narrow !== "$" ? "narrowSymbol" : "symbol";
+  } catch {
+    return "symbol";
+  }
+}
+
+function currencyFormatter(currency: string, opts: Intl.NumberFormatOptions = {}) {
+  const code = (currency || "USD").toUpperCase();
+  const key = `${code}|${JSON.stringify(opts)}`;
+  const hit = FORMATTERS.get(key);
+  if (hit) return hit;
+  let f: Intl.NumberFormat;
+  try {
+    f = new Intl.NumberFormat(LOCALE, {
       style: "currency",
-      currency: currency || "USD",
+      currency: code,
+      currencyDisplay: currencyDisplay(code),
       maximumFractionDigits: 0,
       ...opts,
     });
   } catch {
-    return new Intl.NumberFormat(LOCALE, {
+    f = new Intl.NumberFormat(LOCALE, {
       style: "currency",
       currency: "USD",
       maximumFractionDigits: 0,
       ...opts,
     });
   }
+  FORMATTERS.set(key, f);
+  return f;
 }
 
-/** Full amount: `$2,000,000`. Ledger, dashboard, `title` attributes. */
+/** Full amount: `$2,000,000`, `₦250,000`, `CHF 250,000`. Ledger, dashboard, `title` attributes. */
 export function money(amount: number | null | undefined, currency = "USD"): string {
   return currencyFormatter(currency).format(Math.round(amount ?? 0));
 }
 
-/** Currency symbol for a code (`USD` → `$`, `EUR` → `€`). */
+/** Currency symbol for a code (`USD` → `$`, `EUR` → `€`, `NGN` → `₦`, `CHF` → `CHF`). */
 export function currencySymbol(currency = "USD"): string {
   const part = currencyFormatter(currency)
     .formatToParts(0)
@@ -45,7 +75,9 @@ export function currencySymbol(currency = "USD"): string {
 /** Compact amount for cards, chips and tables: `$250k`, `$1.5M`, `$900`. */
 export function moneyCompact(amount: number | null | undefined, currency = "USD"): string {
   const n = Math.round(amount ?? 0);
-  const sym = currencySymbol(currency);
+  const raw = currencySymbol(currency);
+  // Letter symbols get a space: "CHF 250k", "kr 90k"; "$250k", "€1.5M" stay tight.
+  const sym = /\p{L}$/u.test(raw) ? `${raw}\u00a0` : raw;
   const abs = Math.abs(n);
   const sign = n < 0 ? "-" : "";
   const fmt = (v: number, suffix: string) => {

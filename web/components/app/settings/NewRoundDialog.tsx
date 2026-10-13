@@ -11,6 +11,14 @@ import { draftFromRound, roundBody, RoundFields, type RoundDraft } from "../Roun
 
 const DEFAULT_STAGES = "New → Researching → Contacted → Replied → Meeting → Diligence → Committed → Passed";
 
+const ROUND_NAMES = ["Seed", "Pre-seed", "Seed extension", "Series A", "Bridge", "Series B", "Series C"];
+
+/** The first usual round name that isn't taken yet ("Seed", then "Pre-seed"…), else "". */
+export function suggestRoundName(existing: string[]): string {
+  const taken = new Set(existing.map((n) => n.trim().toLowerCase()));
+  return ROUND_NAMES.find((n) => !taken.has(n.toLowerCase())) ?? "";
+}
+
 /** "New round": terms only; stages start from the defaults and are edited in round settings. */
 export function NewRoundDialog({
   open,
@@ -28,7 +36,7 @@ export function NewRoundDialog({
   onCreated: (r: Round) => void;
 }) {
   const toast = useToast();
-  const suggest = existingNames.some((n) => n.toLowerCase() === "seed") ? "" : "Seed";
+  const suggest = suggestRoundName(existingNames);
   const [draft, setDraft] = useState<RoundDraft>(() => ({ ...draftFromRound(null, defaultCurrency), name: suggest }));
   const [errors, setErrors] = useState<Partial<Record<keyof RoundDraft, string>>>({});
   const [busy, setBusy] = useState(false);

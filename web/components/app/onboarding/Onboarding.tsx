@@ -2,27 +2,74 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { Button, ButtonLink, Field, Input, Select, Wordmark } from "@/components/ui";
+import { Button, ButtonLink, CurrencyPicker, Field, Input, TimezonePicker, Wordmark } from "@/components/ui";
 import { api, ApiError, errorMessage, setCsrfToken } from "@/lib/api/client";
-import { createWorkspace, updateMe, updateWorkspace, type Workspace } from "@/lib/api/core";
+import { createWorkspace, updateMe, updateWorkspace, type Workspace, type WorkspaceUpdate } from "@/lib/api/core";
 import { createRound, getRound, updateRound } from "@/lib/api/rounds";
 import { cn } from "@/lib/cn";
+import { guessCurrency } from "@/lib/currency";
+import { browserTimeZone, canonicalZone, loadZoneData } from "@/lib/tz";
 
 import { draftFromRound, roundBody, RoundFields, type RoundDraft } from "../RoundForm";
 
 const DEFAULT_STAGES = "New → Researching → Contacted → Replied → Meeting → Diligence → Committed → Passed";
 
-function zones(): string[] {
+const enc = encodeURIComponent;
+
+const STEPS = ["Company", "Round", "Investors"] as const;
+
+/** "Acme Robotics' first round", "Kestrel's first round". */
+function possessive(name: string): string {
+  const n = name.trim();
+  return /s$/i.test(n) ? `${n}'` : `${n}'s`;
+}
+
+/**
+ * Whether the founder picked the default currency themselves (then the first round never
+ * overrides it). Kept per workspace in sessionStorage so a reload between steps keeps it.
+ */
+const TOUCHED_KEY = (slug: string) => `rb-onb-currency-touched:${slug}`;
+function readTouched(slug: string | null): boolean {
+  if (!slug) return false;
   try {
-    return (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? ["UTC"];
+    return sessionStorage.getItem(TOUCHED_KEY(slug)) === "1";
   } catch {
-    return ["UTC"];
+    return false;
+  }
+}
+function writeTouched(slug: string) {
+  try {
+    sessionStorage.setItem(TOUCHED_KEY(slug), "1");
+  } catch {
+    /* private mode: best effort */
   }
 }
 
-const enc = encodeURIComponent;
+type StepOneErrors = Partial<Record<"person" | "company", string>>;
+
+function Stepper({ step }: { step: number }) {
+  return (
+    <nav aria-label="Setup progress" className="min-w-0">
+      <ol className="t-micro m-0 flex list-none items-center gap-6 p-0 text-muted">
+        {STEPS.map((label, i) => {
+          const n = i + 1;
+          const current = n === step;
+          return (
+            <li key={label} className="flex items-center gap-6" aria-current={current ? "step" : undefined}>
+              {i > 0 ? <span aria-hidden>·</span> : null}
+              <span className={cn(current ? "font-medium text-fg" : n < step ? "text-muted" : "text-muted")}>
+                <span className="sr-only">{n < step ? "Done: " : current ? "Current step: " : ""}</span>
+                {label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
 
 /**
  * Onboarding (SYSTEM §4.11): 1 company → 2 first round → 3 how to bring investors in. The
@@ -51,21 +98,54 @@ export function Onboarding({
 
   const [person, setPerson] = useState(userName ?? "");
   const [company, setCompany] = useState(ws?.name ?? "");
-  const [tz, setTz] = useState("UTC");
-  const tzs = useMemo(zones, []);
+  // An existing workspace keeps its zone and currency (Back from step 2); only a new one starts
+  // from the browser's zone and a currency guessed from it.
+  const [tz, setTz] = useState(() => (ws ? canonicalZone(ws.timezone) : "UTC"));
+  const [currency, setCurrency] = useState(() => ws?.default_currency ?? "USD");
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  const [browserTz, setBrowserTz] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; code?: string } | null>(null);
+  const [stepOneErrors, setStepOneErrors] = useState<StepOneErrors>({});
   const [draft, setDraft] = useState<RoundDraft>(() => draftFromRound(null, ws?.default_currency ?? "USD"));
+  const [roundCurrencyTouched, setRoundCurrencyTouched] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof RoundDraft, string>>>({});
   const [sampleBusy, setSampleBusy] = useState(false);
+  const personRef = useRef<HTMLInputElement>(null);
+  const companyRef = useRef<HTMLInputElement>(null);
+  const currencyTouchedRef = useRef(false);
+  currencyTouchedRef.current = currencyTouched;
 
   useEffect(() => {
-    try {
-      setTz(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
-    } catch {
-      setTz("UTC");
-    }
+    const zone = browserTimeZone();
+    setBrowserTz(zone);
+    if (ws) return;
+    setTz(zone);
+    const locale = typeof navigator !== "undefined" ? navigator.language : undefined;
+    setCurrency(guessCurrency({ timeZone: zone, locale }));
+    // The zone → country table makes the guess right beyond the founder hubs.
+    loadZoneData().then(
+      () => setCurrency((c) => (currencyTouchedRef.current ? c : guessCurrency({ timeZone: zone, locale }))),
+      () => undefined,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Step 1 revisited (Back): start from what the workspace has now.
+  useEffect(() => {
+    if (step !== 1 || !ws) return;
+    setCompany(ws.name);
+    setTz(canonicalZone(ws.timezone));
+    setCurrency(ws.default_currency);
+    setCurrencyTouched(readTouched(ws.slug));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, ws?.slug]);
+
+  // A new round starts in the workspace currency (unless the founder already changed it).
+  useEffect(() => {
+    if (!ws || roundSlug || roundCurrencyTouched) return;
+    setDraft((d) => (d.currency === ws.default_currency ? d : { ...d, currency: ws.default_currency }));
+  }, [ws, roundSlug, roundCurrencyTouched]);
 
   const fail = (err: unknown) =>
     setError(err instanceof ApiError ? { message: err.message, code: err.code } : { message: errorMessage(err) });
@@ -75,7 +155,11 @@ export function Onboarding({
     if (step !== 2 || !wsSlug || !roundSlug) return;
     let live = true;
     getRound(api.ws(wsSlug), roundSlug)
-      .then((r) => live && setDraft(draftFromRound(r, r.currency)))
+      .then((r) => {
+        if (!live) return;
+        setDraft(draftFromRound(r, r.currency));
+        setRoundCurrencyTouched(true);
+      })
       .catch(() => undefined);
     return () => {
       live = false;
@@ -83,19 +167,31 @@ export function Onboarding({
   }, [step, wsSlug, roundSlug]);
 
   const createWs = async () => {
-    if (!person.trim()) return setError({ message: "Enter your name, so co-founders know who did what." });
-    if (!company.trim()) return setError({ message: "Enter your company's name." });
+    const errs: StepOneErrors = {};
+    if (!person.trim()) errs.person = "Enter your name, so co-founders know who did what.";
+    if (!company.trim()) errs.company = "Enter your company's name.";
+    setStepOneErrors(errs);
+    if (errs.person || errs.company) {
+      (errs.person ? personRef : companyRef).current?.focus();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       if (person.trim() !== (userName ?? "")) await updateMe(api, { name: person.trim() });
       if (ws) {
-        if (company.trim() !== ws.name) await updateWorkspace(api.ws(ws.slug), { name: company.trim(), timezone: tz });
+        const patch: WorkspaceUpdate = {};
+        if (company.trim() !== ws.name) patch.name = company.trim();
+        if (tz !== canonicalZone(ws.timezone)) patch.timezone = tz;
+        if (currency !== ws.default_currency) patch.default_currency = currency;
+        if (Object.keys(patch).length) await updateWorkspace(api.ws(ws.slug), patch);
+        if (currencyTouched) writeTouched(ws.slug);
         router.replace(`/onboarding?ws=${enc(ws.slug)}${roundSlug ? `&round=${enc(roundSlug)}` : ""}`);
         router.refresh();
         return;
       }
-      const w = await createWorkspace(api, { name: company.trim(), timezone: tz });
+      const w = await createWorkspace(api, { name: company.trim(), timezone: tz, default_currency: currency });
+      if (currencyTouched) writeTouched(w.slug);
       router.replace(`/onboarding?ws=${enc(w.slug)}`);
       router.refresh();
     } catch (err) {
@@ -107,7 +203,7 @@ export function Onboarding({
 
   const createFirstRound = async () => {
     if (!wsSlug) return;
-    const { body, errors: errs } = roundBody(draft);
+    const { body, errors: errs } = roundBody(draft, { update: !!roundSlug });
     setErrors(errs);
     if (!body) return;
     setBusy(true);
@@ -116,6 +212,11 @@ export function Onboarding({
       const r = roundSlug
         ? await updateRound(api.ws(wsSlug), roundSlug, body)
         : await createRound(api.ws(wsSlug), body);
+      // The first round's currency becomes the workspace default unless the founder chose one.
+      if (!roundSlug && ws && r.currency !== ws.default_currency && !readTouched(ws.slug)) {
+        await updateWorkspace(api.ws(wsSlug), { default_currency: r.currency }).catch(() => undefined);
+        router.refresh();
+      }
       router.replace(`/onboarding?ws=${enc(wsSlug)}&round=${enc(r.slug)}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === "duplicate") {
@@ -188,13 +289,14 @@ export function Onboarding({
             ← Back
           </Link>
         ) : null}
-        <span className={cn("t-micro text-muted", !backHref && "ml-auto")} aria-label={`Step ${step} of 3`}>
-          {step} / 3
+        <span className={cn(!backHref && "ml-auto")}>
+          <Stepper step={step} />
         </span>
       </div>
 
       {step === 1 ? (
         <form
+          noValidate
           className="flex flex-col gap-16"
           onSubmit={(e) => {
             e.preventDefault();
@@ -202,37 +304,63 @@ export function Onboarding({
           }}
         >
           <div>
-            <h1 className="t-display-m">What are you raising for?</h1>
+            <h1 className="t-display-m">Set up your company</h1>
             <p className="mt-6 text-muted">Your company gets its own private workspace. Co-founders can join it later.</p>
           </div>
-          <Field label="Your name" hint="Shown to co-founders on the timeline.">
+          <Field label="Your name" hint="Shown to co-founders on the timeline." error={stepOneErrors.person}>
             <Input
+              ref={personRef}
               autoFocus={!userName}
               value={person}
               maxLength={120}
               autoComplete="name"
-              required
-              onChange={(e) => setPerson(e.target.value)}
+              onChange={(e) => {
+                setPerson(e.target.value);
+                if (stepOneErrors.person) setStepOneErrors((x) => ({ ...x, person: undefined }));
+              }}
             />
           </Field>
-          <Field label="Company name" error={error ? { message: error.message, code: error.code } : null}>
-            <Input autoFocus={!!userName} value={company} maxLength={80} onChange={(e) => setCompany(e.target.value)} />
+          <Field label="Company name" error={stepOneErrors.company}>
+            <Input
+              ref={companyRef}
+              autoFocus={!!userName}
+              value={company}
+              maxLength={80}
+              autoComplete="organization"
+              onChange={(e) => {
+                setCompany(e.target.value);
+                if (stepOneErrors.company) setStepOneErrors((x) => ({ ...x, company: undefined }));
+              }}
+            />
           </Field>
-          <Field label="Timezone" hint="Follow-ups are due by this calendar.">
-            <Select value={tz} onChange={(e) => setTz(e.target.value)}>
-              {(tzs.includes(tz) ? tzs : [tz, ...tzs]).map((z) => (
-                <option key={z} value={z}>
-                  {z.replaceAll("_", " ")}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <div className="grid grid-cols-1 gap-16 sm:grid-cols-[3fr_2fr] sm:gap-12">
+            <Field label="Timezone" hint="Follow-ups are due by this calendar.">
+              <TimezonePicker value={tz} suggest={browserTz} onChange={setTz} />
+            </Field>
+            <Field label="Default currency" hint="New rounds start in it.">
+              <CurrencyPicker
+                value={currency}
+                suggestFrom={{ timeZone: tz, locale: typeof navigator !== "undefined" ? navigator.language : null }}
+                onChange={(c) => {
+                  setCurrency(c);
+                  setCurrencyTouched(true);
+                }}
+              />
+            </Field>
+          </div>
+          {error ? (
+            <p className="t-body-s text-bad" role="alert">
+              {error.message}
+              {error.code ? <span className="ml-6 font-mono text-micro">{error.code}</span> : null}
+            </p>
+          ) : null}
           <Button type="submit" variant="primary" size="lg" busy={busy ? "Saving…" : false} className="self-start">
             Continue
           </Button>
         </form>
       ) : step === 2 ? (
         <form
+          noValidate
           className="flex flex-col gap-16"
           onSubmit={(e) => {
             e.preventDefault();
@@ -241,9 +369,18 @@ export function Onboarding({
         >
           <div>
             <h1 className="t-display-m">Your round</h1>
-            <p className="mt-6 text-muted">{ws ? `${ws.name}'s first round.` : "The round you're raising now."} Everything here can change later.</p>
+            <p className="mt-6 text-muted">{ws ? `${possessive(ws.name)} first round.` : "Your first round."} Everything here can change later.</p>
           </div>
-          <RoundFields draft={draft} onChange={setDraft} errors={errors} hint={<>You can change stages later. We start you with {DEFAULT_STAGES}.</>} />
+          <RoundFields
+            draft={draft}
+            onChange={(d) => {
+              if (d.currency !== draft.currency) setRoundCurrencyTouched(true);
+              setDraft(d);
+            }}
+            errors={errors}
+            timeZone={ws ? canonicalZone(ws.timezone) : tz}
+            hint={<>You can change stages later. We start you with {DEFAULT_STAGES}.</>}
+          />
           {error ? (
             <p className="t-body-s text-bad">
               {error.message}

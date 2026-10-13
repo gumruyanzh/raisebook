@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { COMMON_CURRENCIES, currencyOption, currencyOptions, guessCurrency, type CurrencyOption } from "@/lib/currency";
+import { COMMON_CURRENCY_CODES, currencyOption, currencyOptions, guessCurrency, type CurrencyOption } from "@/lib/currency";
 import { rankOptions } from "@/lib/rank";
 import { loadZoneData, zoneDataLoaded } from "@/lib/tz";
 
@@ -92,7 +92,7 @@ export function CurrencyPicker({
     };
     add(code, "Current");
     if (guess) add(guess, "Suggested");
-    for (const c of COMMON_CURRENCIES) add(c, "Common");
+    for (const c of COMMON_CURRENCY_CODES) add(c, "Common");
     return out;
   }, [code, guess]);
 
@@ -111,6 +111,7 @@ export function CurrencyPicker({
       options={options}
       pinned={pinned}
       filter={(opts, q) => rankOptions(opts, q).map((o) => ({ ...o, group: undefined }))}
+      popoverMinWidth={360}
       onChange={(v) => v && onChange(v)}
       searchPlaceholder="Code, name, symbol or country"
       emptyText={(q) => <>No currency matches &ldquo;{q}&rdquo;. Try a code like EUR, a name, or a country.</>}

@@ -2,22 +2,23 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   Button,
   Chip,
+  CurrencyPicker,
   Field,
   Input,
   SaveState,
   SectionLabel,
-  Select,
   Table,
   TableScroll,
   TBody,
   Td,
   Th,
   THead,
+  TimezonePicker,
   Tr,
   useToast,
 } from "@/components/ui";
@@ -27,21 +28,9 @@ import type { Round, WorkspaceDetail } from "@/lib/api/types";
 import { INSTRUMENT_LABEL, ROUND_STATUS_LABEL } from "@/lib/api/types";
 import { money, num } from "@/lib/format";
 import { useWorkspace } from "@/lib/session";
+import { browserTimeZone, canonicalZone, zoneLabel } from "@/lib/tz";
 
-import { CURRENCIES } from "../RoundForm";
 import { NewRoundDialog } from "./NewRoundDialog";
-
-function timeZones(current: string): string[] {
-  let zones: string[] = [];
-  try {
-    zones = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
-  } catch {
-    zones = [];
-  }
-  if (!zones.includes("UTC")) zones = ["UTC", ...zones];
-  if (current && !zones.includes(current)) zones = [current, ...zones];
-  return zones;
-}
 
 /** Settings → General (SYSTEM §4.9): workspace name, timezone, currency, and the rounds list. */
 export function GeneralSettings({ detail, rounds: initialRounds }: { detail: WorkspaceDetail; rounds: Round[] }) {
@@ -53,24 +42,34 @@ export function GeneralSettings({ detail, rounds: initialRounds }: { detail: Wor
   const isAdmin = role === "owner";
   const canWrite = role !== "viewer";
   const [name, setName] = useState(detail.name);
-  const [tz, setTz] = useState(detail.timezone);
+  const [tz, setTz] = useState(canonicalZone(detail.timezone));
   const [currency, setCurrency] = useState(detail.default_currency);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [browserTz, setBrowserTz] = useState<string | null>(null);
   const rounds = initialRounds;
-  const zones = useMemo(() => timeZones(detail.timezone), [detail.timezone]);
   const newRound = params.get("new_round") === "1";
 
-  useEffect(() => {
-    try {
-      setBrowserTz(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    } catch {
-      setBrowserTz(null);
-    }
-  }, []);
+  useEffect(() => setBrowserTz(browserTimeZone()), []);
 
-  const dirty = name.trim() !== detail.name || tz !== detail.timezone || currency !== detail.default_currency;
+  const savedTz = canonicalZone(detail.timezone);
+  const dirty = name.trim() !== detail.name || tz !== savedTz || currency !== detail.default_currency;
+
+  // "Use it" saves the browser's zone straight away (SaveState shows the result).
+  const adoptBrowserZone = async (zone: string) => {
+    setTz(zone);
+    setState("saving");
+    setError(null);
+    try {
+      await updateWorkspace(client, { timezone: zone });
+      setState("saved");
+      toast.show(`Timezone set to ${zoneLabel(zone).city}.`);
+      router.refresh();
+    } catch (err) {
+      setState("error");
+      setError(err instanceof ApiError ? err.message : errorMessage(err));
+    }
+  };
 
   const save = async () => {
     if (!name.trim()) {
@@ -119,8 +118,13 @@ export function GeneralSettings({ detail, rounds: initialRounds }: { detail: Wor
               hint={
                 browserTz && browserTz !== tz && isAdmin ? (
                   <>
-                    Your browser is on <span className="font-mono">{browserTz}</span>.{" "}
-                    <button type="button" className="link border-0 bg-transparent p-0" onClick={() => setTz(browserTz)}>
+                    Your browser is on {zoneLabel(browserTz).city} (<span className="font-mono">{browserTz}</span>).{" "}
+                    <button
+                      type="button"
+                      className="link border-0 bg-transparent p-0"
+                      disabled={state === "saving"}
+                      onClick={() => void adoptBrowserZone(browserTz)}
+                    >
                       Use it
                     </button>
                   </>
@@ -129,22 +133,15 @@ export function GeneralSettings({ detail, rounds: initialRounds }: { detail: Wor
                 )
               }
             >
-              <Select value={tz} disabled={!isAdmin} onChange={(e) => setTz(e.target.value)}>
-                {zones.map((z) => (
-                  <option key={z} value={z}>
-                    {z.replaceAll("_", " ")}
-                  </option>
-                ))}
-              </Select>
+              <TimezonePicker value={tz} suggest={browserTz} disabled={!isAdmin} onChange={setTz} />
             </Field>
             <Field label="Default currency" hint="New rounds and check sizes use it.">
-              <Select value={currency} disabled={!isAdmin} onChange={(e) => setCurrency(e.target.value)}>
-                {(CURRENCIES.includes(currency) ? CURRENCIES : [currency, ...CURRENCIES]).map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </Select>
+              <CurrencyPicker
+                value={currency}
+                disabled={!isAdmin}
+                suggestFrom={{ timeZone: tz, locale: typeof navigator !== "undefined" ? navigator.language : null }}
+                onChange={setCurrency}
+              />
             </Field>
             <div className="flex min-w-0 flex-col gap-4">
               <span className="text-[12px] text-muted">Workspace URL</span>
