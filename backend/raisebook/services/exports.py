@@ -33,6 +33,7 @@ from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant, RoundStage
 from raisebook.models.user import User
 from raisebook.models.workspace import Membership, Workspace
+from raisebook.services import ai_settings, company_profile
 from raisebook.services.csv_io import write_csv
 from raisebook.services.users import FORMER_MEMBER, display_names
 
@@ -611,5 +612,23 @@ async def export_workspace_json(
             for r in runs
         ],
     }
+    doc["research"] = await _research_dict(db, ws)
     name = f"raisebook-{ws.slug}-{_stamp(ws, now)}.json"
     return ExportFile(name, "application/json", _json(doc), len(investors))
+
+
+async def _research_dict(db: AsyncSession, ws: WorkspaceContext) -> dict[str, Any]:
+    """Research settings and the company profile. Never key material, not even its last 4."""
+    settings = await ai_settings.get_row(db, ws.workspace_id)
+    return {
+        "company_profile": company_profile.export_dict(await company_profile.get_profile(db, ws)),
+        "ai_settings": None
+        if settings is None
+        else {
+            "preset": settings.preset,
+            "identity_model": settings.identity_model,
+            "search_model": settings.search_model,
+            "writer_model": settings.writer_model,
+            "monthly_cap_usd": settings.monthly_cap_micros / 1_000_000,
+        },
+    }

@@ -16,6 +16,7 @@ real ``/mcp`` route), ``mcp_rpc(key, method, params)``, ``outbox`` (emails sent)
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -46,9 +47,17 @@ os.environ.update(
         "RAISEBOOK_SESSION_COOKIE_SECURE": "false",
         "RAISEBOOK_PUBLIC_BASE_URL": "http://localhost:8000",
         "RAISEBOOK_APP_URL": "http://localhost:3000",
+        # A throwaway KEK per test run (never a real one): seals OpenRouter keys in tests.
+        "RAISEBOOK_SECRETS_KEK": "k1:" + base64.urlsafe_b64encode(os.urandom(32)).decode(),
+        "RAISEBOOK_OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
     }
 )
-for _k in ("RAISEBOOK_SESSION_SECRET", "RAISEBOOK_SESSION_COOKIE_DOMAIN", "RAISEBOOK_ENV"):
+for _k in (
+    "RAISEBOOK_SESSION_SECRET",
+    "RAISEBOOK_SESSION_COOKIE_DOMAIN",
+    "RAISEBOOK_ENV",
+    "RAISEBOOK_SECRETS_KEK_PREVIOUS",
+):
     os.environ.pop(_k, None)
 
 from alembic.config import Config  # noqa: E402
@@ -148,6 +157,31 @@ def _reset_globals() -> Any:
     clock.freeze(None)
     ratelimit.set_backend(None)
     OUTBOX.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_openrouter_network() -> Any:
+    """No test reaches OpenRouter: an unmocked request fails the test (no real spend)."""
+    from raisebook.services import openrouter
+    from tests.research.openrouter_mock import refusing_transport
+
+    attempts: list[str] = []
+    openrouter.set_transport(refusing_transport(attempts))
+    yield
+    openrouter.set_transport(None)
+    assert not attempts, f"unmocked OpenRouter requests: {attempts}"
+
+
+@pytest.fixture
+def openrouter_mock() -> Any:
+    """A fake OpenRouter (``tests/research/openrouter_mock.OpenRouterMock``)."""
+    from raisebook.services import openrouter
+    from tests.research.openrouter_mock import OpenRouterMock
+
+    mock = OpenRouterMock()
+    openrouter.set_transport(mock.transport)
+    yield mock
+    openrouter.set_transport(None)
 
 
 @pytest.fixture

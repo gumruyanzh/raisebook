@@ -46,6 +46,7 @@ BucketKind = Literal[
     "auth_fail",
     "invite_user",
     "invite_user_new",
+    "ai_key",
 ]
 
 
@@ -73,6 +74,8 @@ LIMITS: dict[str, Limit] = {
     # than a day get the tighter ``invite_user_new`` bucket on top.
     "invite_user": Limit(20, 86400),
     "invite_user_new": Limit(5, 86400),
+    # Saving an OpenRouter key calls OpenRouter: per workspace, per hour.
+    "ai_key": Limit(10, 3600),
 }
 
 

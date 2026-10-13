@@ -22,6 +22,9 @@ API_MODULES: list[str] = [
     "raisebook.api.members",
     "raisebook.api.invites",
     "raisebook.api.api_keys",
+    # Investor research (docs/RESEARCH-PLAN.md): settings and company profile (Part 1).
+    "raisebook.api.ai_settings",
+    "raisebook.api.company_profile",
     # Import-Export+Ops (IE)
     "raisebook.api.imports",
     "raisebook.api.exports",

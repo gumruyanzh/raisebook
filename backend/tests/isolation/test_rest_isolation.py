@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from raisebook.models.activity import Activity
+from raisebook.models.ai import CompanyProfile, WorkspaceAiSettings
 from raisebook.models.investor import Investor
 from raisebook.models.round import Round, RoundParticipant, RoundStage
 from raisebook.models.workspace import ApiKey, Invite, Membership, Workspace
@@ -62,6 +63,7 @@ ORGLESS = {
 B_EMAIL = "blake.quill@example.com"
 B_LINKEDIN = "https://www.linkedin.com/in/example-blake-quill"
 B_NAME = "Blake Quill"
+B_PITCH = "Bravo secret pitch for quill robots"
 
 
 @dataclass
@@ -119,6 +121,17 @@ async def two_workspaces(db: AsyncSession) -> Two:
     b_activity = await make_activity(db, b_inv, rnd=b_round, body="B's call notes")
     b_invite, _ = await make_invite(db, b)
     b_key, _ = await make_api_key(db, b)
+    db.add(CompanyProfile(workspace_id=b.id, pitch=B_PITCH, sectors=["bravo-sector"]))
+    db.add(
+        WorkspaceAiSettings(
+            workspace_id=b.id,
+            preset="budget",
+            identity_model="perplexity/sonar",
+            search_model="perplexity/sonar",
+            writer_model="google/gemini-3.8-flash",
+            monthly_cap_micros=77_000_000,
+        )
+    )
     await db.flush()
     return Two(
         a=Ref(a.id, str(a.slug), a.name),
@@ -208,6 +221,20 @@ async def snapshot_b(db: AsyncSession, t: Two) -> dict[str, Any]:
         "activities": await rows(
             select(Activity.id).where(Activity.workspace_id == wid).order_by(Activity.id)
         ),
+        "company_profile": await rows(
+            select(CompanyProfile.pitch, CompanyProfile.sectors, CompanyProfile.updated_at).where(
+                CompanyProfile.workspace_id == wid
+            )
+        ),
+        "ai_settings": await rows(
+            select(
+                WorkspaceAiSettings.preset,
+                WorkspaceAiSettings.writer_model,
+                WorkspaceAiSettings.monthly_cap_micros,
+                WorkspaceAiSettings.key_last4,
+                WorkspaceAiSettings.updated_at,
+            ).where(WorkspaceAiSettings.workspace_id == wid)
+        ),
     }
 
 
@@ -225,6 +252,8 @@ def no_b(text: str, t: Two) -> None:
         "Bravo Seed",
         "secret-tag",
         "B's call notes",
+        B_PITCH,
+        "bravo-sector",
     ):
         assert marker not in text, f"leaked {marker!r}: {text[:300]}"
 
@@ -682,6 +711,102 @@ async def _import_commit(c: Any, t: Two, who: str) -> None:
 async def _import_runs(c: Any, t: Two, who: str) -> None:
     r = await c.get("/v1/imports")
     assert r.status_code == 200
+    no_b(r.text, t)
+
+
+# --- investor research: AI settings and company profile (Part 1) ------------------------
+
+
+def _mock_openrouter() -> None:
+    from raisebook.services import openrouter
+    from tests.research.openrouter_mock import OpenRouterMock
+
+    openrouter.set_transport(OpenRouterMock().transport)  # reset by the autouse guard
+
+
+@case("GET", "/v1/workspace/ai-settings")
+async def _ai_get(c: Any, t: Two, who: str) -> None:
+    r = await c.get("/v1/workspace/ai-settings")
+    assert r.status_code == 200, r.text
+    assert r.json()["monthly_cap_usd"] == 25.0 and r.json()["preset"] == "best"
+    no_b(r.text, t)
+    if who == "session":
+        is_404(await c.get("/v1/workspace/ai-settings", headers={"X-Workspace": t.b.slug}))
+
+
+@case("PATCH", "/v1/workspace/ai-settings")
+async def _ai_patch(c: Any, t: Two, who: str) -> None:
+    if who == "session":
+        is_404(
+            await c.patch(
+                "/v1/workspace/ai-settings",
+                json={"monthly_cap_usd": 1},
+                headers={"X-Workspace": t.b.slug},
+            )
+        )
+    r = await c.patch("/v1/workspace/ai-settings", json={"monthly_cap_usd": 12})
+    assert r.status_code == 200 and r.json()["monthly_cap_usd"] == 12.0, r.text
+    no_b(r.text, t)
+
+
+@case("PUT", "/v1/workspace/ai-settings/key")
+async def _ai_key_put(c: Any, t: Two, who: str) -> None:
+    from tests.research.openrouter_mock import FAKE_KEY
+
+    _mock_openrouter()
+    if who == "session":
+        is_404(
+            await c.put(
+                "/v1/workspace/ai-settings/key",
+                json={"key": FAKE_KEY},
+                headers={"X-Workspace": t.b.slug},
+            )
+        )
+    r = await c.put("/v1/workspace/ai-settings/key", json={"key": FAKE_KEY})
+    if who == "session":
+        assert r.status_code == 200 and r.json()["key_last4"] == FAKE_KEY[-4:], r.text
+    else:
+        assert r.status_code == 403  # only an owner signed in to the web sets the key
+    assert FAKE_KEY not in r.text
+    no_b(r.text, t)
+
+
+@case("DELETE", "/v1/workspace/ai-settings/key")
+async def _ai_key_delete(c: Any, t: Two, who: str) -> None:
+    if who == "session":
+        is_404(await c.delete("/v1/workspace/ai-settings/key", headers={"X-Workspace": t.b.slug}))
+    r = await c.delete("/v1/workspace/ai-settings/key")
+    assert r.status_code == (204 if who == "session" else 403), r.text
+
+
+@case("GET", "/v1/research/models")
+async def _research_models(c: Any, t: Two, who: str) -> None:
+    _mock_openrouter()
+    r = await c.get("/v1/research/models")
+    assert r.status_code == 200, r.text
+    no_b(r.text, t)
+
+
+@case("GET", "/v1/workspace/company-profile")
+async def _profile_get(c: Any, t: Two, who: str) -> None:
+    r = await c.get("/v1/workspace/company-profile")
+    assert r.status_code == 200 and r.json()["is_empty"] is True, r.text
+    no_b(r.text, t)
+    if who == "session":
+        is_404(await c.get("/v1/workspace/company-profile", headers={"X-Workspace": t.b.slug}))
+
+
+@case("PUT", "/v1/workspace/company-profile")
+async def _profile_put(c: Any, t: Two, who: str) -> None:
+    body = {"pitch": "Alpha builds warehouse robots", "sectors": ["robotics"]}
+    if who == "session":
+        is_404(
+            await c.put(
+                "/v1/workspace/company-profile", json=body, headers={"X-Workspace": t.b.slug}
+            )
+        )
+    r = await c.put("/v1/workspace/company-profile", json=body)
+    assert r.status_code == 200 and r.json()["pitch"] == body["pitch"], r.text
     no_b(r.text, t)
 
 
