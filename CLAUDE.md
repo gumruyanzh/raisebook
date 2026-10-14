@@ -37,7 +37,8 @@ uv run rbctl worker    # background jobs (research), beside uvicorn; --once drai
 uv run rbctl --help    # workspace | apikey | seed-demo --email | housekeeping | worker | secrets
 ```
 Research needs `RAISEBOOK_RESEARCH_ENABLED=true` and `RAISEBOOK_SECRETS_KEK` (`uv run rbctl secrets gen-kek`); without it the app
-works and research reports `research_unavailable`. Never point dev at real OpenRouter money:
+works and research reports `research_unavailable`. Production setup (the `worker` compose
+service, the KEK, rotation, removal requests) is in `docs/DEPLOY.md` under "AI research". Never point dev at real OpenRouter money:
 run `uv run python scripts/mock_openrouter.py --port 8787` and set
 `RAISEBOOK_OPENROUTER_BASE_URL=http://localhost:8787/api/v1` for both uvicorn and the worker
 (its canned answers are about the sample's fictional Dana Whitfield).
@@ -279,4 +280,6 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   (`announceRun`) so an open dossier follows it.
 - Polls (runs, batches) go every 2s and pause while the tab is hidden; no websockets.
 - Screenshots of every research screen (1440 light and dark, 1280, 390) are in
-  `design/research/shots/`, taken against a throwaway database and a local fake OpenRouter.
+  `design/research/shots/`, taken against a throwaway database and a local fake OpenRouter;
+  the re-shoot after the verification fixes is in `design/research/final/`. The fake must cite
+  a `linkedin.com/in/…` page for a clear identity, or the run stops at "Is this them?".

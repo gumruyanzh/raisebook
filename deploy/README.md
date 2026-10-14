@@ -1,8 +1,8 @@
 # Self-hosting Raisebook
 
 Raisebook runs as six containers on one machine: Postgres 17, a one-shot migration job,
-the API (REST under `/v1` and the MCP server at `/mcp`), a background job runner (idle
-today), the web app, and Caddy for HTTPS.
+the API (REST under `/v1` and the MCP server at `/mcp`), a background job runner (AI
+research; idle while research is off), the web app, and Caddy for HTTPS.
 Any Linux host with Docker and 1 GB of RAM is enough for a team.
 
 The production setup for raisebook.org (DigitalOcean, DNS records, backups) is in
@@ -66,6 +66,29 @@ report the address as verified. The first Google sign-in binds the Google accoun
 Raisebook account, and a different Google account claiming the same address later is
 refused.
 
+## AI research (optional)
+
+Off by default. Each workspace pays for research with its own OpenRouter key; your server
+never calls a model on its own account. The `worker` service runs the research jobs.
+
+1. Generate a key-encryption key (it seals the saved OpenRouter keys) and keep it with your
+   other secrets; lose it and every workspace has to enter its key again:
+   ```bash
+   docker compose -f deploy/docker-compose.yml run --rm --no-deps api rbctl secrets gen-kek
+   # prints k1:<base64url of 32 bytes>
+   ```
+2. In `deploy/.env` set `RAISEBOOK_RESEARCH_ENABLED=true`, `RAISEBOOK_SECRETS_KEK=` that line,
+   and optionally `RAISEBOOK_OPERATOR_EMAIL` (emailed when a removal request is confirmed).
+3. `docker compose -f deploy/docker-compose.yml up -d` restarts `api` and `worker` with it;
+   `docker compose -f deploy/docker-compose.yml logs worker | grep worker_started` shows the
+   job kinds it serves.
+
+Removal requests from the public Research Policy page are applied by you:
+`rbctl research removals list --status verified`, then `rbctl research removals apply <id>`
+(add `--proof-checked` only after checking a `proof: weak` request some other way) or
+`rbctl research removals reject <id>`. KEK rotation and the rest are in
+[`docs/DEPLOY.md`](../docs/DEPLOY.md) under "AI research".
+
 ## Updating
 
 ```bash
@@ -84,6 +107,7 @@ $dc exec api rbctl --help                          # admin CLI
 $dc exec api rbctl seed-demo --email you@example.com   # fictional sample workspace
 $dc exec api rbctl housekeeping                    # expired tokens/sessions, dead invites, old rate-limit windows
 $dc logs -f api                                    # JSON logs; no request bodies, emails or investor data
+$dc logs -f worker                                 # background jobs (job id, kind, attempt; never keys)
 ```
 
 Run `rbctl housekeeping` daily from cron. Back up with `deploy/backup.sh` (see the header of

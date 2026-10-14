@@ -6,7 +6,7 @@
 #   docker compose -f deploy/docker-compose.yml up -d
 #
 # Services: postgres (data volume), migrate (one-shot alembic upgrade), api (FastAPI + /mcp),
-# worker (background job runner; idle unless a feature queues jobs), web (Next.js), caddy
+# worker (background jobs: AI research runs, profile prefill, removals), web (Next.js), caddy
 # (TLS + reverse proxy). Only caddy publishes ports. Every container's log is capped at
 # 5 x 20 MB, so a traffic spike cannot fill the disk.
 
@@ -46,10 +46,12 @@ x-api-env: &api-env
   # Wi-Fi) and all outbound email per hour (default 500; keep it under your email plan).
   RAISEBOOK_MAGIC_LINKS_PER_IP_HOUR: ${RAISEBOOK_MAGIC_LINKS_PER_IP_HOUR:-}
   RAISEBOOK_EMAIL_GLOBAL_PER_HOUR: ${RAISEBOOK_EMAIL_GLOBAL_PER_HOUR:-}
-  # Unreleased features stay off unless switched on here.
+  # AI research stays off unless switched on in deploy/.env (docs/DEPLOY.md "AI research").
+  # api and worker both need the same RAISEBOOK_SECRETS_KEK.
   RAISEBOOK_RESEARCH_ENABLED: ${RAISEBOOK_RESEARCH_ENABLED:-false}
   RAISEBOOK_SECRETS_KEK: ${RAISEBOOK_SECRETS_KEK:-}
   RAISEBOOK_SECRETS_KEK_PREVIOUS: ${RAISEBOOK_SECRETS_KEK_PREVIOUS:-}
+  RAISEBOOK_OPERATOR_EMAIL: ${RAISEBOOK_OPERATOR_EMAIL:-}
   RAISEBOOK_WORKER_CONCURRENCY: ${RAISEBOOK_WORKER_CONCURRENCY:-4}
 
 services:

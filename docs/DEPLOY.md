@@ -129,12 +129,22 @@ Fill in `deploy/.env`:
 | `RAISEBOOK_GOOGLE_CLIENT_ID` / `RAISEBOOK_GOOGLE_CLIENT_SECRET` | optional: "Continue with Google". Leave both empty to keep it off (the button is hidden). Setup steps, including the exact redirect URI `https://api.raisebook.org/v1/auth/google/callback`, are in `deploy/README.md` under "Continue with Google". After setting them, `docker compose -f deploy/docker-compose.yml up -d api` is enough; no rebuild. |
 | `RAISEBOOK_MAGIC_LINKS_PER_IP_HOUR` | optional, default 100. Raise it (for example 300) before an event where many people sign in on one Wi-Fi. |
 | `RAISEBOOK_EMAIL_GLOBAL_PER_HOUR` | optional, default 500. All outbound email per hour; keep it under the email plan's limits. |
+| `RAISEBOOK_RESEARCH_ENABLED` | `false` until you turn on AI research (section 3, "AI research"). |
+| `RAISEBOOK_SECRETS_KEK` | empty while research is off. Required with research on: `docker compose -f deploy/docker-compose.yml run --rm --no-deps api rbctl secrets gen-kek` prints `k1:<44 characters>`. |
+| `RAISEBOOK_SECRETS_KEK_PREVIOUS` | empty, except while rotating the KEK. |
+| `RAISEBOOK_OPERATOR_EMAIL` | optional: who is emailed when a research removal request is confirmed. |
+| `RAISEBOOK_WORKER_CONCURRENCY` | optional, default 4: jobs one `worker` container runs at once. |
 
 Keep a copy of `deploy/.env` in a password manager: without the session secret everyone is
-signed out, and without the Postgres password you cannot restore.
+signed out, without the Postgres password you cannot restore, and without the KEK every saved
+OpenRouter key is unreadable (each workspace then has to enter its key again).
 
-The `worker` service (`rbctl worker`, same image as the API) is the background job runner. No
-released feature queues jobs yet, so it idles; it has no HTTP healthcheck.
+The `worker` service (`rbctl worker`, same image as the API, built by `migrate`) is the
+background job runner: AI research runs, company-profile prefill and research removals. Jobs
+live in Postgres (`jobs` table, claimed with `FOR UPDATE SKIP LOCKED`, leased and
+heartbeated); a worker that dies leaves its jobs to be requeued when the lease expires, and on
+`docker compose stop` it finishes or hands back running jobs within 50 s. It serves no HTTP and
+has no healthcheck: check it with `logs worker`. With research off it idles.
 
 ```bash
 GIT_SHA=$(git rev-parse --short HEAD) docker compose -f deploy/docker-compose.yml build
@@ -158,6 +168,43 @@ curl -s https://api.raisebook.org/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
   | python3 -c "import json,sys; print(len(json.load(sys.stdin)['result']['tools']))"   # 17
 ```
+
+### AI research (optional, off by default)
+
+Research runs on each workspace's **own** OpenRouter key; the server never pays for model
+calls. To turn it on:
+
+```bash
+cd /opt/raisebook
+dc="docker compose -f deploy/docker-compose.yml"
+$dc run --rm --no-deps api rbctl secrets gen-kek      # prints k1:…; store it in the password manager
+# In deploy/.env:
+#   RAISEBOOK_RESEARCH_ENABLED=true
+#   RAISEBOOK_SECRETS_KEK=k1:…                          (the line printed above)
+#   RAISEBOOK_OPERATOR_EMAIL=you@yourdomain             (optional)
+GIT_SHA=$(git rev-parse --short HEAD) $dc build        # only if the code changed
+$dc up -d                                               # migrate runs, then api and worker restart
+$dc logs worker | grep worker_started                   # "kinds": [... "research.run"]
+```
+
+Checks: Settings → AI research appears in the app, and `tools/list` returns 22 tools instead
+of 17. The `api` and `worker` containers must share the same KEK (both read it from
+`deploy/.env`). The key itself is never logged or returned; the app shows its last 4 only.
+
+Running it:
+
+- `$dc exec api rbctl research usage --workspace <slug>`: a workspace's spend per month.
+- Removal requests from the public Research Policy page: someone confirms by email, you get
+  `RAISEBOOK_OPERATOR_EMAIL` (or a `research_removal_verified` log line), then
+  `$dc exec api rbctl research removals list --status verified` and
+  `$dc exec api rbctl research removals apply <id>`. When the email is not on the person's firm
+  domain the request shows `proof: weak`; check other proof first, then add `--proof-checked`.
+  `removals reject <id>` declines it.
+- Rotating the KEK: move the current value to `RAISEBOOK_SECRETS_KEK_PREVIOUS`, put a new one
+  with a new id (`rbctl secrets gen-kek --id k2`) in `RAISEBOOK_SECRETS_KEK`, `$dc up -d`, then
+  `$dc exec api rbctl secrets rotate` (counts only), then empty `_PREVIOUS` and `$dc up -d`.
+- Turning it off again: `RAISEBOOK_RESEARCH_ENABLED=false` and `$dc up -d`. Saved dossiers
+  stay in the database but are hidden from the app, REST, MCP and exports.
 
 ---
 
@@ -228,6 +275,6 @@ $dc up -d
 - [ ] An MCP client connects with a key (section 3).
 - [ ] Backups run, an off-site copy expires after 14 days, and a restore was tested.
 - [x] The GitHub repository is public (AGPL source offer).
-- [ ] `tools/list` on production returns 17 tools (section 3).
+- [ ] `tools/list` on production returns 17 tools (22 with AI research on) (section 3).
 - [ ] External uptime checks on `https://raisebook.org/` and `https://api.raisebook.org/healthz/ready`
       alert the owner; droplet alerts for CPU, memory and disk are set.
