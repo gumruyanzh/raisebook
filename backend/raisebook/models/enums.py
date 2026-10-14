@@ -72,6 +72,8 @@ class ActivityKind(StrEnum):
     REMOVED_FROM_ROUND = "removed_from_round"
     PARTICIPANT_UPDATED = "participant_updated"
     RESEARCH = "research"  # system kind: a saved dossier or a confirmed identity
+    MEETING_SCHEDULED = "meeting_scheduled"  # system kind: a future meeting was put on
+    MEETING_UPDATED = "meeting_updated"  # rescheduled, edited, cancelled, no-show, reopened
 
 
 # Kinds a person or agent logs by hand (deletable, SPEC §8.1).
@@ -81,6 +83,20 @@ LOGGABLE_ACTIVITY_KINDS: tuple[ActivityKind, ...] = (
     ActivityKind.CALL,
     ActivityKind.MEETING,
 )
+
+
+class MeetingStatus(StrEnum):
+    SCHEDULED = "scheduled"
+    DONE = "done"
+    CANCELLED = "cancelled"
+    NO_SHOW = "no_show"
+
+
+class MeetingSource(StrEnum):
+    MANUAL = "manual"
+    EMAIL = "email"
+    AGENT = "agent"
+    CALENDAR = "calendar"
 
 
 class ActorType(StrEnum):

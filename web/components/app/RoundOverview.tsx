@@ -19,14 +19,17 @@ import {
 } from "@/components/ui";
 import { listActivities } from "@/lib/api/activities";
 import { errorMessage } from "@/lib/api/client";
+import { listMeetings, type Meeting, type MeetingWrite } from "@/lib/api/meetings";
 import { getRoundSummary, type FollowUpList } from "@/lib/api/rounds";
 import type { Activity, Round, RoundSummary } from "@/lib/api/types";
 import { INSTRUMENT_LABEL, ROUND_STATUS_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
-import { formatDate, money, num, plural, relativeTime } from "@/lib/format";
+import { formatDate, money, num, plural, relativeTime, todayIn } from "@/lib/format";
 import { useWorkspace } from "@/lib/session";
 
 import { AddInvestorDialog } from "./AddInvestorDialog";
+import { MeetingRow } from "./meetings/MeetingRow";
+import { useNow, useViewerTimeZone } from "./meetings/useViewerTimeZone";
 import { TodayQueue } from "./TodayQueue";
 
 function Panel({ title, aside, children, className }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
@@ -35,6 +38,66 @@ function Panel({ title, aside, children, className }: { title: string; aside?: R
       <SectionLabel aside={aside}>{title}</SectionLabel>
       <div className="mt-8">{children}</div>
     </section>
+  );
+}
+
+/**
+ * Meetings in this round (the overview's right column): how many are coming up, the next
+ * five with Join and Open brief, and the ones that ended without an outcome.
+ */
+function RoundMeetings({ round, summary, initial }: { round: Round; summary: RoundSummary; initial: Meeting[] }) {
+  const { workspace, client, canWrite } = useWorkspace();
+  const viewerTz = useViewerTimeZone(workspace.timezone);
+  const now = useNow();
+  const today = todayIn(viewerTz, now);
+  const [items, setItems] = useState(initial);
+  const base = `/w/${encodeURIComponent(workspace.slug)}/meetings`;
+  const reload = useCallback(
+    (res?: MeetingWrite) => {
+      if (res) setItems((list) => list.map((m) => (m.id === res.meeting.id ? res.meeting : m)));
+      void Promise.all([
+        listMeetings(client, { round: round.id, when: "needs_outcome", order: "desc", limit: 5 }),
+        listMeetings(client, { round: round.id, when: "upcoming", limit: 5 }),
+      ])
+        .then(([a, b]) => setItems([...a.data, ...b.data]))
+        .catch(() => {});
+    },
+    [client, round.id],
+  );
+  const upcoming = items.filter((m) => m.status === "scheduled" && !m.needs_outcome);
+  const due = items.filter((m) => m.needs_outcome);
+  const count = Math.max(summary.meetings?.upcoming ?? 0, upcoming.length);
+  return (
+    <Panel
+      title="Meetings"
+      aside={
+        <Link href={base} className="link t-body-s">
+          {count ? `${plural(count, "upcoming")}` : "All meetings"}
+        </Link>
+      }
+    >
+      {items.length === 0 ? (
+        <p className="t-body-s text-muted">No meetings scheduled in {round.name}. Press B in an investor&apos;s file to schedule one.</p>
+      ) : (
+        <ul className="m-0 list-none p-0">
+          {[...due, ...upcoming].slice(0, 6).map((m) => (
+            <MeetingRow
+              key={m.id}
+              meeting={m}
+              client={client}
+              wsSlug={workspace.slug}
+              timeZone={workspace.timezone}
+              viewerTz={viewerTz}
+              today={today}
+              now={now}
+              canWrite={canWrite}
+              compact
+              onChanged={reload}
+            />
+          ))}
+        </ul>
+      )}
+    </Panel>
   );
 }
 
@@ -71,6 +134,7 @@ export function RoundOverview({
   followUps,
   agentActivity,
   today,
+  meetings = [],
 }: {
   round: Round;
   summary: RoundSummary;
@@ -78,6 +142,8 @@ export function RoundOverview({
   followUps: FollowUpList;
   agentActivity: Activity[];
   today: string;
+  /** Upcoming meetings in this round and the ones that need an outcome. */
+  meetings?: Meeting[];
 }) {
   const { workspace, client, canWrite } = useWorkspace();
   const router = useRouter();
@@ -225,6 +291,8 @@ export function RoundOverview({
         style={{ gridRow: `${workRow} / span ${closed || emptyRound ? 1 : 2}` }}
         aria-label="Round details"
       >
+          <RoundMeetings round={round} summary={summary} initial={meetings} />
+
           <Panel
             title="Round terms"
             aside={

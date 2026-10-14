@@ -22,12 +22,13 @@ from raisebook.schemas.participants import (
     FollowUpBlock,
     FunnelStage,
     KindCounts,
+    MeetingsBlock,
     MoneyOut,
     RoundSummaryOut,
     RoundWithClose,
     StaleItem,
 )
-from raisebook.services import activities, followups, rounds
+from raisebook.services import activities, followups, meetings, rounds
 from raisebook.services.investors import compact
 from raisebook.services.stages import stage_out, stages_for
 
@@ -155,4 +156,5 @@ async def round_summary(
         stale=[s for _, s in stale[:TOP]],
         recent_activity=recent,
         warnings=warnings,
+        meetings=MeetingsBlock(**await meetings.round_block(db, ws, rnd.id, now=now)),
     )

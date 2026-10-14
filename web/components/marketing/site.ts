@@ -23,8 +23,8 @@ export const SPONSOR_URL = (process.env.NEXT_PUBLIC_SPONSOR_URL ?? "").trim();
 /** The date the MCP client snippets were last checked against each client's own docs. */
 export const SNIPPETS_CHECKED_ON = "2026-10-10";
 
-/** Number of MCP tools (SPEC §6.4). */
-export const MCP_TOOL_COUNT = 17;
+/** Number of MCP tools every server serves (SPEC §6.4 and the meeting tools of §6.8). */
+export const MCP_TOOL_COUNT = 21;
 
 /**
  * Canonical URL plus the share card (og:url, og:type, og:site_name, og:image) for a public

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { ButtonLink, Chip, PageHeader, SectionLabel, StageDot } from "@/components/ui";
+import { TodayMeetings } from "@/components/app/meetings/TodayMeetings";
+import type { Meeting } from "@/lib/api/meetings";
 import type { FollowUpItem, Workspace } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { daysBetween, formatDate, num, plural } from "@/lib/format";
@@ -13,6 +15,8 @@ import { lastRouteFor } from "./AppKeyboard";
 
 export interface HomeCompany {
   workspace: Workspace;
+  /** Meetings around today (the client keeps the viewer's today). */
+  meetings: Meeting[];
   today: string;
   due: FollowUpItem[];
   counts: { overdue: number; today: number; upcoming: number };
@@ -57,6 +61,8 @@ export function HomeToday({ companies }: { companies: HomeCompany[] }) {
           ) : null
         }
       />
+
+      <TodayMeetings companies={companies} />
 
       <section aria-label="Companies" className="grid grid-cols-1 gap-10 sm:grid-cols-2 2xl:grid-cols-3">
         {companies.map((c) => {

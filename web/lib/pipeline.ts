@@ -5,8 +5,9 @@
  * session pace. No React and no requests, so `npm run test:unit` covers all of it.
  */
 
+import { dayOf, meetingBeatsFollowUp, meetingChipText, whenLine } from "./meetings";
 import type { Participant, Priority, Stage } from "./api/types";
-import { daysBetween, formatDate, moneyCompact, priorityFromFit } from "./format";
+import { daysBetween, formatDate, moneyCompact, priorityFromFit, todayIn } from "./format";
 
 /* ---------- hidden values ---------- */
 
@@ -190,6 +191,7 @@ export function defaultView(a: {
 /* ---------- the card's one right slot (§5.3) ---------- */
 
 export type CardSlot =
+  | { kind: "meeting"; text: string; today: boolean; title?: string }
   | { kind: "due"; text: string }
   | { kind: "money"; text: string }
   | { kind: "soft"; text: string }
@@ -197,12 +199,31 @@ export type CardSlot =
   | { kind: "later"; text: string };
 
 export function cardSlot(
-  p: Pick<Participant, "follow_up_on" | "follow_up_state" | "amount_soft" | "amount_committed" | "stage">,
+  p: Pick<Participant, "follow_up_on" | "follow_up_state" | "amount_soft" | "amount_committed" | "stage"> & {
+    next_meeting?: Participant["next_meeting"];
+  },
   today: string,
   currency: string,
+  /** The viewer's timezone and clock: a scheduled meeting takes the slot when it is sooner. */
+  meet?: { timeZone: string; now?: Date },
 ): CardSlot | null {
   const on = p.follow_up_on;
   const st = p.follow_up_state;
+  const m = p.next_meeting;
+  if (m && meet) {
+    const now = meet.now ?? new Date();
+    const viewerToday = todayIn(meet.timeZone, now);
+    const day = dayOf(m.starts_at, meet.timeZone);
+    // Today's follow-up date in the viewer's calendar is close enough to the workspace one here.
+    if (day && meetingBeatsFollowUp(day, on && (st === "overdue" || st === "today") ? viewerToday : on, viewerToday)) {
+      return {
+        kind: "meeting",
+        text: meetingChipText(m.starts_at, viewerToday, meet.timeZone),
+        today: day <= viewerToday,
+        title: `${m.title} · ${whenLine(m, meet.timeZone, viewerToday)}`,
+      };
+    }
+  }
   if (on && st === "overdue") {
     const late = daysBetween(on, today);
     return { kind: "due", text: late > 0 ? `Overdue ${late}d` : "Overdue" };

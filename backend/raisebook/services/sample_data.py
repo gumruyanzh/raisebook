@@ -895,9 +895,58 @@ async def create_sample_workspace(db: AsyncSession, *, user: User, now: datetime
                 actor=AGENT if i % 2 == 0 else me,
                 stages=seed_list,
             )
+    await _meetings(db, ws, people, seed=seed, now=now)
     await _research(db, ws, people, seed_id=seed.id, now=now)
     await db.flush()
     return ws_row
+
+
+# (Seed plan stage, nth investor in that stage, days from today, local hour, minutes, place)
+SAMPLE_MEETINGS: tuple[tuple[str, int, int, int, int, str], ...] = (
+    ("meeting", 0, 0, 11, 30, "video"),
+    ("meeting", 1, 0, 15, 45, "Harborview office, 4th floor"),
+    ("meeting", 2, 1, 10, 30, "video"),
+    ("meeting", 3, 3, 13, 60, "Blue Bottle, Broadway"),
+    ("dd", 0, 6, 9, 60, "Partner meeting, their office"),
+    ("meeting", 4, -1, 16, 30, "video"),  # happened yesterday: needs an outcome
+)
+
+
+async def _meetings(
+    db: AsyncSession, ws: WorkspaceContext, people: list[Investor], *, seed: Any, now: datetime
+) -> None:
+    """A few meetings around today: two today, the next days, and one that needs an outcome."""
+    from raisebook.services import meetings
+
+    tz = ZoneInfo(SAMPLE_TIMEZONE)
+    today = now.astimezone(tz).date()
+    by_stage: dict[str, list[int]] = {}
+    for i, plan in enumerate(SEED_PLAN):
+        by_stage.setdefault(plan[0], []).append(i)
+    for n, (key, nth, days, hour, minutes, place) in enumerate(SAMPLE_MEETINGS):
+        idx = by_stage.get(key, [])
+        if nth >= len(idx):
+            continue
+        inv = people[idx[nth]]
+        day = today + timedelta(days=days)
+        start = datetime(day.year, day.month, day.day, hour, 0, tzinfo=tz)
+        video = place == "video"
+        slug = _slug(inv.name)
+        await meetings.schedule(
+            db,
+            ws,
+            investor=inv,
+            starts_at=start,
+            duration_minutes=minutes,
+            round=seed,
+            title=None,
+            location=None if video else place,
+            video_url=f"https://meet.example.com/kestrel-{slug}" if video else None,
+            agenda="Pilot results, the Seed terms and who else is in." if n % 2 == 0 else None,
+            source="agent" if n % 3 == 0 else "manual",
+            move_to_meeting_stage=False,
+            now=_past(_work_hours(now - timedelta(days=3), n), now),
+        )
 
 
 # --- research (RESEARCH-PLAN §10, Part 2): a profile and three agent-made dossiers ---------

@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from raisebook.models.activity import Activity
 from raisebook.models.ai import CompanyProfile, WorkspaceAiSettings
 from raisebook.models.investor import Investor
+from raisebook.models.meeting import Meeting
 from raisebook.models.research import (
     Dossier,
     DossierFacts,
@@ -71,6 +72,12 @@ ORGLESS = {
     # The Research Policy's public removal process (anonymous; R13).
     ("POST", "/v1/research-policy/removal-requests"),
     ("POST", "/v1/research-policy/removal-requests/verify"),
+    # The caller's own calendar feed (session only), and the feed itself (its token is the
+    # credential; it covers only the token owner's memberships: tests/test_meetings.py).
+    ("GET", "/v1/me/calendar-feed"),
+    ("POST", "/v1/me/calendar-feed"),
+    ("DELETE", "/v1/me/calendar-feed"),
+    ("GET", "/v1/calendar/{token}.ics"),
 }
 
 B_EMAIL = "blake.quill@example.com"
@@ -79,6 +86,7 @@ B_NAME = "Blake Quill"
 B_PITCH = "Bravo secret pitch for quill robots"
 B_DOSSIER = "Bravo secret dossier verdict line"
 B_SOURCE = "https://quill.example/bravo-secret-source"
+B_MEETING = "Bravo secret partner meeting"
 
 
 @dataclass
@@ -110,6 +118,7 @@ class Two:
     b_batch: Ref
     b_suggestion: Ref
     b_candidate: Ref
+    b_meeting: Ref
 
 
 async def two_workspaces(db: AsyncSession) -> Two:
@@ -153,6 +162,7 @@ async def two_workspaces(db: AsyncSession) -> Two:
     )
     await db.flush()
     b_research = await _b_research(db, b, b_inv, b_round)
+    b_meeting = await _b_meeting(db, b, b_inv, b_round)
     return Two(
         a=Ref(a.id, str(a.slug), a.name),
         b=Ref(b.id, str(b.slug), b.name),
@@ -168,8 +178,32 @@ async def two_workspaces(db: AsyncSession) -> Two:
         b_activity=Ref(b_activity.id),
         b_invite=Ref(b_invite.id),
         b_key=Ref(b_key.id),
+        b_meeting=b_meeting,
         **b_research,
     )
+
+
+async def _b_meeting(db: AsyncSession, b: Any, b_inv: Any, b_round: Any) -> Ref:
+    from datetime import UTC, datetime
+
+    from raisebook.models.meeting import Meeting
+
+    m = Meeting(
+        workspace_id=b.id,
+        investor_id=b_inv.id,
+        round_id=b_round.id,
+        title=B_MEETING,
+        starts_at=datetime(2026, 10, 13, 18, 0, tzinfo=UTC),
+        ends_at=datetime(2026, 10, 13, 18, 30, tzinfo=UTC),
+        timezone="UTC",
+        location="Bravo HQ",
+        actor_type="system",
+        actor_label="raisebook",
+        via="system",
+    )
+    db.add(m)
+    await db.flush()
+    return Ref(m.id)
 
 
 async def _b_research(db: AsyncSession, b: Any, b_inv: Any, b_round: Any) -> dict[str, Ref]:
@@ -357,6 +391,18 @@ async def snapshot_b(db: AsyncSession, t: Two) -> dict[str, Any]:
                 InvestorIdentity.workspace_id == wid
             )
         ),
+        "meetings": await rows(
+            select(
+                Meeting.id,
+                Meeting.title,
+                Meeting.status,
+                Meeting.starts_at,
+                Meeting.outcome,
+                Meeting.updated_at,
+            )
+            .where(Meeting.workspace_id == wid)
+            .order_by(Meeting.id)
+        ),
         "ai_settings": await rows(
             select(
                 WorkspaceAiSettings.preset,
@@ -392,6 +438,8 @@ def no_b(text: str, t: Two) -> None:
         str(t.b_suggestion.id),
         str(t.b_candidate.id),
         "Bravo GP",
+        B_MEETING,
+        str(t.b_meeting.id),
     ):
         assert marker not in text, f"leaked {marker!r}: {text[:300]}"
 
@@ -1126,6 +1174,53 @@ async def _prefill(c: Any, t: Two, who: str) -> None:
     r = await c.post("/v1/workspace/company-profile/prefill", data={"website_url": "a.example"})
     assert r.status_code == 422 and r.json()["error"]["code"] == "no_ai_key"  # A has no key
     no_b(r.text, t)
+
+
+# --- meetings ----------------------------------------------------------------------------
+
+
+@case("GET", "/v1/meetings")
+async def _meetings(c: Any, t: Two, who: str) -> None:
+    r = await c.get("/v1/meetings")
+    assert r.status_code == 200 and r.json()["data"] == [], r.text
+    no_b(r.text, t)
+    is_404(await c.get("/v1/meetings", params={"investor_id": str(t.b_inv.id)}))
+    is_404(await c.get("/v1/meetings", params={"round": t.b_round.slug}))
+
+
+@case("POST", "/v1/meetings")
+async def _meeting_create(c: Any, t: Two, who: str) -> None:
+    body = {"investor_id": str(t.b_inv.id), "starts_at": "2026-10-20T11:00"}
+    is_404(await c.post("/v1/meetings", json=body))
+    a_body = {"investor_id": str(t.a_inv.id), "starts_at": "2026-10-20T11:00"}
+    is_404(await c.post("/v1/meetings", json={**a_body, "round": t.b_round.slug}))
+    is_404(await c.post("/v1/meetings", json={**a_body, "guest_ids": [str(t.b_inv.id)]}))
+
+
+@case("GET", "/v1/meetings/{meeting_id}")
+async def _meeting_get(c: Any, t: Two, who: str) -> None:
+    is_404(await c.get(f"/v1/meetings/{t.b_meeting.id}"))
+
+
+@case("PATCH", "/v1/meetings/{meeting_id}")
+async def _meeting_patch(c: Any, t: Two, who: str) -> None:
+    is_404(await c.patch(f"/v1/meetings/{t.b_meeting.id}", json={"status": "cancelled"}))
+    is_404(await c.patch(f"/v1/meetings/{t.b_meeting.id}", json={"starts_at": "2026-10-21T11:00"}))
+
+
+@case("POST", "/v1/meetings/{meeting_id}/complete")
+async def _meeting_complete(c: Any, t: Two, who: str) -> None:
+    is_404(await c.post(f"/v1/meetings/{t.b_meeting.id}/complete", json={"outcome": "x"}))
+
+
+@case("DELETE", "/v1/meetings/{meeting_id}")
+async def _meeting_delete(c: Any, t: Two, who: str) -> None:
+    is_404(await c.delete(f"/v1/meetings/{t.b_meeting.id}"))
+
+
+@case("GET", "/v1/meetings/{meeting_id}/ics")
+async def _meeting_ics(c: Any, t: Two, who: str) -> None:
+    is_404(await c.get(f"/v1/meetings/{t.b_meeting.id}/ics"))
 
 
 # --- the tests ---------------------------------------------------------------------------

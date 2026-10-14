@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { optional } from "@/components/app/load";
 import { AppShell } from "@/components/ui";
 import { listRounds } from "@/lib/api/core";
+import { listMeetings, type Meeting } from "@/lib/api/meetings";
 import { listFollowUps, type FollowUpList } from "@/lib/api/rounds";
 import { getSession, serverApi } from "@/lib/api/server";
 import type { Round } from "@/lib/api/types";
@@ -33,13 +34,19 @@ export default async function AppHome() {
   const companies: HomeCompany[] = await Promise.all(
     workspaces.map(async (w) => {
       const wc = c.ws(w.slug);
-      const [due, rounds] = await Promise.all([
+      const [due, rounds, meetings] = await Promise.all([
         optional(listFollowUps(wc, { within_days: 0, include_overdue: true, limit: 200 }), EMPTY),
         optional(listRounds(wc, "open").then((r) => r.data), [] as Round[]),
+        // A window around today: the page keeps the meetings on the viewer's today.
+        optional(
+          listMeetings(wc, { from: new Date(Date.now() - 36 * 3600_000).toISOString(), to: new Date(Date.now() + 36 * 3600_000).toISOString(), limit: 100 }).then((r) => r.data),
+          [] as Meeting[],
+        ),
       ]);
       return {
         workspace: w,
         today: todayIn(w.timezone),
+        meetings,
         due: due.data,
         counts: due.counts,
         rounds: rounds.map((r) => ({ slug: r.slug, name: r.name, participant_count: r.participant_count })),

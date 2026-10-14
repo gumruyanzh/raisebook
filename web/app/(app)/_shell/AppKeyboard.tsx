@@ -174,6 +174,7 @@ export function AppKeyboard({
   useHotkey("g p", () => go(pipelineHref), { enabled: inWs, description: "Go to pipeline", group: "Navigation", blockedByModals: true });
   useHotkey("g o", () => go(overviewHref), { enabled: inWs, description: "Go to overview", group: "Navigation", blockedByModals: true });
   useHotkey("g i", () => go(`${base}/investors`), { enabled: inWs, description: "Go to investors", group: "Navigation", blockedByModals: true });
+  useHotkey("g m", () => go(`${base}/meetings`), { enabled: inWs, description: "Go to meetings", group: "Navigation", blockedByModals: true });
   useHotkey("g s", () => go(`${base}/settings`), { enabled: inWs, description: "Go to settings", group: "Navigation", blockedByModals: true });
   // ⌘1…⌘9: switch workspace. Some browsers keep these for tabs; the palette lists them too.
   const wsList = session.workspaces;
@@ -260,6 +261,7 @@ export function AppKeyboard({
         ["Pipeline", pipelineHref, "g p", ["board", "table", "round"]],
         ["Overview", overviewHref, "g o", ["today", "follow-ups", "dashboard", "summary"]],
         ["Investors", `${base}/investors`, "g i", ["contacts", "directory", "people"]],
+        ["Meetings", `${base}/meetings`, "g m", ["calendar", "schedule", "calls"]],
         ["Settings", `${base}/settings`, "g s", ["workspace", "general", "timezone", "currency"]],
       ];
       for (const [label, href, kbd, keywords] of nav) {

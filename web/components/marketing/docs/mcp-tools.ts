@@ -1,5 +1,5 @@
 /**
- * The 22 MCP tools (SPEC §6.4; the five research tools from RESEARCH-PLAN §7, served only with
+ * The 26 MCP tools (SPEC §6.4, the four meeting tools of §6.8, and the five research tools from RESEARCH-PLAN §7, served only with
  * RAISEBOOK_RESEARCH_ENABLED). Descriptions are the binding tool description text, word for
  * word. Parameters follow the spec's input schemas. If the spec changes, change this file.
  */
@@ -327,6 +327,80 @@ export const MCP_TOOLS: McpTool[] = [
       { name: "include_activities", type: "boolean", description: "json only. Default false." },
     ],
     output: "{round: {slug, name}, format, filename, row_count, content}. Over 1 MB: payload_too_large with the REST URL to use.",
+  },
+  {
+    name: "schedule_meeting",
+    title: "Schedule a meeting",
+    access: "write",
+    idempotent: true,
+    description:
+      "Put a future meeting with an investor on the founder's calendar. By default it also moves them to the round's Meeting stage when they are earlier in the pipeline. Scheduling the same investor at the same start again returns the existing meeting, so retries are safe. `source` says where you learned about it (email, calendar); it defaults to agent.",
+    params: [
+      INVESTOR_REF,
+      { name: "starts_at", type: "string", required: true, description: "RFC 3339, or a local time 2026-10-20T11:00 in the workspace timezone." },
+      { name: "duration_minutes", type: "integer 5-1440", description: "Default 30." },
+      { name: "ends_at", type: "string", description: "Instead of duration_minutes." },
+      ROUND_OPTIONAL("Omit to use the investor's only open round (else no round)."),
+      { name: "title", type: "string", description: 'Default "Meeting with <name> (<firm>)".' },
+      { name: "location", type: "string", description: "Address or place." },
+      { name: "video_url", type: "string", description: "Video call link." },
+      { name: "agenda", type: "string", description: "What to cover." },
+      { name: "guests", type: "string[]", description: "Up to 10 more people from the same firm (investor references)." },
+      { name: "source", type: '"manual" | "email" | "agent" | "calendar"', description: "Where the meeting came from. Default agent." },
+      { name: "move_to_meeting_stage", type: "boolean", description: "Default true." },
+    ],
+    output: "{meeting: {id, title, starts_at, local, minutes, status, investor, location?, video_url?, round?, by}, created, changed, moved_stage?: {from?, to}, participant?, warnings?}",
+  },
+  {
+    name: "list_meetings",
+    title: "List meetings",
+    access: "read",
+    idempotent: true,
+    description:
+      "Meetings with investors, soonest first (past and needs_outcome: latest first). Use it to prepare the founder's day ('today'), and 'needs_outcome' to find meetings that happened but have no outcome yet; record those with complete_meeting.",
+    params: [
+      { name: "when", type: '"upcoming" | "today" | "week" | "needs_outcome" | "past" | "all"', description: "Default upcoming." },
+      { name: "investor", type: "string", description: "Only this investor (as host or guest)." },
+      ROUND_OPTIONAL("Only this round's meetings."),
+      { name: "status", type: '"scheduled" | "done" | "cancelled" | "no_show"', description: "Filter by status." },
+      { name: "limit", type: "integer 1-200", description: "Default 50." },
+    ],
+    output: "{now, today, timezone, items: [meeting], counts: {returned, needs_outcome}}",
+  },
+  {
+    name: "update_meeting",
+    title: "Reschedule or cancel a meeting",
+    access: "write",
+    idempotent: true,
+    description:
+      "Reschedule a meeting (new starts_at; the length stays unless you pass duration_minutes or ends_at), edit its details, cancel it (status: cancelled) or mark a no-show. Rescheduling a cancelled or no-show meeting brings it back. Every change stays in the meeting's history and on the timeline. To record how a meeting went, use complete_meeting.",
+    params: [
+      { name: "meeting_id", type: "string", required: true, description: "From schedule_meeting or list_meetings." },
+      { name: "starts_at", type: "string", description: "The new start (RFC 3339 or workspace-local)." },
+      { name: "duration_minutes", type: "integer 5-1440", description: "A new length." },
+      { name: "ends_at", type: "string", description: "Instead of duration_minutes." },
+      { name: "status", type: '"scheduled" | "cancelled" | "no_show"', description: "Cancel, mark a no-show, or reopen." },
+      { name: "title, location, video_url, agenda", type: "string", description: "New details." },
+      { name: "note", type: "string", description: "Why; shown on the timeline." },
+    ],
+    output: "{meeting (with history), changed, participant?, warnings?}",
+  },
+  {
+    name: "complete_meeting",
+    title: "Record a meeting's outcome",
+    access: "write",
+    idempotent: true,
+    description:
+      "Mark a meeting done and record the outcome (logged as a meeting on the investor's timeline). Optionally set the next step and the follow-up date for the investor's round in the same call. Repeating it changes nothing. Use move_stage separately if the meeting moved them further (for example to Diligence).",
+    params: [
+      { name: "meeting_id", type: "string", required: true, description: "The meeting." },
+      { name: "outcome", type: "string", description: "How it went, in plain words." },
+      { name: "next_step", type: "string", description: "Saved on the investor's round." },
+      { name: "follow_up_on", type: "date", description: "YYYY-MM-DD." },
+      { name: "follow_up_in_days", type: "integer 0-365", description: "Instead of follow_up_on." },
+      { name: "follow_up_note", type: "string", description: "What the follow-up is for." },
+    ],
+    output: "{meeting, changed, participant?, warnings?}",
   },
   {
     name: "get_dossier",

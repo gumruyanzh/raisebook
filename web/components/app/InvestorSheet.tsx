@@ -34,6 +34,7 @@ import { visibleIndustries } from "@/lib/pipeline";
 import { useOptionalSession, useWorkspace } from "@/lib/session";
 
 import { LogComposer } from "./LogComposer";
+import { NextMeeting } from "./meetings/NextMeeting";
 import { DossierPanel } from "./research/DossierPanel";
 import { FromResearch } from "./research/FromResearch";
 import { takeDossierTab } from "./research/hooks";
@@ -123,7 +124,7 @@ export function NotesEditor({
  *
  * Keyboard while it is open: J / K (or Alt+↓ / Alt+↑) go to the next or previous investor
  * in the page's current order without closing, F opens the follow-up picker (then one key:
- * 0 1 3 M 7 2), N focuses the log box. Its commands also appear in the ⌘K palette.
+ * 0 1 3 M 7 2), N focuses the log box, B schedules a meeting. Its commands also appear in the ⌘K palette.
  */
 export function InvestorSheet({
   open,
@@ -595,6 +596,26 @@ export function InvestorSheet({
         <p className="t-body-s text-muted">
           {name} is not in {round.name}. Open their page to add them to this round.
         </p>
+      ) : null}
+
+      {investorId && (p?.investor ?? investor) ? (
+        <NextMeeting
+          key={`meet-${investorId}`}
+          client={client}
+          wsSlug={wsSlug}
+          investor={(p?.investor ?? investor)!}
+          round={p ? { id: round.id, name: round.name } : null}
+          stage={p?.stage ?? null}
+          stages={stages}
+          timeZone={timeZone}
+          canWrite={canWrite}
+          hotkeys={open}
+          onParticipantChange={(np) => {
+            onParticipantChange(np);
+            onChanged();
+          }}
+          onChanged={() => void loadTimeline(investorId).catch(() => {})}
+        />
       ) : null}
 
       {/* Not contacted yet: who they are and how to reach them come before the log and the

@@ -5,6 +5,7 @@ from raisebook.models.ai import AiUsageMonth, CompanyProfile, WorkspaceAiSetting
 from raisebook.models.imports import ImportRun
 from raisebook.models.investor import Investor
 from raisebook.models.jobs import Job
+from raisebook.models.meeting import CalendarFeed, Meeting, MeetingGuest
 from raisebook.models.ratelimit import RateLimitCounter
 from raisebook.models.research import (
     Dossier,
@@ -28,6 +29,7 @@ __all__ = [
     "Activity",
     "AiUsageMonth",
     "ApiKey",
+    "CalendarFeed",
     "CompanyProfile",
     "DefaultStage",
     "Dossier",
@@ -40,6 +42,8 @@ __all__ = [
     "Invite",
     "Job",
     "LoginToken",
+    "Meeting",
+    "MeetingGuest",
     "Membership",
     "RateLimitCounter",
     "ResearchBatch",

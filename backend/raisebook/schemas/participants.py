@@ -23,6 +23,19 @@ class OwnerOut(BaseModel):
     email: str
 
 
+class MeetingBrief(BaseModel):
+    """The next scheduled meeting, as carried on a participant (board chips) and summaries."""
+
+    id: UUID
+    title: str
+    starts_at: Timestamp
+    ends_at: Timestamp
+    location: str | None = None
+    video_url: str | None = None
+    investor_id: UUID | None = None  # only in summaries (a participant is its own investor)
+    investor_name: str | None = None
+
+
 class ParticipantOut(BaseModel):
     round_id: UUID
     round_slug: str
@@ -43,6 +56,8 @@ class ParticipantOut(BaseModel):
     last_activity_at: Timestamp | None = None
     created_at: Timestamp
     updated_at: Timestamp
+    # The soonest scheduled meeting with this investor (in this round, or in no round).
+    next_meeting: MeetingBrief | None = None
 
 
 class ParticipantCreated(ParticipantOut):
@@ -253,6 +268,13 @@ class FollowUpBlock(BaseModel):
     top: list[FollowUpItem]
 
 
+class MeetingsBlock(BaseModel):
+    today: int  # scheduled meetings today (workspace timezone)
+    upcoming: int  # scheduled meetings that have not ended
+    needs_outcome: int  # scheduled meetings that ended with no outcome yet
+    next: list[MeetingBrief] = []  # the next five, with the investor's id and name
+
+
 class RoundSummaryOut(BaseModel):
     round: RoundWithClose
     money: MoneyOut
@@ -262,3 +284,4 @@ class RoundSummaryOut(BaseModel):
     stale: list[StaleItem]
     recent_activity: list[ActivityOut]
     warnings: list[str]
+    meetings: MeetingsBlock | None = None

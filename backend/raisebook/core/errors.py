@@ -177,6 +177,10 @@ class NotDeletable(Conflict):
     code = "not_deletable"
 
 
+class MeetingDone(Conflict):
+    code = "meeting_done"
+
+
 class SessionConflict(Conflict):
     code = "session_conflict"
     default_message = (

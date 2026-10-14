@@ -31,6 +31,9 @@ API_MODULES: list[str] = [
     "raisebook.api.investors",
     "raisebook.api.activities",
     "raisebook.api.follow_ups",
+    # Meetings and the calendar feed
+    "raisebook.api.meetings",
+    "raisebook.api.calendar",
 ]
 
 # Investor research (docs/RESEARCH-PLAN.md), served only with ``RAISEBOOK_RESEARCH_ENABLED``:

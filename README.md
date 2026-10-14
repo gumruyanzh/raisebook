@@ -55,10 +55,13 @@ The details are on [raisebook.org/privacy](https://raisebook.org/privacy).
   actions are marked in their own color, with the agent's name and model.
 - **Co-founders and advisors** as owners, editors and viewers. Sign in with an emailed link
   or with Google.
+- **Meetings**: schedule them from an investor's file (it moves them to Meeting), see today's
+  on Today and on board cards, record the outcome and next step when they are done, and
+  subscribe to all of them from Google, Apple or Outlook Calendar with a private feed URL.
 - **A sample workspace** with fictional investors, to try everything before your own data.
 - **CSV import** with column mapping, preview and dedupe. **CSV and JSON export** of a round,
   all investors or the whole workspace. Hard delete of anything, at any time.
-- **A REST API** under `/v1` and **an MCP server** at `/mcp` with 17 tools (no deletes).
+- **A REST API** under `/v1` and **an MCP server** at `/mcp` with 21 tools (no deletes).
 
 ## Connect your agent (MCP quickstart)
 

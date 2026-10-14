@@ -29,6 +29,8 @@ import { ROLE_LABEL } from "@/lib/api/types";
 import { formatDate, isoDate } from "@/lib/format";
 import { useSession } from "@/lib/session";
 
+import { CalendarFeedSettings } from "../meetings/CalendarFeedSettings";
+
 /** "Chrome on macOS" from a user agent; good enough to tell your own browsers apart. */
 function describeAgent(ua: string | null | undefined): string {
   if (!ua) return "Unknown browser";
@@ -195,6 +197,8 @@ export function Account({ me, workspaces, today }: { me: Me; workspaces: Workspa
           </Table>
         </TableScroll>
       </section>
+
+      <CalendarFeedSettings today={today} />
 
       <section aria-label="Sessions">
         <SectionLabel

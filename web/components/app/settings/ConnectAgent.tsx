@@ -42,6 +42,10 @@ export const MCP_TOOLS: { name: string; does: string; write: boolean }[] = [
   { name: "record_commitment", does: "Record a committed amount and move them to Committed.", write: true },
   { name: "import_investors_csv", does: "Import CSV text, with a dry-run preview first.", write: true },
   { name: "export_round", does: "A round's pipeline as CSV or JSON.", write: false },
+  { name: "schedule_meeting", does: "Put a meeting on the calendar and move them to Meeting (safe to repeat).", write: true },
+  { name: "list_meetings", does: "Today's, this week's and upcoming meetings, and the ones that need an outcome.", write: false },
+  { name: "update_meeting", does: "Reschedule, edit, cancel or mark a no-show; the history is kept.", write: true },
+  { name: "complete_meeting", does: "Mark a meeting done with the outcome, next step and follow-up.", write: true },
 ];
 
 const PLACEHOLDER = "rb_live_XXXX";

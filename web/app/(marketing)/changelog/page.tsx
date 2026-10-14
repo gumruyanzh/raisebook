@@ -23,6 +23,38 @@ interface Entry {
 const ENTRIES: Entry[] = [
   {
     date: "2026-10-14",
+    version: "0.3.0",
+    status: "Unreleased",
+    title: "Meetings",
+    groups: [
+      {
+        label: "Meetings",
+        items: [
+          "Schedule meetings with investors (press B in an investor's file): date and time in the workspace timezone, place, video link, agenda and colleagues from the same firm. Scheduling moves them to the Meeting stage when they are earlier in the pipeline.",
+          "A Meetings page: what needs an outcome, today, this week and later. Marking a meeting done asks for a quick outcome, the next step and a follow-up, and logs the meeting on the timeline.",
+          "Today's meetings at the top of Today with Join and Open brief; a \"Meeting today 11:00\" chip on board cards; the next meeting in the investor file; upcoming meetings on the round overview.",
+          "Reschedules, cancellations and no-shows keep their history on the timeline.",
+        ],
+      },
+      {
+        label: "Calendar",
+        items: [
+          "Download any meeting as an .ics file or add it to Google Calendar.",
+          "A private calendar feed (Account → Calendar) that Google, Apple or Outlook Calendar can subscribe to, covering every workspace you belong to. Replace or turn off the URL any time.",
+        ],
+      },
+      {
+        label: "API and agents",
+        items: [
+          "REST: /v1/meetings (list, schedule, reschedule, cancel, complete, .ics).",
+          "Four MCP tools: schedule_meeting, list_meetings, update_meeting and complete_meeting (21 tools in all).",
+          "Meetings are in the workspace JSON export.",
+        ],
+      },
+    ],
+  },
+  {
+    date: "2026-10-14",
     version: "0.2.0",
     status: "Public launch",
     title: "Open to everyone",

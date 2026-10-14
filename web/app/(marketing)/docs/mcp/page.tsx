@@ -12,7 +12,7 @@ import {
   P,
   Ul,
 } from "@/components/marketing/docs/Prose";
-import { MCP_URL, SNIPPETS_CHECKED_ON, pageMeta } from "@/components/marketing/site";
+import { MCP_TOOL_COUNT, MCP_URL, SNIPPETS_CHECKED_ON, pageMeta } from "@/components/marketing/site";
 import { clientTabs } from "@/components/marketing/snippets";
 import { CodeBlock } from "@/components/ui";
 
@@ -52,7 +52,7 @@ export default function McpSetup() {
         lede={
           <p>
             Raisebook runs an MCP server, so Claude Code, Codex, Cursor or any MCP client can work
-            your pipeline: log calls, move stages, set follow-ups, import a list. The agent uses a
+            your pipeline: log calls, move stages, set follow-ups, schedule meetings, import a list. The agent uses a
             key from your workspace, and every write lands on the timeline under its name.
           </p>
         }
@@ -72,7 +72,7 @@ export default function McpSetup() {
               <C>Authorization: Bearer rb_live_…</C> or <C>X-API-Key: rb_live_…</C>
             </span>,
           ],
-          [<span key="o" className="text-muted">Tools</span>, <A key="l" href="/docs/mcp-tools">22 tools, no deletes</A>],
+          [<span key="o" className="text-muted">Tools</span>, <A key="l" href="/docs/mcp-tools">{`${MCP_TOOL_COUNT} tools, no deletes`}</A>],
         ]}
       />
 

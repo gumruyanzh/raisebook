@@ -31,6 +31,7 @@ from raisebook.models.activity import Activity
 from raisebook.models.enums import LOGGABLE_ACTIVITY_KINDS
 from raisebook.models.imports import ImportRun
 from raisebook.models.investor import Investor
+from raisebook.models.meeting import Meeting, MeetingGuest
 from raisebook.models.research import (
     Dossier,
     DossierFacts,
@@ -587,6 +588,7 @@ async def export_workspace_json(
             select(ImportRun).where(ImportRun.workspace_id == wid).order_by(ImportRun.created_at)
         )
     )
+    meetings = await _meeting_dicts(db, ws)
     doc = {
         "format": "raisebook.export",
         "version": 1,
@@ -605,6 +607,7 @@ async def export_workspace_json(
         "investors": [_investor_dict(i) for i in investors],
         "participants": participants,
         "activities": await _activity_dicts(db, ws, activities),
+        "meetings": meetings,
         "import_runs": [
             {
                 "id": str(r.id),
@@ -624,6 +627,62 @@ async def export_workspace_json(
         doc["research"] = await _research_dict(db, ws)
     name = f"raisebook-{ws.slug}-{_stamp(ws, now)}.json"
     return ExportFile(name, "application/json", _json(doc), len(investors))
+
+
+async def _meeting_dicts(db: AsyncSession, ws: WorkspaceContext) -> list[dict[str, Any]]:
+    """Every meeting (all statuses) with its guests and who scheduled it."""
+    rows = list(
+        await db.scalars(
+            select(Meeting)
+            .where(Meeting.workspace_id == ws.workspace_id)
+            .order_by(Meeting.starts_at, Meeting.id)
+        )
+    )
+    if not rows:
+        return []
+    guests: dict[UUID, list[str]] = defaultdict(list)
+    for mid, iid in (
+        await db.execute(
+            select(MeetingGuest.meeting_id, MeetingGuest.investor_id).where(
+                MeetingGuest.workspace_id == ws.workspace_id
+            )
+        )
+    ).tuples():
+        guests[mid].append(str(iid))
+    names = await display_names(db, (m.actor_user_id for m in rows))
+    out: list[dict[str, Any]] = []
+    for m in rows:
+        if m.actor_type == "user":
+            by = names.get(m.actor_user_id, FORMER_MEMBER) if m.actor_user_id else FORMER_MEMBER
+        else:
+            by = m.actor_label or "raisebook"
+        out.append(
+            {
+                "id": str(m.id),
+                "investor_id": str(m.investor_id),
+                "guest_ids": guests.get(m.id, []),
+                "round_id": str(m.round_id) if m.round_id else None,
+                "title": m.title,
+                "starts_at": _ts(m.starts_at),
+                "ends_at": _ts(m.ends_at),
+                "timezone": m.timezone,
+                "location": m.location,
+                "video_url": m.video_url,
+                "agenda": m.agenda,
+                "status": m.status,
+                "outcome": m.outcome,
+                "outcome_activity_id": str(m.outcome_activity_id)
+                if m.outcome_activity_id
+                else None,
+                "source": m.source,
+                "created_by": {"type": m.actor_type, "label": by, "via": m.via},
+                "completed_at": _ts(m.completed_at),
+                "cancelled_at": _ts(m.cancelled_at),
+                "created_at": _ts(m.created_at),
+                "updated_at": _ts(m.updated_at),
+            }
+        )
+    return out
 
 
 async def _research_dict(db: AsyncSession, ws: WorkspaceContext) -> dict[str, Any]:

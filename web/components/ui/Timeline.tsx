@@ -44,7 +44,7 @@ const stageLabel = (v: unknown): string =>
  */
 export function activitySentence(
   a: Activity,
-  { withInvestor = false, currency = "USD" }: { withInvestor?: boolean; currency?: string } = {},
+  { withInvestor = false, currency = "USD", timeZone }: { withInvestor?: boolean; currency?: string; timeZone?: string } = {},
 ): string {
   const who = withInvestor ? a.investor_name : "";
   const with_ = who ? ` with ${who}` : "";
@@ -60,7 +60,23 @@ export function activitySentence(
     case "call":
       return `logged a call${with_}`;
     case "meeting":
-      return `logged a meeting${with_}`;
+      return d.meeting_id ? `recorded how the meeting${with_} went` : `logged a meeting${with_}`;
+    case "meeting_scheduled": {
+      const at = s(d.starts_at);
+      return `scheduled a meeting${with_}${at ? ` for ${formatDateTime(at, timeZone)}` : ""}`;
+    }
+    case "meeting_updated": {
+      const ch = s(d.change);
+      if (ch === "rescheduled") {
+        const to = s(d.to_starts_at);
+        return `moved the meeting${with_}${to ? ` to ${formatDateTime(to, timeZone)}` : ""}`;
+      }
+      if (ch === "cancelled") return `cancelled the meeting${with_}`;
+      if (ch === "no_show") return `marked the meeting${with_} a no-show`;
+      if (ch === "reopened") return `reopened the meeting${with_}`;
+      if (ch === "deleted") return `deleted a meeting${with_}`;
+      return `edited the meeting${with_}`;
+    }
     case "stage_change": {
       const to = stageLabel(d.to);
       const from = stageLabel(d.from);
@@ -342,7 +358,7 @@ export function Timeline({
             {nested ? null : <ActorName actor={a.actor} />}
             <span className="text-fg">
               {linkName(
-                (!nested && sentenceFor?.(a)) || activitySentence(a, { withInvestor: withInvestor || nested, currency }),
+                (!nested && sentenceFor?.(a)) || activitySentence(a, { withInvestor: withInvestor || nested, currency, timeZone }),
                 a,
                 withInvestor || nested ? investorHref : undefined,
               )}

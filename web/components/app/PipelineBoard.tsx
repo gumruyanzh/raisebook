@@ -24,6 +24,7 @@ import { cn } from "@/lib/cn";
 import { formatDateTime, moneyCompact, num } from "@/lib/format";
 import { boardTrack, cardSlot, defaultColumnSort, triageTargets } from "@/lib/pipeline";
 
+import { useViewerTimeZone } from "./meetings/useViewerTimeZone";
 import { byFit } from "./util";
 
 export interface AgentMark {
@@ -612,6 +613,7 @@ function cardView(
   currency: string,
   showNextStep: boolean,
   timeZone?: string,
+  viewerTz?: string,
 ): CardView {
   const check = checkRange(extra?.check_min, extra?.check_max, currency);
   const all = cardMeta({ type: p.investor.type, stageFocus: extra?.stage_focus, industries: extra?.industries });
@@ -619,7 +621,7 @@ function cardView(
   // The lost stage has no likelihood line: 0% on 230 cards says nothing the column does not.
   const l = stage.kind === "lost" ? null : closeLikelihood({ ...p, stage });
   const odds = l ? { value: l.value, why: `Likelihood to close this round. ${l.why}`, won: stage.kind === "won" } : null;
-  const slot = cardSlot(p, today, currency);
+  const slot = cardSlot(p, today, currency, viewerTz ? { timeZone: viewerTz } : undefined);
   const at = p.last_activity_at;
   const real =
     at && (stage.kind === "active" || stage.kind === "won" || Date.parse(at) - Date.parse(p.created_at) > REAL_TOUCH_MS);
@@ -709,9 +711,10 @@ function StageColumn({
   const body = useRef<HTMLDivElement>(null);
   const won = s.kind === "won";
   // Each card's rows (and so its height) are known up front, so the column stays windowed.
+  const viewerTz = useViewerTimeZone(timeZone ?? "UTC");
   const views = useMemo(
-    () => cards.map((p) => cardView(p, s, extras[p.investor.id], today, currency, showNextStep, timeZone)),
-    [cards, s, extras, today, currency, showNextStep, timeZone],
+    () => cards.map((p) => cardView(p, s, extras[p.investor.id], today, currency, showNextStep, timeZone, viewerTz)),
+    [cards, s, extras, today, currency, showNextStep, timeZone, viewerTz],
   );
   const rowH = useCallback((i: number) => dealCardHeight(views[i]!.rows) + CARD_GAP, [views]);
 

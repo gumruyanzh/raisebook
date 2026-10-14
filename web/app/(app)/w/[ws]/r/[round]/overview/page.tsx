@@ -5,6 +5,7 @@ import { load, optional, roundOr404, workspaceFor } from "@/components/app/load"
 import { RoundHeader } from "@/components/app/RoundHeader";
 import { RoundOverview } from "@/components/app/RoundOverview";
 import { listActivities } from "@/lib/api/activities";
+import { listMeetings, type Meeting } from "@/lib/api/meetings";
 import { getRoundSummary, listFollowUps } from "@/lib/api/rounds";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export default async function OverviewPage({ params }: { params: Promise<Params>
   const res = await load(async () => {
     const round = await roundOr404(client, ref);
     const week = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-    const [summary, activity, followUps, agentActivity] = await Promise.all([
+    const [summary, activity, followUps, agentActivity, meetings] = await Promise.all([
       getRoundSummary(client, round.id),
       optional(listActivities(client, { round: round.id, limit: 50, collapse_runs: true }).then((r) => r.data), []),
       optional(listFollowUps(client, { round: round.id, within_days: 7, include_overdue: true, limit: 200 }), {
@@ -35,8 +36,15 @@ export default async function OverviewPage({ params }: { params: Promise<Params>
         listActivities(client, { round: round.id, actor_type: "agent", since: week, limit: 200 }).then((r) => r.data),
         [],
       ),
+      optional(
+        Promise.all([
+          listMeetings(client, { round: round.id, when: "needs_outcome", order: "desc", limit: 5 }),
+          listMeetings(client, { round: round.id, when: "upcoming", limit: 5 }),
+        ]).then(([a, b]) => [...a.data, ...b.data]),
+        [] as Meeting[],
+      ),
     ]);
-    return { round, summary, activity, followUps, agentActivity };
+    return { round, summary, activity, followUps, agentActivity, meetings };
   });
   if (!res.ok) return <ApiErrorState error={res.error} title="The overview could not load" retryHref={`/w/${ws}/r/${ref}/overview`} />;
   return (

@@ -104,6 +104,25 @@ export const REST_GROUPS: EndpointGroup[] = [
     ],
   },
   {
+    id: "meetings",
+    title: "Meetings and calendar",
+    intro:
+      "Meetings with investors. Times are RFC 3339; a time without an offset is read in the workspace timezone. Scheduling in a round moves the investor to the Meeting stage when they are earlier (move_to_meeting_stage, default true). Every change is on the timeline.",
+    endpoints: [
+      { method: "GET", path: "/v1/meetings?investor_id=&round=&status=&when=upcoming|needs_outcome|all&from=&to=&order=&limit=&cursor=", auth: "read", response: "{data: Meeting[], next_cursor}" },
+      { method: "POST", path: "/v1/meetings", auth: "write", request: "{investor_id, starts_at, duration_minutes? | ends_at?, round?, title?, location?, video_url?, agenda?, guest_ids?, source?, move_to_meeting_stage?}", response: "201 {meeting, created, moved_stage?, participant?, warnings}. The same investor at the same start returns the existing meeting (200, created: false)." },
+      { method: "GET", path: "/v1/meetings/{id}", auth: "read", response: "Meeting with its history" },
+      { method: "PATCH", path: "/v1/meetings/{id}", auth: "write", request: "{starts_at?, ends_at?, duration_minutes?, title?, location?, video_url?, agenda?, guest_ids?, round?, status?: scheduled|cancelled|no_show, note?}", response: "{meeting, changed}. 409 meeting_done for a meeting already done." },
+      { method: "POST", path: "/v1/meetings/{id}/complete", auth: "write", request: "{outcome?, next_step?, follow_up_on? | follow_up_in_days?, follow_up_note?}", response: "{meeting, activity, participant?}. The outcome is logged as a meeting activity." },
+      { method: "DELETE", path: "/v1/meetings/{id}", auth: "write", response: "204. For mistakes; cancel a meeting to keep its history." },
+      { method: "GET", path: "/v1/meetings/{id}/ics", auth: "read", response: "text/calendar file" },
+      { method: "GET", path: "/v1/me/calendar-feed", auth: "session", response: "{active, token_hint?, created_at?, last_used_at?}" },
+      { method: "POST", path: "/v1/me/calendar-feed", auth: "session", response: "201 {url, webcal_url, …}. The URL is shown once; creating again replaces it." },
+      { method: "DELETE", path: "/v1/me/calendar-feed", auth: "session", response: "204. The feed stops working." },
+      { method: "GET", path: "/v1/calendar/{token}.ics", auth: "the token", response: "text/calendar: meetings in every workspace you belong to, 60 days back to 400 days ahead" },
+    ],
+  },
+  {
     id: "imports-exports",
     title: "Imports and exports",
     endpoints: [

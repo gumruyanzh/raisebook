@@ -48,7 +48,11 @@ SERVER_INSTRUCTIONS = (
     "committed. Every write is recorded on the investor's timeline under your agent name, and "
     "the founder sees it. Never invent investor details; leave unknown fields empty. "
     "import_investors_csv defaults to dry_run=true: show the human the preview counts, then "
-    "rerun with dry_run=false."
+    "rerun with dry_run=false. Meetings: schedule_meeting puts a future meeting on the "
+    "calendar (and moves the investor to the Meeting stage), list_meetings shows what is "
+    "coming up and which past meetings still need an outcome, update_meeting reschedules or "
+    "cancels, and complete_meeting records how it went with the next step. Times without an "
+    "offset are in the workspace timezone."
 )
 RESEARCH_INSTRUCTIONS = (
     " Research: get_dossier reads an investor's cited dossier; research_investor runs research "

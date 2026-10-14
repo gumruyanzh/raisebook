@@ -42,6 +42,7 @@ import { useSession, useWorkspace } from "@/lib/session";
 import { NotesEditor } from "./InvestorSheet";
 import { InvestorProfile } from "./InvestorProfile";
 import { LogComposer } from "./LogComposer";
+import { NextMeeting } from "./meetings/NextMeeting";
 import { CommitmentDialog, useParticipantSave } from "./ParticipantFields";
 import { ReachOut } from "./ReachOut";
 import { DossierPanel } from "./research/DossierPanel";
@@ -357,6 +358,11 @@ export function InvestorPage({
   const who = [inv.title, inv.firm].filter(Boolean).join(" · ");
   const entries = `${timeline.length}${cursor ? "+" : ""}`;
 
+  // Meetings go to the investor's only open round (the API does the same when none is given).
+  const openParts = parts.filter((p) => roundsById[p.round_id]?.status === "open");
+  const meetPart = openParts.length === 1 ? openParts[0] : undefined;
+  const meetRound = meetPart ? roundsById[meetPart.round_id] : undefined;
+
   return (
     <div className="flex flex-col gap-14">
       <PageHeader
@@ -454,6 +460,22 @@ export function InvestorPage({
               </ul>
             )}
           </section>
+
+          <div className="rounded-md border border-line bg-surface p-16">
+            <NextMeeting
+              client={client}
+              wsSlug={workspace.slug}
+              investor={inv}
+              round={meetRound ? { id: meetRound.id, name: meetRound.name } : null}
+              stage={meetPart?.stage ?? null}
+              stages={meetRound?.stages}
+              timeZone={tz}
+              canWrite={canWrite}
+              hotkeyPriority={0}
+              onParticipantChange={onPartChange}
+              onChanged={() => void reloadTimeline()}
+            />
+          </div>
 
           <section id="dossier" aria-label="Dossier" className="scroll-mt-80 rounded-md border border-line bg-surface p-16">
             <SectionLabel>Dossier</SectionLabel>

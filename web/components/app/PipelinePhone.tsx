@@ -10,6 +10,9 @@ import { cn } from "@/lib/cn";
 import { money, moneyCompact, num, priorityFromFit } from "@/lib/format";
 import { cardSlot, GROUP_LABEL, hiddenPipFit, nextUpBuckets, PRIORITY_ORDER, type NextUpBucket } from "@/lib/pipeline";
 
+import { useWorkspace } from "@/lib/session";
+
+import { useViewerTimeZone } from "./meetings/useViewerTimeZone";
 import { bucketCopy, dueRows, dueText, stripMessage, type LedgerFacts } from "./PipelineLedger";
 
 /** Two lines in 48px: about nine investors above the fold once the list is scrolled. */
@@ -86,6 +89,7 @@ export function PipelinePhone({
   /** Opens Add investor (writers only): the phone's way to add after the first investor. */
   onAdd?: () => void;
 }) {
+  const viewerTz = useViewerTimeZone(useWorkspace().workspace.timezone);
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const p of all) c[p.stage.key] = (c[p.stage.key] ?? 0) + 1;
@@ -367,7 +371,7 @@ export function PipelinePhone({
             if (r.kind === "group") return groupHead(r, style);
             const p = r.p;
             const id = p.investor.id;
-            const slot = cardSlot(p, today, round.currency);
+            const slot = cardSlot(p, today, round.currency, { timeZone: viewerTz });
             const isSel = selected?.has(id) ?? false;
             return (
               <div key={id} style={{ ...style, height: ROW_H }} className={cn("flex items-center border-b border-line", isSel && "bg-accent-soft")}>
@@ -410,7 +414,11 @@ export function PipelinePhone({
                   <span className="flex min-w-0 items-center gap-8">
                     <span className="t-body-s min-w-0 flex-1 truncate text-muted">{p.investor.firm || p.investor.title || ""}</span>
                     {slot ? (
-                      slot.kind === "due" || slot.kind === "money" || slot.kind === "soon" ? (
+                      slot.kind === "meeting" ? (
+                        <Chip tone={slot.today ? "soon" : "type"} title={slot.title}>
+                          {slot.text}
+                        </Chip>
+                      ) : slot.kind === "due" || slot.kind === "money" || slot.kind === "soon" ? (
                         <Chip tone={slot.kind === "due" ? "due" : slot.kind === "money" ? "money" : "soon"}>{slot.text}</Chip>
                       ) : (
                         <span className="font-mono text-[12px] text-muted">{slot.text}</span>

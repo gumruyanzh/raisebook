@@ -291,6 +291,8 @@ export interface PipelineItem {
   last_activity_at?: string | null;
   created_at: string;
   updated_at: string;
+  /** The next scheduled meeting (the card's "Meeting today 11:00" chip), only when set. */
+  next_meeting?: Participant["next_meeting"];
   industries: string[];
   search: string;
   /** Where the investor came from ("SF Tech Week"), only when set. */
@@ -369,6 +371,7 @@ export function toPipelineItems(participants: Participant[], investors: Investor
     if (p.next_step) item.next_step = p.next_step;
     if (p.owner) item.owner = p.owner;
     if (p.last_activity_at) item.last_activity_at = p.last_activity_at;
+    if (p.next_meeting) item.next_meeting = p.next_meeting;
     if (inv?.source) item.source = inv.source;
     if (inv) Object.assign(item, cardFacts(inv));
     return item;

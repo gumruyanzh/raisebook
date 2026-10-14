@@ -45,6 +45,7 @@ import { useHotkey } from "@/lib/hotkeys";
 import { useOptionalSession, useWorkspace } from "@/lib/session";
 import {
   breakdown,
+  cardSlot,
   claimsContact,
   cursorAfterMove,
   followOptions,
@@ -71,6 +72,7 @@ import {
 } from "@/lib/pipeline";
 
 import { checkSize } from "./InvestorSheet";
+import { useViewerTimeZone } from "./meetings/useViewerTimeZone";
 import { FromResearch } from "./research/FromResearch";
 import { forgetInvestorResearch } from "./research/hooks";
 import { TriageResearch } from "./research/TriageResearch";
@@ -1744,6 +1746,9 @@ function InvestorPane({
   const who = [p.investor.title, p.investor.firm].filter(Boolean).join(" · ");
   const person = reachPerson(p, inv);
   const draft = draftHref(person, { workspaceName, round, sender: senderName });
+  // A scheduled meeting shows as a chip under the name (the same words as the board card).
+  const viewerTz = useViewerTimeZone(timeZone);
+  const meetSlot = p.next_meeting ? cardSlot({ ...p, follow_up_on: null, follow_up_state: null }, today, round.currency, { timeZone: viewerTz }) : null;
 
   return (
     <div className="flex flex-col gap-16 px-32 pt-22 pb-24 max-xl:px-20">
@@ -1765,6 +1770,11 @@ function InvestorPane({
         ))}
         {industries.length > 3 ? <span className="t-micro text-muted">+{industries.length - 3}</span> : null}
         {source ? <Chip tone="tag">{source}</Chip> : null}
+        {meetSlot?.kind === "meeting" ? (
+          <Chip tone={meetSlot.today ? "soon" : "type"} title={meetSlot.title}>
+            {meetSlot.text}
+          </Chip>
+        ) : null}
         {decidedStage ? (
           <span className="t-body-s ml-auto inline-flex items-center gap-6 text-muted">
             <StageDot color={decidedStage.color} />

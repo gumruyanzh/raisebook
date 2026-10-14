@@ -302,3 +302,27 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   `design/research/shots/`, taken against a throwaway database and a local fake OpenRouter;
   the re-shoot after the verification fixes is in `design/research/final/`. The fake must cite
   a `linkedin.com/in/…` page for a clear identity, or the run stops at "Is this them?".
+
+## Meetings (SPEC §3.9, §5.9, §6.8; keep these)
+- `services/meetings.py` is the only writer of `meetings`/`meeting_guests`; REST
+  (`api/meetings.py`) and MCP (`mcp/tools/meetings.py`: schedule_meeting, list_meetings,
+  update_meeting, complete_meeting; core tools, 21 without research) call it. Every change writes
+  `meeting_scheduled` / `meeting_updated` (`data.change`, `data.seq`) or, when done, a `meeting`
+  activity with `data.meeting_id`; that timeline is the meeting's history. Same investor + same
+  start = the same meeting (`created: false`). `done` is final (409 `meeting_done`).
+- Scheduling in a round moves an open/active investor that is earlier to the Meeting stage (key
+  `meeting`, else a "Meeting" label) unless `move_to_meeting_stage=false`; never moves back.
+  Guests are only people at the same firm (`norm_firm`).
+- Deletion follows investors (investor/guest cascade; a round delete sets `round_id` NULL).
+  Meetings are in the workspace JSON export.
+- `services/calendar_feed.py`: one hashed `rbcal_` secret per user, shown once; the feed reads
+  the user's current memberships on every request (the only per-user cross-workspace read
+  besides research reuse). Feed routes are org-less in `tests/isolation`.
+- Web: pure rules in `web/lib/meetings.ts` (unit tested): chip text, `meetingBeatsFollowUp`,
+  groups, Google Calendar link, `zonedToUtc`. Times are entered in the workspace timezone and
+  shown in the viewer's (`useViewerTimeZone`, workspace zone on the server render). The card
+  slot (`cardSlot(…, {timeZone})`) shows "Meeting today 11:00" / "Wed 12:00" instead of the
+  follow-up when the meeting comes first and no follow-up is due. B schedules in the investor
+  sheet, the investor page and Meetings; `g m` goes to Meetings. Components live in
+  `web/components/app/meetings/`.
+- Screenshots (1440 light and dark, 390): `design/meetings/*.jpg` (fixtures: `design/meetings/fixtures/seed.py`).

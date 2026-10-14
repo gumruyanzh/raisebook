@@ -16,6 +16,7 @@ TOOL_MODULES: list[str] = [
     "raisebook.mcp.tools.investors",  # AM: search_investors, get_investor, add/update_investor
     "raisebook.mcp.tools.pipeline",  # AM: add_to_round, move_stage, log_activity, …
     "raisebook.mcp.tools.data",  # IE: import_investors_csv, export_round
+    "raisebook.mcp.tools.meetings",  # schedule/list/update/complete_meeting
 ]
 
 # Investor research (RESEARCH-PLAN §7): get_dossier, list_research_runs, research_investor,

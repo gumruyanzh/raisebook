@@ -70,7 +70,7 @@ check the promise in the code.
   and keyboard), Table (sort, filter), Investor sheet. Round overview page. Investors directory
   and investor page.
 - Workspace API keys with scopes, a REST API under `/v1` with OpenAPI, and an MCP server at
-  `/mcp` with the 17 tools in §6 (plus the 5 research tools of §6.7, unreleased and served
+  `/mcp` with the 17 tools in §6 and the 4 meeting tools of §6.8 (plus the 5 research tools of §6.7, unreleased and served
   only with `RAISEBOOK_RESEARCH_ENABLED`). Rate limits per key.
 - CSV import (mapping, preview, dedupe), CSV and JSON export, prototype JSON import (should
   have, built after CSV).
@@ -574,6 +574,63 @@ Input parsing accepts labels and common aliases case-insensitively: `VC`, `ventu
 `Angel investor`, `FO`, `family office`, `CVC`, `corporate`, `accelerator`, `scout`; `SAFE`,
 `post-money SAFE`, `priced`, `equity`, `note`, `convertible`.
 
+### 3.9 Meetings (migration 0008)
+
+A meeting is time on the calendar with one investor (`investor_id`) and, optionally, more
+people from the **same firm** (`meeting_guests`, at most 10). It can belong to a round.
+
+```sql
+CREATE TABLE meetings (
+  id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspaces ON DELETE CASCADE,
+  investor_id uuid NOT NULL, round_id uuid,
+  title text NOT NULL (1-200), starts_at timestamptz NOT NULL, ends_at timestamptz NOT NULL,
+  timezone text NOT NULL,              -- the workspace timezone when it was scheduled
+  location text (≤500), video_url text (≤1000, http/https), agenda text (≤5000),
+  status text NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','done','cancelled','no_show')),
+  outcome text (≤5000), outcome_activity_id uuid REFERENCES activities ON DELETE SET NULL,
+  source text NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','email','agent','calendar')),
+  sequence integer NOT NULL DEFAULT 0,  -- ICS SEQUENCE, +1 on every change
+  completed_at, cancelled_at timestamptz,
+  actor_type, actor_user_id, api_key_id, actor_label, agent_model, via,   -- who scheduled it
+  created_at, updated_at,
+  UNIQUE (workspace_id, id),
+  CHECK (ends_at > starts_at AND ends_at <= starts_at + interval '24 hours'),
+  FOREIGN KEY (workspace_id, investor_id) REFERENCES investors (workspace_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (workspace_id, round_id) REFERENCES rounds (workspace_id, id) ON DELETE SET NULL (round_id)
+);
+CREATE TABLE meeting_guests (meeting_id, investor_id, workspace_id,
+  PRIMARY KEY (meeting_id, investor_id), composite FKs to meetings and investors, both CASCADE);
+CREATE TABLE calendar_feeds (id, user_id UNIQUE REFERENCES users ON DELETE CASCADE,
+  token_hash bytea UNIQUE, token_hint text, last_used_at, created_at);
+```
+
+Rules (`services/meetings.py`):
+- **Deletion follows investors**: deleting the investor deletes their meetings; deleting a
+  guest removes them from the meeting; deleting a round keeps the meeting without a round;
+  workspace and account deletes cascade. `DELETE /v1/meetings/{id}` is for mistakes;
+  cancelling keeps the history.
+- **Round**: given, or the investor's only open-round participation, else none.
+- **Stage**: scheduling in a round moves the investor to the round's Meeting stage (key
+  `meeting`, else a stage labelled "Meeting") when their stage is open or active and earlier
+  (`move_to_meeting_stage`, default true); an investor not in that round is added there.
+  A later stage (Diligence) is never moved back.
+- **Idempotent scheduling**: the same investor at the same start (still scheduled) returns the
+  existing meeting with `created: false` and writes nothing.
+- **Status**: `scheduled → cancelled | no_show` (and back with `scheduled`); rescheduling a
+  cancelled or no-show meeting brings it back. `done` is final (409 `meeting_done`).
+  Marking done is refused more than 30 minutes before the start.
+- **Times**: a time without an offset is read in the workspace timezone; a bare date is
+  refused (a meeting needs a time). Up to 1 year back and 2 years ahead. The web enters times
+  in the workspace timezone and shows them in the viewer's.
+- **Audit trail**: `meeting_scheduled`, then one `meeting_updated` per change (§8.1), and the
+  outcome as a `meeting` activity with `data.meeting_id`; `GET /v1/meetings/{id}` returns
+  them as `history`.
+- **Calendar feed**: one secret per user (`rbcal_…`, SHA-256 stored, shown once). The feed
+  reads meetings in the workspaces the user belongs to **at request time** (scheduled, done
+  and no-show as events, cancelled as `STATUS:CANCELLED`), 60 days back to 400 days ahead.
+  This is the only per-user read across workspaces besides research reuse, and it never
+  reads a workspace the user is not a member of.
+
 ---
 
 ## 4. Authentication and authorization
@@ -760,6 +817,7 @@ stateless transport, so there is no automatic fallback. `core/actor.py` defines
 | 404 | `not_found`, `workspace_not_found` | missing or other-workspace resource |
 | 409 | `duplicate` | unique conflict; `details.existing` holds the existing object (investor, round) |
 | 409 | `ambiguous_reference` | an investor or round reference matches more than one; `details.candidates` lists up to 10 `{id, name, firm}` |
+| 409 | `meeting_done` | a done meeting cannot be rescheduled, cancelled or edited |
 | 409 | `stage_in_use`, `last_owner`, `not_in_round`, `already_member`, `invite_mismatch`, `transfer_ownership_first` | state conflicts |
 | 413 | `payload_too_large` | body or inline export too large |
 | 422 | `validation_error` | Pydantic or service validation; `details: [{"loc": ["body","fit"], "msg": "…", "type": "…"}]` |
@@ -959,6 +1017,35 @@ type ImportResult = { import_run_id: string; counts: { rows, created, updated, s
                       created: { row: number; id: string; name: string }[];
                       round?: { id: string; slug: string; name: string } };
 ```
+
+### 5.9 Meetings and the calendar feed
+
+| Method & path | Scope | Request | Response |
+|---|---|---|---|
+| `GET /v1/meetings` | read | query: `investor_id` (host or guest), `round`, `status` (repeatable), `when=upcoming\|needs_outcome\|all`, `from`, `to` (bounds on the start), `order`, `limit`, `cursor` | `{data: Meeting[], next_cursor}` |
+| `POST /v1/meetings` | write | `{investor_id, starts_at, duration_minutes? (default 30) \| ends_at?, round?, title?, location?, video_url?, agenda?, guest_ids?, source?, move_to_meeting_stage? = true}` | 201 `{meeting, created, changed, moved_stage?: {from?, to}, participant?, activity?, warnings}`; 200 with `created: false` for the same investor and start |
+| `GET /v1/meetings/{id}` | read | – | Meeting with `history` |
+| `PATCH /v1/meetings/{id}` | write | `{starts_at?, ends_at?, duration_minutes?, round?, title?, location?, video_url?, agenda?, guest_ids?, status?: scheduled\|cancelled\|no_show, note?}` | `{meeting, changed, participant?}`; 409 `meeting_done` |
+| `POST /v1/meetings/{id}/complete` | write | `{outcome?, next_step?, follow_up_on? \| follow_up_in_days?, follow_up_note?}` | `{meeting, activity, participant?, warnings}`; repeating changes nothing |
+| `DELETE /v1/meetings/{id}` | write | – | 204 (a `meeting_updated` `deleted` entry stays on the timeline) |
+| `GET /v1/meetings/{id}/ics` | read | – | `text/calendar` attachment |
+| `GET /v1/me/calendar-feed` | session | – | `{active, token_hint?, created_at?, last_used_at?}` |
+| `POST /v1/me/calendar-feed` | session | – | 201 `{url, webcal_url, …}` (shown once; replaces any earlier URL) |
+| `DELETE /v1/me/calendar-feed` | session | – | 204 |
+| `GET /v1/calendar/{token}.ics` | the token | – | `text/calendar` feed (per-IP `anon_ip` limit); 404 for an unknown token |
+
+```ts
+type MeetingBrief = { id; title; starts_at; ends_at; location?; video_url?; investor_id?; investor_name? };
+type Meeting = { id; investor: InvestorCompact; guests: InvestorCompact[]; round?: {id, slug, name};
+  title; starts_at; ends_at; duration_minutes; timezone; location?; video_url?; agenda?;
+  status: "scheduled"|"done"|"cancelled"|"no_show"; needs_outcome: boolean; outcome?;
+  outcome_activity_id?; source: "manual"|"email"|"agent"|"calendar"; created_by: Actor;
+  created_at; updated_at; completed_at?; cancelled_at?;
+  history: {at, change, from_starts_at?, to_starts_at?, by: Actor}[] };
+```
+`Participant` gains `next_meeting?: MeetingBrief` (the soonest scheduled, not-ended meeting
+with the investor in that round or in no round) and `RoundSummary` gains
+`meetings: {today, upcoming, needs_outcome, next: MeetingBrief[≤5]}`.
 
 ---
 
@@ -1263,6 +1350,23 @@ Five tools, in `mcp/tools/research.py`, calling the same services as REST:
 anchor, citations, the privacy filter), costs the workspace nothing and needs no OpenRouter
 key. The REST twin is `POST /v1/investors/{id}/dossier`.
 
+### 6.8 Meeting tools (binding)
+Four tools in `mcp/tools/meetings.py` (core: served with or without research, so 21 tools,
+26 with research), calling `services.meetings` like REST:
+
+| tool | annotation | args | returns |
+|---|---|---|---|
+| `schedule_meeting` | write, idempotent | `investor`, `starts_at`, `duration_minutes?`, `ends_at?`, `round?`, `title?`, `location?`, `video_url?`, `agenda?`, `guests?` (same firm), `source?` (default agent), `move_to_meeting_stage?` | `{meeting, created, changed, moved_stage?, participant?, warnings?}`; the meeting carries `local` ("Monday 2026-10-12 15:00 (America/New_York)") |
+| `list_meetings` | read | `when` (upcoming, today, week, needs_outcome, past, all), `investor?`, `round?`, `status?`, `limit?` | `{now, today, timezone, items, counts: {returned, needs_outcome}}` |
+| `update_meeting` | write, idempotent | `meeting_id`, `starts_at?`, `duration_minutes?`, `ends_at?`, `status?`, `title?`, `location?`, `video_url?`, `agenda?`, `note?` | `{meeting (with history), changed, participant?}` |
+| `complete_meeting` | write, idempotent | `meeting_id`, `outcome?`, `next_step?`, `follow_up_on?`, `follow_up_in_days?`, `follow_up_note?` | `{meeting, changed, participant?, warnings?}` |
+
+The server instructions (§6.3) end with: "Meetings: schedule_meeting puts a future meeting on
+the calendar (and moves the investor to the Meeting stage), list_meetings shows what is coming
+up and which past meetings still need an outcome, update_meeting reschedules or cancels, and
+complete_meeting records how it went with the next step. Times without an offset are in the
+workspace timezone."
+
 ---
 
 ## 7. Rate limits
@@ -1309,6 +1413,9 @@ A 429 carries `Retry-After`. MCP returns a tool error
 | `added_to_round` | add_to_round, POST participant, import, commitment auto-add | `{stage: {key,label}}` |
 | `removed_from_round` | DELETE participant | `{stage: {key,label}}` |
 | `participant_updated` | add_to_round / PATCH changing fit, probability, amount_soft, owner, next_step | `{changes: {field: {from, to}}}` (owner as display label) |
+| `meeting_scheduled` | schedule_meeting, POST /v1/meetings | `{meeting_id, title, starts_at, ends_at, location?, video_url?, guests?, source, seq}` |
+| `meeting_updated` | update_meeting, PATCH / DELETE meeting | `{meeting_id, change: rescheduled\|edited\|cancelled\|no_show\|reopened\|deleted, title, from_starts_at?, to_starts_at?, starts_at?, fields?, seq}`; `body` = note |
+| `meeting` (outcome) | complete_meeting, POST …/complete | `{meeting_id, title, seq}`; `occurred_at` = the meeting's start; `body` = the outcome |
 
 - Investor `notes` edits made by a **user in the web app** do not write an activity (the
   notes field autosaves, and logging every save would flood the timeline). Notes changes by
@@ -1413,7 +1520,10 @@ default keys; otherwise a label match; else `default_stage` with a warning), `fo
   "members": [{email, name, role}], "rounds": [Round], "investors": [Investor without rounds],
   "participants": [{round_id, investor_id, stage_key, fit, probability, amount_soft,
   amount_committed, committed_on, follow_up_on, follow_up_note, next_step, owner_email,
-  stage_changed_at, created_at}], "activities": [Activity], "import_runs": [...]}`. API keys,
+  stage_changed_at, created_at}], "activities": [Activity], "meetings": [{id, investor_id,
+  guest_ids, round_id, title, starts_at, ends_at, timezone, location, video_url, agenda, status,
+  outcome, outcome_activity_id, source, created_by, completed_at, cancelled_at, created_at,
+  updated_at}], "import_runs": [...]}`. API keys,
   sessions and tokens are never exported.
 - **Round JSON**: `{"format": "raisebook.round", "version": 1, "round": Round,
   "participants": [Participant + investor fields + (include_activities ? timeline : [])]}`.

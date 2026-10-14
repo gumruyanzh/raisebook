@@ -183,6 +183,13 @@ const LEGACY_TYPE: Record<string, string> = {
 
 function SlotView({ slot }: { slot: CardSlot }) {
   switch (slot.kind) {
+    case "meeting":
+      // Today: the warm "soon" tint (it needs attention today); later: the neutral outline.
+      return (
+        <Chip tone={slot.today ? "soon" : "type"} className="shrink-0" title={slot.title}>
+          {slot.text}
+        </Chip>
+      );
     case "due":
       return (
         <Chip tone="due" className="shrink-0">

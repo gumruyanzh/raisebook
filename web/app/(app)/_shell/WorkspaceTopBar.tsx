@@ -53,6 +53,7 @@ export function WorkspaceTopBar() {
   if (m && sub === "") activeNav = "pipeline";
   else if (m && sub === "/overview") activeNav = "overview";
   else if (ws && pathname.startsWith(`${base}/investors`)) activeNav = "investors";
+  else if (ws && pathname.startsWith(`${base}/meetings`)) activeNav = "meetings";
   else if (ws && pathname.startsWith(`${base}/settings`)) activeNav = "settings";
 
   const roundPath = (slug: string) => `${base}/r/${enc(slug)}`;
@@ -66,6 +67,7 @@ export function WorkspaceTopBar() {
           href: defaultRound ? `${roundPath(defaultRound)}/overview` : base,
         },
         { key: "investors", label: "Investors", kbd: "g i", href: `${base}/investors` },
+        { key: "meetings", label: "Meetings", kbd: "g m", href: `${base}/meetings` },
         { key: "settings", label: "Settings", kbd: "g s", href: `${base}/settings` },
       ]
     : [];

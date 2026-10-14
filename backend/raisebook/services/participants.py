@@ -1013,6 +1013,9 @@ async def present(
         for u in await db.scalars(select(User).where(User.id.in_(owner_ids))):
             owners[u.id] = OwnerOut(user_id=u.id, name=u.name, email=str(u.email))
     today = ws.today(now)
+    from raisebook.services.meetings import next_by_investor
+
+    meetings = await next_by_investor(db, ws, [(p.round_id, p.investor_id) for p in parts], now=now)
     return [
         ParticipantOut(
             round_id=p.round_id,
@@ -1034,6 +1037,7 @@ async def present(
             last_activity_at=p.last_activity_at,
             created_at=p.created_at,
             updated_at=p.updated_at,
+            next_meeting=meetings.get((p.round_id, p.investor_id)),
         )
         for p in parts
     ]

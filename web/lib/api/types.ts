@@ -58,7 +58,11 @@ export type ActivityKind =
   | "removed_from_round"
   | "participant_updated"
   /** Research: `data.event` is "identity" or "dossier". */
-  | "research";
+  | "research"
+  /** A future meeting was scheduled (`data.meeting_id`, `starts_at`, `title`…). */
+  | "meeting_scheduled"
+  /** A meeting changed: `data.change` rescheduled | edited | cancelled | no_show | reopened | deleted. */
+  | "meeting_updated";
 export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
 
 /* ============================== labels (SPEC §3.8) ============================== */
@@ -322,6 +326,21 @@ export interface Participant {
   last_activity_at?: Timestamp | null;
   created_at: Timestamp;
   updated_at: Timestamp;
+  /** The soonest scheduled meeting with this investor (this round or no round). */
+  next_meeting?: MeetingBrief | null;
+}
+
+/** A meeting as carried on a participant and in round summaries. */
+export interface MeetingBrief {
+  id: UUID;
+  title: string;
+  starts_at: Timestamp;
+  ends_at: Timestamp;
+  location?: string | null;
+  video_url?: string | null;
+  /** Summaries only. */
+  investor_id?: UUID | null;
+  investor_name?: string | null;
 }
 
 export interface Activity {
@@ -380,6 +399,7 @@ export interface RoundSummary {
   stale: { investor: InvestorCompact; stage: Stage; days_since_activity: number }[];
   recent_activity: Activity[];
   warnings: string[];
+  meetings?: { today: number; upcoming: number; needs_outcome: number; next: MeetingBrief[] } | null;
 }
 
 /* ============================== auth and account ============================== */

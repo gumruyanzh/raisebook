@@ -37,6 +37,10 @@ ALL_TOOLS = {
     "research_investor",
     "match_identity",
     "save_dossier",
+    "schedule_meeting",
+    "list_meetings",
+    "update_meeting",
+    "complete_meeting",
 }
 READ_ONLY = {
     "get_workspace",
@@ -48,6 +52,7 @@ READ_ONLY = {
     "export_round",
     "get_dossier",
     "list_research_runs",
+    "list_meetings",
 }
 WRITE_IDEMPOTENT = {
     "add_investor",
@@ -59,6 +64,9 @@ WRITE_IDEMPOTENT = {
     "record_commitment",
     "research_investor",
     "match_identity",
+    "schedule_meeting",
+    "update_meeting",
+    "complete_meeting",
 }
 WRITE_NOT_IDEMPOTENT = {"update_investor", "log_activity", "import_investors_csv", "save_dossier"}
 AGENT = {"X-Agent-Name": "claude-code", "X-Agent-Model": "claude-opus-5-5"}

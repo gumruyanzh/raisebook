@@ -258,6 +258,50 @@ async def _save(call: Call, t: Two) -> None:
     )
 
 
+@case("schedule_meeting")
+async def _schedule(call: Call, t: Two) -> None:
+    for ref in b_investor_refs(t):
+        not_found(
+            await call("schedule_meeting", {"investor": ref, "starts_at": "2026-10-20T11:00"})
+        )
+    for ref in b_round_refs(t):
+        not_found(
+            await call(
+                "schedule_meeting",
+                {"investor": str(t.a_inv.id), "starts_at": "2026-10-20T11:00", "round": ref},
+            )
+        )
+    not_found(
+        await call(
+            "schedule_meeting",
+            {"investor": str(t.a_inv.id), "starts_at": "2026-10-20T11:00", "guests": [B_EMAIL]},
+        )
+    )
+
+
+@case("list_meetings")
+async def _list_meetings(call: Call, t: Two) -> None:
+    for when in ("upcoming", "today", "week", "needs_outcome", "past", "all"):
+        res = await call("list_meetings", {"when": when})
+        clean(res, t)
+        assert res.data["items"] == []
+    for ref in b_investor_refs(t):
+        not_found(await call("list_meetings", {"investor": ref}))
+    not_found(await call("list_meetings", {"round": t.b_round.slug}))
+
+
+@case("update_meeting")
+async def _update_meeting(call: Call, t: Two) -> None:
+    not_found(
+        await call("update_meeting", {"meeting_id": str(t.b_meeting.id), "status": "cancelled"})
+    )
+
+
+@case("complete_meeting")
+async def _complete_meeting(call: Call, t: Two) -> None:
+    not_found(await call("complete_meeting", {"meeting_id": str(t.b_meeting.id), "outcome": "x"}))
+
+
 async def test_every_tool_is_covered(db: AsyncSession, mcp_rpc: Any) -> None:
     t = await two_workspaces(db)
     r = await mcp_rpc(t.a_key, "tools/list", {})
