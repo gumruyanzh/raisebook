@@ -296,7 +296,7 @@ class Script:
     """Configurable answers; ``calls`` lists the step of every chat call in order."""
 
     identity: list[dict[str, Any]] = field(default_factory=lambda: list(CONFIDENT))
-    writer: str = "ok"  # ok | bad | bad_then_ok | fail_402
+    writer: str = "ok"  # ok | bad | bad_then_ok | fail_402 | grammar_too_large
     search_fail: dict[str, int] = field(default_factory=dict)  # step → HTTP status
     search_cost: float | None = COST["search"]
     identity_cost: float = COST["identity"]
@@ -320,6 +320,9 @@ class Script:
         ):
             return "prefill"
         if body.get("response_format"):
+            return "write"
+        last = body["messages"][-1]["content"]
+        if isinstance(last, str) and last.startswith("Answer with ONLY one JSON object"):
             return "write"
         user = body["messages"][1]["content"]
         if "deals led or joined" in user:
@@ -370,6 +373,10 @@ class Script:
                 json.dumps(draft), cost=COST["prefill"], gen_id=f"gen-{n}", model=body["model"]
             )
         # The writer.
+        if self.writer == "grammar_too_large" and body.get("response_format"):
+            return httpx.Response(
+                400, json={"error": {"message": "The compiled grammar is too large", "code": 400}}
+            )
         if self.writer == "fail_402":
             return httpx.Response(402, json={"error": {"message": "no credits sk-or-v1-xyz"}})
         if self.writer == "bad" or (self.writer == "bad_then_ok" and self.writer_bad_left > 0):

@@ -633,3 +633,21 @@ async def test_without_a_company_profile_the_verdict_waits_for_it(
         )
     ).json()
     assert est["no_profile"] is True  # the dialog warns before spending
+
+
+async def test_writer_falls_back_to_schema_in_prompt_when_structured_output_is_refused(
+    db: AsyncSession, session_client: Any, openrouter_mock: Any, frozen_now: Any
+) -> None:
+    # Anthropic refuses the dossier schema as structured output ("grammar is too large").
+    w = await research_world(db, linkedin_url=LINKEDIN, website_url=SITE)
+    script = Script(writer="grammar_too_large").install(openrouter_mock)
+    c = await session_client(w.owner, w.ws)
+    run_id = (await start(c, w.inv.id)).json()["run"]["id"]
+    await run_jobs(db)
+    assert script.calls[-2:] == ["write", "write"]
+    refused, retried = script.requests[-2], script.requests[-1]
+    assert "response_format" in refused and "response_format" not in retried
+    assert retried["messages"][-1]["content"].startswith("Answer with ONLY one JSON object")
+    run = (await c.get(f"/v1/research/runs/{run_id}")).json()
+    assert run["status"] == "succeeded", run
+    assert (await c.get(f"/v1/investors/{w.inv.id}/dossier")).status_code == 200

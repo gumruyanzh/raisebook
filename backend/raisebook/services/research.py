@@ -33,7 +33,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import and_, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -79,6 +79,7 @@ from raisebook.schemas.dossier import (
     DossierDoc,
     WriterDoc,
     response_format,
+    strict_json_schema,
 )
 from raisebook.services import ai_settings as ai_svc
 from raisebook.services import dossiers as dossiers_svc
@@ -1718,16 +1719,36 @@ class Runner:
             else None
         )
         errors: list[str] = []
-        for attempt in (1, 2):
-            result = await self.call(
-                "write",
-                model,
-                prompts.writer_messages(**messages_kw, errors=errors),
-                budget=WRITER_STEP,
-                max_tokens=6000,
-                response_format=response_format(WRITER_FORMAT_NAME, WriterDoc),
-                temperature=temperature,
-            )
+        # Some providers (Anthropic among them) refuse the dossier schema as structured output
+        # ("compiled grammar is too large"). Then the schema goes in the prompt instead; the
+        # answer is validated below either way.
+        schema_in_prompt = False
+        attempt = 0
+        while attempt < 2:
+            attempt += 1
+            messages = prompts.writer_messages(**messages_kw, errors=errors)
+            fmt: dict[str, Any] = {}
+            if schema_in_prompt:
+                messages = [*messages, _schema_message(WriterDoc)]
+            else:
+                fmt = {"response_format": response_format(WRITER_FORMAT_NAME, WriterDoc)}
+            try:
+                result = await self.call(
+                    "write",
+                    model,
+                    messages,
+                    budget=WRITER_STEP,
+                    max_tokens=6000,
+                    temperature=temperature,
+                    **fmt,
+                )
+            except openrouter.OpenRouterError as exc:
+                if not schema_in_prompt and exc.status == 400:
+                    log.info("research_writer_schema_in_prompt", run_id=str(self.run.id))
+                    schema_in_prompt = True
+                    attempt -= 1
+                    continue
+                raise
             try:
                 doc = WriterDoc.model_validate(parse_json_object(result.content))
             except ValidationError as exc:
@@ -2349,3 +2370,13 @@ async def round_summary(
     stage_of = {inv: key for inv, key in rows}
     sums = await summaries(db, ws, list(stage_of), now=now, stage_keys=stage_of)
     return [{"investor_id": inv, **sums[inv]} for inv in stage_of]
+
+
+def _schema_message(model: type[BaseModel]) -> dict[str, Any]:
+    """The answer format as a prompt, for providers that refuse it as structured output."""
+    return {
+        "role": "user",
+        "content": "Answer with ONLY one JSON object (no prose, no code fences) that matches "
+        "this JSON Schema exactly:\n"
+        + json.dumps(strict_json_schema(model), ensure_ascii=False, separators=(",", ":")),
+    }
