@@ -21,7 +21,7 @@ from tests.research.helpers import AGENT, agent_doc, research_world, run_jobs
 from tests.research.openrouter_mock import FAKE_KEY
 from tests.research.pipeline_mock import LINKEDIN, SITE, Script
 
-PROMPT_SHA = "e6145fa38a71043d769c956f38b507dd224e13885fb11f8c983c78ed79908494"
+PROMPT_SHA = "87c88a119cab662dc7a845950089e0fd6a7d8d4fa41948a4c89fc7e3c92a2edb"
 
 
 def test_prompts_are_pinned_and_professional_only() -> None:

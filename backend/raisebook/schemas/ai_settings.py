@@ -32,6 +32,11 @@ class AiSettingsUpdate(StrictInput):
     search_model: ModelId | None = None
     writer_model: ModelId | None = None
     monthly_cap_usd: Decimal | None = Field(None, ge=0, le=10_000, decimal_places=2)
+    use_notes_in_research: bool | None = Field(
+        None,
+        description="Send each investor's notes (trimmed, phones and addresses removed) to "
+        "your AI provider during research, as facts to verify and gaps to search.",
+    )
 
 
 class UsageOut(BaseModel):
@@ -87,6 +92,9 @@ class AiSettingsOut(BaseModel):
     writer_model: str
     models_verified_at: Timestamp | None
     monthly_cap_usd: float
+    use_notes_in_research: bool = Field(
+        False, description="Investor notes are sent to your AI provider during research."
+    )
     usage: UsageOut
     estimates: EstimatesOut
     presets: list[PresetOut]

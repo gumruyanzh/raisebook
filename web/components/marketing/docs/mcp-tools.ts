@@ -334,7 +334,7 @@ export const MCP_TOOLS: McpTool[] = [
     access: "read",
     idempotent: true,
     description:
-      "Read an investor's research dossier: the Brief (verdict, why, best way in, opener, risk) and the sections Fit, Recent activity, Thesis & public views, Ways in, Talking points and Red flags. Every claim ends with source refs like [s3] that point into `sources` (url, title, date). `new_since` marks a refresh; `stale` means older than 90 days. `unverified` claims are from model memory, not cited: never present them as facts.",
+      "Read an investor's research dossier: the Brief (verdict, why, best way in, opener, risk) and the sections Fit, Recent activity, Thesis & public views, Ways in, Talking points and Red flags. Every claim ends with source refs like [s3] that point into `sources` (url, title, date). `new_since` marks a refresh; `stale` means older than 90 days. `unverified` claims are from model memory, not cited: never present them as facts. `from_your_notes` came only from the founder's own notes: say \"from your notes\", never cite them as public or verified. `reused` names the founder's other workspace whose research (identity and public sources) this dossier reused.",
     params: [
       INVESTOR_REF,
       { name: "version", type: "integer ≥1", description: "An older version (the last 5 are kept)." },
@@ -364,14 +364,15 @@ export const MCP_TOOLS: McpTool[] = [
     access: "write",
     idempotent: true,
     description:
-      "Start research on an investor with the workspace's OpenRouter key (it runs in the background; poll list_research_runs, then read get_dossier). Respects the monthly AI limit. Safe to repeat: a run already going is returned. Errors: no_ai_key (an owner adds a key in Settings → AI research; or research yourself and use save_dossier), spend_cap_reached, identity_required (call match_identity first).",
+      "Start research on an investor with the workspace's OpenRouter key (it runs in the background; poll list_research_runs, then read get_dossier). Respects the monthly AI limit. Never pays twice: a run already going is returned (reason active), a dossier under 30 days old is returned instead of researching again (created=false, reason fresh: read it with get_dossier; kind=refresh or force=true researches again), and an identity run on a confirmed identity starts nothing (reason identified). When the founder researched the same person in another workspace they own within 30 days, that identity and its public sources are reused and only the writer runs (cheaper; the dossier says \"Reused research from <workspace>\"). Errors: no_ai_key (an owner adds a key in Settings → AI research; or research yourself and use save_dossier), spend_cap_reached, identity_required (call match_identity first).",
     params: [
       INVESTOR_REF,
       { name: "kind", type: '"identity" | "dossier" | "refresh"', description: "identity = find who this is (cheap); dossier (default) = full research; refresh = research again and mark what is new." },
       ROUND_OPTIONAL("The dossier's Fit compares to it."),
       { name: "dry_run", type: "boolean", description: "Only estimate the cost; start nothing." },
+      { name: "force", type: "boolean", description: "Pay for new research even though the dossier is under 30 days old (or the identity is confirmed). Only when the founder asks for it." },
     ],
-    output: "{id, investor, kind, status, estimate_usd, created, next}; dry run: {dry_run, count, skipped, per_run_usd, total_usd, remaining_usd, fits}",
+    output: "{id, investor, kind, status, estimate_usd, created, reason?, dossier?, next}; dry run: {dry_run, count, skipped, per_run_usd, total_usd, remaining_usd, fits}",
   },
   {
     name: "match_identity",

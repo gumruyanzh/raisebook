@@ -54,6 +54,8 @@ export interface AiSettings {
   writer_model: string;
   models_verified_at: Timestamp | null;
   monthly_cap_usd: number;
+  /** Investor notes are sent to your AI provider during research (default off). */
+  use_notes_in_research?: boolean;
   usage: AiUsage;
   estimates: {
     best: number | null;
@@ -80,6 +82,7 @@ export interface AiSettingsUpdate {
   search_model?: string;
   writer_model?: string;
   monthly_cap_usd?: number;
+  use_notes_in_research?: boolean;
 }
 
 export interface ResearchModel {
@@ -173,6 +176,19 @@ export interface RunStarted {
   created: boolean;
 }
 
+/**
+ * `POST /v1/investors/{id}/research`. With `created: false` nothing new started and nothing
+ * was paid: `active` (a run is going: `run`), `fresh` (a dossier from the last 30 days: open
+ * `dossier`; `kind: "refresh"` or `force` researches again), `identified` (already confirmed).
+ */
+export interface ResearchStarted {
+  run: Run | null;
+  estimate_usd: number | null;
+  created: boolean;
+  reason?: "fresh" | "identified" | "active" | null;
+  dossier?: { id: UUID; version: number; created_at: Timestamp } | null;
+}
+
 export type IdentityStatus = "none" | "pending" | "matched" | "confirmed" | "needs_pick" | "not_found" | "rejected";
 
 export interface CandidateSource {
@@ -226,6 +242,14 @@ export interface Claim {
   fact_keys?: string[];
 }
 
+/** "Reused research from <workspace> (<date>)": the identity and public sources came from the
+ * owner's other workspace; only the writer ran here. */
+export interface DossierReuse {
+  workspace_name: string;
+  date: string | null;
+  line: string;
+}
+
 export interface DossierAnalysis {
   brief: {
     verdict: Verdict;
@@ -244,6 +268,8 @@ export interface DossierAnalysis {
   };
   ways_in?: (Claim & { basis?: "public" | "workspace" })[];
   talking_points?: Claim[];
+  /** Claims known only from your own notes (`use_notes_in_research`): never cited facts. */
+  from_notes?: { section: FactSection; text: string }[];
 }
 
 export interface Dossier {
@@ -261,6 +287,7 @@ export interface Dossier {
   as_of: string | null;
   identity: Record<string, unknown>;
   cost_usd: number | null;
+  reused?: DossierReuse | null;
 }
 
 export interface Fact {
@@ -347,6 +374,8 @@ export interface Estimate {
   needs_identity?: number;
   /** No company profile: dossiers would have no fit verdict. */
   no_profile?: boolean;
+  /** Of `count`, reuse your research from another of your workspaces: only the writer runs. */
+  reused?: number;
   /** `fit`: a round's investors, best fit first (who goes first under the limit). */
   order?: "fit" | "given";
 }
@@ -438,14 +467,15 @@ export const prefillCompanyProfile = (c: ApiClient, input: { websiteUrl?: string
 /* ============================== runs ============================== */
 
 /**
- * 202 (200 when the same run was already going). 422 `no_ai_key` / `spend_cap_reached`, 409
- * `identity_required` / `research_suppressed`, 503 `research_unavailable`.
+ * 202 with the queued run; 200 with `created: false` and a `reason` when nothing new started
+ * (see `ResearchStarted`). 422 `no_ai_key` / `spend_cap_reached`, 409 `identity_required` /
+ * `research_suppressed`, 503 `research_unavailable`.
  */
 export const startResearch = (
   c: ApiClient,
   investorId: UUID,
-  body: { kind?: "identity" | "dossier" | "refresh"; round?: string } = {},
-) => c.post<RunStarted>(`/v1/investors/${seg(investorId)}/research`, body);
+  body: { kind?: "identity" | "dossier" | "refresh"; round?: string; force?: boolean } = {},
+) => c.post<ResearchStarted>(`/v1/investors/${seg(investorId)}/research`, body);
 
 export const listRuns = (
   c: ApiClient,

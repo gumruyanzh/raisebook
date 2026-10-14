@@ -52,7 +52,9 @@ SERVER_INSTRUCTIONS = (
 )
 RESEARCH_INSTRUCTIONS = (
     " Research: get_dossier reads an investor's cited dossier; research_investor runs research "
-    "on the workspace's own OpenRouter key within its monthly limit; or research with your own "
+    "on the workspace's own OpenRouter key within its monthly limit (a dossier under 30 days "
+    "old is returned instead of paid for twice; kind=refresh researches again); or research "
+    "with your own "
     "tools and submit it with save_dossier (every fact cites a source you fetched; professional "
     "information only)."
 )

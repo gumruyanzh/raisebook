@@ -242,3 +242,33 @@ def scrub_source_text(text: str | None) -> tuple[str | None, int]:
         return None, 1
     cleaned, n = strip_contacts(text)
     return (None if n and mostly_removed(cleaned) else cleaned), n
+
+
+NOTES_MAX_CHARS = 2000
+
+
+def notes_for_research(text: str | None, *, limit: int = NOTES_MAX_CHARS) -> str | None:
+    """An investor's notes as research may send them (owner decision 2026-10-14, setting
+    ``use_notes_in_research``): phones, addresses and consumer emails stripped, a line about
+    family, health, politics, religion or someone's home dropped whole, blank lines folded,
+    and the rest trimmed to about ``limit`` characters at a word boundary. None when nothing
+    is left."""
+    if not text:
+        return None
+    kept: list[str] = []
+    for raw in normalize(text).replace("\r\n", "\n").split("\n"):
+        line = " ".join(raw.split())
+        if not line or is_sensitive(line):
+            continue
+        cleaned, _ = strip_contacts(line)
+        if mostly_removed(cleaned) or not cleaned.replace(REMOVED, "").strip(" ,;:-"):
+            continue
+        kept.append(cleaned)
+    out = "\n".join(kept).strip()
+    if not out:
+        return None
+    if len(out) > limit:
+        cut = out[:limit]
+        space = max(cut.rfind(" "), cut.rfind("\n"))
+        out = (cut[:space] if space > limit * 0.8 else cut).rstrip() + " …"
+    return out

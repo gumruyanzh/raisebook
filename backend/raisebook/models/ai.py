@@ -10,7 +10,17 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, LargeBinary, Text, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,6 +62,10 @@ class WorkspaceAiSettings(TimestampMixin, Base):
     )
     key_error: Mapped[str | None] = mapped_column(Text)  # OpenRouter refused the key in a run
     key_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Investor notes go to the AI provider during research (owner decision 2026-10-14).
+    use_notes_in_research: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
 
     @property
     def has_key(self) -> bool:

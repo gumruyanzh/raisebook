@@ -23,6 +23,11 @@ class StartResearchIn(StrictInput):
         max_length=200,
         description="Round id, slug or name: the dossier's Fit compares to it.",
     )
+    force: bool = Field(
+        False,
+        description="Research again even though the dossier is fresh (under 30 days) or the "
+        "identity is already confirmed. kind=refresh always researches again.",
+    )
 
 
 class StepOut(BaseModel):
@@ -90,10 +95,29 @@ class RunOut(BaseModel):
     finished_at: Timestamp | None = None
 
 
+class StartedDossier(BaseModel):
+    id: UUID
+    version: int
+    created_at: Timestamp
+
+
 class RunStartedOut(BaseModel):
-    run: RunOut
+    run: RunOut | None = Field(
+        None,
+        description="The queued run; with created=false the run already going, or the one "
+        "behind the fresh dossier (null when no run is on record).",
+    )
     estimate_usd: float | None = None
     created: bool
+    reason: Literal["fresh", "identified", "active"] | None = Field(
+        None,
+        description="Why nothing new started: fresh = a dossier from the last 30 days (send "
+        "kind=refresh or force=true to pay for new research), identified = the identity is "
+        "already confirmed, active = a run is already going.",
+    )
+    dossier: StartedDossier | None = Field(
+        None, description="With reason=fresh: the dossier to open instead."
+    )
 
 
 class RunPage(BaseModel):
@@ -173,6 +197,12 @@ class AuthorOut(BaseModel):
     by: str | None = Field(None, description='"by <agent-name>" for agent dossiers (R11).')
 
 
+class ReusedOut(BaseModel):
+    workspace_name: str
+    date: dt.date | None = None
+    line: str = Field(description="'Reused research from <workspace> (<date>)'.")
+
+
 class DossierOut(BaseModel):
     id: UUID
     investor_id: UUID
@@ -184,7 +214,9 @@ class DossierOut(BaseModel):
     analysis: dict[str, Any] = Field(
         description="{brief: {verdict, why, best_way_in, opener, risk, fact_keys}, fit: {stage?, "
         "sector?, check?, deploying?, conflicts}, ways_in: [{text, basis, fact_keys}], "
-        "talking_points: [{text, fact_keys}]}; every claim's fact_keys point at `facts`."
+        "talking_points: [{text, fact_keys}], from_notes?: [{section, text}]}; every claim's "
+        "fact_keys point at `facts`. from_notes: claims known only from the founder's own notes "
+        "(use_notes_in_research): show them as 'from your notes', never as cited facts."
     )
     unverified: list[dict[str, Any]] = Field(
         description="[{section, text}]: from model memory, not cited (R2). Show collapsed."
@@ -196,6 +228,11 @@ class DossierOut(BaseModel):
     as_of: dt.date | None = None
     identity: dict[str, Any] = {}
     cost_usd: float | None = None
+    reused: ReusedOut | None = Field(
+        None,
+        description="This dossier reused the identity and public sources of the same person's "
+        "research in another of the owner's workspaces (only the writer ran here).",
+    )
 
 
 class FactOut(BaseModel):
@@ -301,6 +338,11 @@ class EstimateOut(BaseModel):
     )
     no_profile: bool = Field(
         False, description="No company profile: dossiers would have no fit verdict."
+    )
+    reused: int = Field(
+        0,
+        description="Of count, reuse fresh research on the same person from another of the "
+        "owner's workspaces: only the writer runs (counted at its cost in total_usd).",
     )
     order: Literal["fit", "given"] = Field(
         "given", description="fit: a round's investors, best fit first (Hot, Warm…)."

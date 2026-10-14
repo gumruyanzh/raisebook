@@ -43,6 +43,7 @@ MAX_FACTS = 40
 MAX_ACTIVITY = 10
 MAX_TALKING_POINTS = 8
 MAX_WAYS_IN = 6
+MAX_FROM_NOTES = 20
 MAX_UNVERIFIED = 10
 
 PERSONAL_DOMAINS = frozenset(
@@ -567,6 +568,9 @@ class Outcome:
     # Suggestions that become "accept / ignore" even for an empty field (contact details
     # research cannot vouch for: another domain or profile than the confirmed identity's).
     review: set[str] = field(default_factory=set)
+    # Claims known only from the founder's notes (``use_notes_in_research``): private, shown
+    # "from your notes", never public facts and never verified (owner decision 2026-10-14).
+    from_notes: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def fact_keys(self) -> set[str]:
@@ -608,12 +612,17 @@ def finalize(
     workspace_facts: Sequence[str] = (),
     anchor: Anchor | None = None,
     trusted_anchor: Trust | None = None,
+    notes_id: str | None = None,
 ) -> Outcome:
-    """Privacy, citations and caps over a schema-valid document (steps 4 to 6)."""
+    """Privacy, citations and caps over a schema-valid document (steps 4 to 6).
+
+    ``notes_id`` (model runs that sent the founder's notes): a fact citing only that id is
+    kept apart in ``from_notes``, never among the cited public facts."""
     dates = source_dates or {}
     counter = [0]
     dropped: list[Dropped] = []
     unverified: list[dict[str, Any]] = []
+    from_notes: list[dict[str, Any]] = []
     moved = 0
 
     # Facts: privacy, citations, duplicate keys.
@@ -629,6 +638,10 @@ def finalize(
             dropped.append(Dropped(fact.key, "privacy"))
             continue
         cited = _keys(fact.source_ids, accepted_ids)
+        if not cited and notes_id is not None and notes_id in fact.source_ids:
+            if len(from_notes) < MAX_FROM_NOTES:
+                from_notes.append({"section": fact.section, "text": text})
+            continue
         if not cited:
             if agent:
                 dropped.append(Dropped(fact.key, "uncited"))
@@ -808,6 +821,7 @@ def finalize(
         moved_to_unverified=moved,
         privacy_removed=counter[0],
         review=review,
+        from_notes=from_notes,
     )
 
 

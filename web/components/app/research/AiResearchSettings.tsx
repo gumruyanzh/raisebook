@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   Button,
+  Checkbox,
   Combobox,
   ConfirmDialog,
   EmptyState,
@@ -181,6 +182,10 @@ export function AiResearchSettings({
       })),
     [models],
   );
+
+  /* ---------- notes ---------- */
+  const [notesState, setNotesState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const notesOn = Boolean(s.use_notes_in_research);
 
   /* ---------- cap ---------- */
   const [cap, setCap] = useState(String(s.monthly_cap_usd));
@@ -424,6 +429,31 @@ export function AiResearchSettings({
           ) : (
             <p className="t-body-s text-muted">Owners change the limit ({capUsd(s.monthly_cap_usd)} now).</p>
           )}
+        </div>
+      </section>
+
+      {/* ---------- investor notes (owner decision 2026-10-14) ---------- */}
+      <section aria-labelledby="ai-notes">
+        <SectionLabel id="ai-notes" aside={<SaveState state={notesState} />}>
+          Investor notes
+        </SectionLabel>
+        <div className="flex max-w-[560px] flex-col gap-6">
+          <Checkbox
+            checked={notesOn}
+            disabled={!s.can_edit || notesState === "saving"}
+            onChange={async (e) => {
+              setModelErr(null);
+              await patch({ use_notes_in_research: e.target.checked }, setNotesState);
+            }}
+            label="Use investor notes in research"
+            hint="Investor notes are sent to your AI provider during research."
+          />
+          <p className="t-body-s text-muted">
+            {notesOn
+              ? "Research starts from what your notes already say and searches for the gaps. Notes are trimmed and phone numbers and addresses are removed first. Anything only your notes say is shown as “from your notes”, never as a cited fact."
+              : "Off: research never sees your notes."}
+            {s.can_edit ? null : " Owners change this."}
+          </p>
         </div>
       </section>
 

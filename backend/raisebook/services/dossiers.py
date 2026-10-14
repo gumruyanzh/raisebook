@@ -162,6 +162,9 @@ async def store(
         )
         + 1
     )
+    analysis = dict(outcome.analysis)
+    if outcome.from_notes:
+        analysis["from_notes"] = outcome.from_notes  # private: the founder's own notes
     dossier = Dossier(
         workspace_id=ws.workspace_id,
         investor_id=investor.id,
@@ -172,7 +175,7 @@ async def store(
         author_kind=author_kind,
         author_label=author_label[:200] or "agent",
         verdict=outcome.verdict,
-        analysis=jsonable(outcome.analysis),
+        analysis=jsonable(analysis),
         unverified=jsonable(outcome.unverified),
         previous_id=previous.id if previous else None,
         new_fact_keys=new_keys[:100],
@@ -256,6 +259,22 @@ def _usd(micros: int | None) -> float | None:
     return None if micros is None else round(micros / 1_000_000, 6)
 
 
+def reused_of(result: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """ "Reused research from <workspace> (<date>)": the run copied the identity and public
+    sources from another of the owner's workspaces and only wrote (owner decision
+    2026-10-14). None when the run researched by itself."""
+    reuse = (result or {}).get("reuse")
+    if not isinstance(reuse, dict) or reuse.get("state") != "done":
+        return None
+    name = str(reuse.get("workspace_name") or "another workspace")
+    date = str(reuse.get("date") or "")
+    return {
+        "workspace_name": name,
+        "date": date or None,
+        "line": f"Reused research from {name}" + (f" ({date})" if date else ""),
+    }
+
+
 def author_of(d: Dossier) -> dict[str, Any]:
     out: dict[str, Any] = {"kind": d.author_kind, "label": d.author_label}
     if d.author_kind == "agent":
@@ -316,12 +335,18 @@ async def view(
         .order_by(FieldSuggestion.created_at)
     )
     run_cost = None
+    reused: dict[str, Any] | None = None
     if d.run_id is not None:
-        run_cost = await db.scalar(
-            select(ResearchRun.cost_micros).where(
-                ResearchRun.workspace_id == ws.workspace_id, ResearchRun.id == d.run_id
+        got = (
+            await db.execute(
+                select(ResearchRun.cost_micros, ResearchRun.result).where(
+                    ResearchRun.workspace_id == ws.workspace_id, ResearchRun.id == d.run_id
+                )
             )
-        )
+        ).one_or_none()
+        if got is not None:
+            run_cost = got[0]
+            reused = reused_of(got[1])
     age_days = (now - d.created_at).days
     stage_keys = await _stage_keys(db, ws, investor.id)
     return {
@@ -340,6 +365,7 @@ async def view(
             "as_of": df.as_of if df else None,
             "identity": df.identity if df else {},
             "cost_usd": _usd(run_cost),
+            "reused": reused,
         },
         "facts": [{k: v for k, v in f.items() if k not in ("fid", "loose")} for f in facts],
         "sources": [

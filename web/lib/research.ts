@@ -52,6 +52,8 @@ export function capUsd(n: number): string {
 
 export const STALE_DAYS = 90;
 export const MEETING_REFRESH_DAYS = 30;
+/** A dossier this new is not researched again by "Research" (owner decision 2026-10-14). */
+export const FRESH_DOSSIER_DAYS = 30;
 
 /** Whole days since a timestamp. */
 export function ageDays(at: string | null | undefined, now: Date): number {
@@ -59,6 +61,42 @@ export function ageDays(at: string | null | undefined, now: Date): number {
   const t = Date.parse(at);
   if (Number.isNaN(t)) return 0;
   return Math.max(0, Math.floor((now.getTime() - t) / 86_400_000));
+}
+
+/** Under 30 days old: "Research" opens it instead of paying again; "Refresh" is secondary. */
+export function isFreshDossier(dossierAt: string | null | undefined, now: Date): boolean {
+  return Boolean(dossierAt) && ageDays(dossierAt, now) < FRESH_DOSSIER_DAYS;
+}
+
+/**
+ * The buttons for an investor's research: with a fresh dossier the primary action opens it
+ * and "Refresh" is secondary; an older one offers "Research again"; none offers "Research".
+ */
+export function researchActions(dossierAt: string | null | undefined, now: Date): { primary: "open" | "research_again" | "research"; refresh: boolean } {
+  if (!dossierAt) return { primary: "research", refresh: false };
+  return isFreshDossier(dossierAt, now) ? { primary: "open", refresh: true } : { primary: "research_again", refresh: false };
+}
+
+/**
+ * Why "Research" started nothing new (nothing was paid): "Researched Oct 12, so this is that
+ * dossier. Refresh to research again." Null when a run started.
+ */
+export function startedNote(
+  r: { created: boolean; reason?: string | null; dossier?: { created_at: string } | null },
+  today?: string,
+): string | null {
+  if (r.created) return null;
+  if (r.reason === "fresh" && r.dossier)
+    return `Researched ${formatDate(r.dossier.created_at.slice(0, 10), today)}, so this is that dossier (nothing was charged). Refresh to research again.`;
+  if (r.reason === "identified") return "Already identified: nothing was charged.";
+  return null;
+}
+
+/** "Reused research from Kestrel Robotics (Oct 13)": the dossier's identity and sources came
+ * from another of your workspaces; only the writer ran here. */
+export function reusedLine(reused: { workspace_name: string; date: string | null } | null | undefined, today?: string): string | null {
+  if (!reused) return null;
+  return `Reused research from ${reused.workspace_name}${reused.date ? ` (${formatDate(reused.date, today)})` : ""}`;
 }
 
 /** "May be stale" after 90 days. */
@@ -367,7 +405,7 @@ export function skippedLine(skipped: Estimate["skipped"]): string {
   const parts: string[] = [];
   if (skipped.identified) parts.push(`${num(skipped.identified)} already ${skipped.identified === 1 ? "has an identity" : "have identities"}`);
   if (skipped.no_identity) parts.push(`${num(skipped.no_identity)} ${skipped.no_identity === 1 ? "needs" : "need"} a pick first (Is this them?)`);
-  if (skipped.fresh) parts.push(`${num(skipped.fresh)} already ${skipped.fresh === 1 ? "has a" : "have"} recent ${skipped.fresh === 1 ? "dossier" : "dossiers"}`);
+  if (skipped.fresh) parts.push(`${num(skipped.fresh)} already ${skipped.fresh === 1 ? "has a" : "have"} recent ${skipped.fresh === 1 ? "dossier" : "dossiers"} (not charged again)`);
   if (skipped.active) parts.push(`${num(skipped.active)} already running`);
   if (skipped.suppressed) parts.push(`${num(skipped.suppressed)} asked not to be researched`);
   return parts.join(" · ");
@@ -377,12 +415,17 @@ export function skippedLine(skipped: Estimate["skipped"]): string {
  * The money line of a bulk estimate, honest about free matches: "18 searches ≈ $0.13 each;
  * 19 already have a LinkedIn (free)".
  */
-export function perRunLine(e: Pick<Estimate, "kind" | "count" | "free" | "paid" | "per_run_usd">): string {
+export function perRunLine(e: Pick<Estimate, "kind" | "count" | "free" | "paid" | "per_run_usd" | "reused">): string {
   const free = e.free ?? 0;
   const paid = e.paid ?? e.count - free;
   const each = e.per_run_usd !== null ? ` ≈ ${formatUsd(e.per_run_usd)} each` : "";
   // The dialog already says "6 investors": a dossier line is just the price of one.
-  if (e.kind !== "identity") return each.trim();
+  if (e.kind !== "identity") {
+    const reused = e.reused ?? 0;
+    if (!reused) return each.trim();
+    const tail = `${num(reused)} reuse${reused === 1 ? "s" : ""} your research from another workspace (writing only)`;
+    return reused === e.count ? tail : `${each.trim()}; ${tail}`;
+  }
   const head = `${num(paid)} ${paid === 1 ? "search" : "searches"}${paid ? each : ""}`;
   return free ? `${head}; ${num(free)} already ${free === 1 ? "has a LinkedIn" : "have a LinkedIn"} (free)` : head;
 }

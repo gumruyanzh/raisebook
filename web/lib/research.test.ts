@@ -3,6 +3,10 @@ import { test } from "node:test";
 
 import type { DossierView, Suggestion } from "./api/research";
 import {
+  isFreshDossier,
+  researchActions,
+  reusedLine,
+  startedNote,
   approxUsd,
   capUsd,
   confidenceWord,
@@ -190,7 +194,7 @@ test("estimateLine, skippedLine and overCapLine", () => {
   assert.equal(estimateLine({ kind: "dossier", count: 1, total_usd: null }), "Research 1 investor");
   assert.equal(
     skippedLine({ no_identity: 12, fresh: 1, active: 0, suppressed: 2 }),
-    "12 need a pick first (Is this them?) · 1 already has a recent dossier · 2 asked not to be researched",
+    "12 need a pick first (Is this them?) · 1 already has a recent dossier (not charged again) · 2 asked not to be researched",
   );
   // An identity run's left-outs already have an identity; they are not "recent dossiers".
   assert.equal(skippedLine({ identified: 3 }), "3 already have identities");
@@ -307,4 +311,29 @@ test("unrated verdicts and the spend-limit sentence", () => {
   assert.equal(verdictLabel("unrated"), "No fit verdict");
   assert.equal(fitFromVerdict("unrated"), 0);
   assert.equal(limitUsedLine(13, 13.3), "This month's $13 AI research limit is used up ($13.30 spent).");
+});
+
+test("a fresh dossier opens instead of researching again (owner decision 2026-10-14)", () => {
+  const now = new Date("2026-10-14T12:00:00Z");
+  assert.equal(isFreshDossier("2026-10-01T10:00:00Z", now), true);
+  assert.equal(isFreshDossier("2026-09-14T11:00:00Z", now), false); // 30 days
+  assert.equal(isFreshDossier(null, now), false);
+  assert.deepEqual(researchActions("2026-10-10T10:00:00Z", now), { primary: "open", refresh: true });
+  assert.deepEqual(researchActions("2026-08-01T10:00:00Z", now), { primary: "research_again", refresh: false });
+  assert.deepEqual(researchActions(undefined, now), { primary: "research", refresh: false });
+  assert.equal(
+    startedNote({ created: false, reason: "fresh", dossier: { created_at: "2026-10-12T09:00:00Z" } }, "2026-10-14"),
+    "Researched Oct 12, so this is that dossier (nothing was charged). Refresh to research again.",
+  );
+  assert.equal(startedNote({ created: false, reason: "identified" }), "Already identified: nothing was charged.");
+  assert.equal(startedNote({ created: true, reason: null }), null);
+  assert.equal(startedNote({ created: false, reason: "active" }), null);
+});
+
+test("reused research names the other workspace and the date", () => {
+  assert.equal(reusedLine({ workspace_name: "Kestrel Robotics", date: "2026-10-13" }, "2026-10-14"), "Reused research from Kestrel Robotics (Oct 13)");
+  assert.equal(reusedLine({ workspace_name: "Kestrel Robotics", date: null }), "Reused research from Kestrel Robotics");
+  assert.equal(reusedLine(null), null);
+  assert.equal(perRunLine({ kind: "dossier", count: 3, per_run_usd: 0.21, reused: 1 }), "≈ $0.21 each; 1 reuses your research from another workspace (writing only)");
+  assert.equal(perRunLine({ kind: "dossier", count: 2, per_run_usd: 0.21, reused: 2 }), "2 reuse your research from another workspace (writing only)");
 });

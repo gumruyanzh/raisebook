@@ -36,6 +36,7 @@ import { useOptionalSession, useWorkspace } from "@/lib/session";
 import { LogComposer } from "./LogComposer";
 import { DossierPanel } from "./research/DossierPanel";
 import { FromResearch } from "./research/FromResearch";
+import { takeDossierTab } from "./research/hooks";
 import { ParticipantFields, useParticipantSave } from "./ParticipantFields";
 import { draftHref, ReachOut } from "./ReachOut";
 
@@ -268,6 +269,10 @@ export function InvestorSheet({
   useHotkey("f", openFollowUp, { priority: 1, enabled: open && canWrite && Boolean(p), description: "Set follow-up", group: "Investor file" });
   // Pipeline | Dossier (RESEARCH-PLAN §8.3). The tab stays as you walk the list with J / K.
   const [tab, setTab] = useState<"pipeline" | "dossier">("pipeline");
+  // Triage's "Open dossier" opens this sheet on its Dossier tab.
+  useEffect(() => {
+    if (open && takeDossierTab(investorId)) setTab("dossier");
+  }, [open, investorId]);
   useHotkey("r", () => setTab((t) => (t === "dossier" ? "pipeline" : "dossier")), {
     priority: 1,
     enabled: open && Boolean(investorId),

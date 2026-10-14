@@ -49,6 +49,7 @@ from raisebook.schemas.research import (
     RunStartedOut,
     SaveDossierIn,
     SaveDossierOut,
+    StartedDossier,
     StartResearchIn,
     SuggestionOut,
     SuggestionPage,
@@ -138,21 +139,40 @@ async def start_research(
     now: datetime = Depends(get_now),
 ) -> RunStartedOut:
     """Research one investor on the workspace's OpenRouter key: ``identity`` (who is this,
-    ≈ $0.01), ``dossier`` (default) or ``refresh``. 202 with the queued run; 200 with the run
-    already going for this investor. 422 ``no_ai_key`` / ``spend_cap_reached``, 409
+    ≈ $0.01), ``dossier`` (default) or ``refresh``. 202 with the queued run. 200 with
+    ``created: false`` when nothing new started, so nothing is paid twice: ``reason: active``
+    (a run is already going), ``fresh`` (a dossier from the last 30 days: open ``dossier``
+    instead; ``kind=refresh`` or ``force`` researches again) or ``identified`` (the identity
+    is already confirmed). A dossier for someone the same owner researched in another of
+    their workspaces within 30 days reuses that identity and its public sources and runs only
+    the writer (``run.result.reuse``). 422 ``no_ai_key`` / ``spend_cap_reached``, 409
     ``identity_required`` (pick who this is first) or ``research_suppressed``."""
     inv = await investors_svc.get(db, ws, investor_id)
     rnd = await resolve_round(db, ws, body.round, required=False)
     started = await research_svc.start_run(
-        db, ws, inv, kind=ResearchKind(body.kind), now=now, round_id=rnd.id if rnd else None
+        db,
+        ws,
+        inv,
+        kind=ResearchKind(body.kind),
+        now=now,
+        round_id=rnd.id if rnd else None,
+        force=body.force,
     )
     await db.commit()
     if not started.created:
         response.status_code = 200
     return RunStartedOut(
-        run=await run_out(db, ws, started.run),
+        run=await run_out(db, ws, started.run) if started.run is not None else None,
         estimate_usd=round(started.estimate_micros / 1_000_000, 6),
         created=started.created,
+        reason=started.reason,
+        dossier=StartedDossier(
+            id=started.dossier.id,
+            version=started.dossier.version,
+            created_at=started.dossier.created_at,
+        )
+        if started.dossier is not None
+        else None,
     )
 
 

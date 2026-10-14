@@ -168,6 +168,23 @@ def estimate_micros(
     return 0  # agent dossiers cost the workspace nothing
 
 
+def writer_only_micros(
+    models: RunModels, prices: Mapping[str, ModelInfo] | None = None
+) -> int | None:
+    """A dossier that reuses research from another of the owner's workspaces runs only the
+    writer (owner decision 2026-10-14): its estimate is that one call."""
+    writer = price_of(models.writer, prices)
+    return None if writer is None else step_micros(writer, WRITER_STEP)
+
+
+def writer_only_reserve_micros(
+    models: RunModels, prices: Mapping[str, ModelInfo] | None = None
+) -> int | None:
+    """What a reusing run holds before its writer call."""
+    writer = price_of(models.writer, prices)
+    return None if writer is None else call_reserve_micros(writer, WRITER_STEP)
+
+
 def micros_to_usd(micros: int | None) -> float | None:
     return None if micros is None else round(micros / 1_000_000, 6)
 

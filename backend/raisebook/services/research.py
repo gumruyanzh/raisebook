@@ -34,7 +34,7 @@ from uuid import UUID, uuid4
 
 import structlog
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import and_, func, select, text, update
+from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,7 +88,9 @@ from raisebook.services import openrouter, spend
 from raisebook.services import research_identity as identity_svc
 from raisebook.services import research_prompts as prompts
 from raisebook.services import research_removal as removal_svc
+from raisebook.services import research_reuse as reuse_svc
 from raisebook.services.normalize import clean_url, linkedin_key, norm_firm
+from raisebook.services.privacy_filter import notes_for_research
 from raisebook.services.research_cost import (
     IDENTITY_STEP,
     SEARCH_STEP,
@@ -99,6 +101,8 @@ from raisebook.services.research_cost import (
     estimate_micros,
     price_of,
     run_reserve_micros,
+    writer_only_micros,
+    writer_only_reserve_micros,
 )
 from raisebook.services.research_validate import (
     Anchor,
@@ -121,13 +125,16 @@ STEP_LABELS: dict[str, str] = {
     "search:activity": prompts.SEARCH_LABELS["activity"],
     "search:thesis": prompts.SEARCH_LABELS["thesis"],
     "search:fund": prompts.SEARCH_LABELS["fund"],
+    "reuse": "Reusing your research",
     "filter": "Reading sources",
     "write": "Writing",
     "save": "Checking citations",
 }
 FALLBACK_RESERVE_MICROS = 500_000  # $0.50 for a call whose model has no known price
 MEDIAN_AFTER_RUNS = 20
-FRESH_DOSSIER_DAYS = 30
+# A dossier this new is not researched again unless someone asks for a refresh (owner
+# decision 2026-10-14): "Research" returns it instead of paying twice.
+FRESH_DOSSIER_DAYS = max(30, reuse_svc.FRESH_DAYS)
 MAX_PROMPT_SOURCES = 40
 MAX_WORKSPACE_FIRMS = 50
 KEY_ERRORS = ("openrouter_key_rejected", "openrouter_out_of_credits")
@@ -139,9 +146,12 @@ def run_dedupe_key(run_id: UUID) -> str:
     return f"run:{run_id}"
 
 
-def steps_for(kind: str, *, skip_identity: bool) -> list[str]:
+def steps_for(kind: str, *, skip_identity: bool, reuse: bool = False) -> list[str]:
     if kind == ResearchKind.IDENTITY.value:
         return ["identity", "decide"]
+    if reuse:
+        # Identity and sources come from the owner's other workspace; only the writer runs.
+        return ["reuse", "filter", "write", "save"]
     steps = [] if skip_identity else ["identity"]
     return [*steps, *(f"search:{k}" for k in SEARCH_KEYS), "filter", "write", "save"]
 
@@ -180,6 +190,8 @@ async def per_run_micros(
                 ResearchRun.preset == row.preset,
                 ResearchRun.status == RunStatus.SUCCEEDED.value,
                 ResearchRun.cost_micros > 0,
+                # Writer-only runs (reused research) would pull the median down.
+                or_(ResearchRun.result.is_(None), ~ResearchRun.result.has_key("reuse")),
             )
             .order_by(ResearchRun.created_at.desc())
             .limit(200)
@@ -269,9 +281,50 @@ async def _settings_with_key(db: AsyncSession, ws: WorkspaceContext) -> Workspac
 
 @dataclass
 class Started:
-    run: ResearchRun
+    run: ResearchRun | None
     created: bool
     estimate_micros: int
+    # Why nothing new started: ``fresh`` (a dossier from the last FRESH_DOSSIER_DAYS days),
+    # ``identified`` (the identity is already confirmed), ``active`` (a run is going).
+    reason: str | None = None
+    dossier: Dossier | None = None
+
+
+async def _run_behind(
+    db: AsyncSession,
+    ws: WorkspaceContext,
+    investor_id: UUID,
+    dossier: Dossier | None,
+    kinds: Sequence[str],
+) -> ResearchRun | None:
+    """The run that produced ``dossier`` (or the newest finished run of ``kinds``)."""
+    if dossier is not None and dossier.run_id is not None:
+        row: ResearchRun | None = await db.scalar(
+            select(ResearchRun).where(
+                ResearchRun.workspace_id == ws.workspace_id, ResearchRun.id == dossier.run_id
+            )
+        )
+        if row is not None:
+            return row
+    found: ResearchRun | None = await db.scalar(
+        select(ResearchRun)
+        .where(
+            ResearchRun.workspace_id == ws.workspace_id,
+            ResearchRun.investor_id == investor_id,
+            ResearchRun.kind.in_(list(kinds)),
+            ResearchRun.status == RunStatus.SUCCEEDED.value,
+        )
+        .order_by(ResearchRun.created_at.desc())
+        .limit(1)
+    )
+    return found
+
+
+def is_fresh(dossier: Dossier | None, now: datetime) -> bool:
+    return dossier is not None and dossier.created_at >= now - timedelta(days=FRESH_DOSSIER_DAYS)
+
+
+_LOOKUP = object()
 
 
 async def start_run(
@@ -287,18 +340,38 @@ async def start_run(
     check_cap: bool = True,
     settings: WorkspaceAiSettings | None = None,
     per_run: int | None = None,
+    force: bool = False,
+    donor: Any = _LOOKUP,
 ) -> Started:
-    """Queue a run (the caller commits). A run of this kind already queued or running for the
-    investor is returned instead (double clicks and agent retries start nothing new)."""
+    """Queue a run (the caller commits). Nothing new starts (``created=False``) when:
+
+    - a run of this kind is already queued or running for the investor (double clicks and
+      agent retries), ``reason="active"``;
+    - a ``dossier`` is asked for while the latest dossier is fresh (``FRESH_DOSSIER_DAYS``):
+      that dossier and its run come back, ``reason="fresh"`` (``refresh`` or ``force`` runs);
+    - an ``identity`` run is asked for while the identity is confirmed or matched,
+      ``reason="identified"`` (``force`` searches again).
+
+    A dossier for a person the same owner researched in another of their workspaces reuses
+    that identity and those public sources and runs only the writer (``services.research_reuse``).
+    ``donor`` passes one already found (batches), or None for no reuse."""
     if kind not in (ResearchKind.IDENTITY, ResearchKind.DOSSIER, ResearchKind.REFRESH):
         raise ValidationFailed("kind", "kind must be identity, dossier or refresh.")
     row = settings or await _settings_with_key(db, ws)
     existing = await active_run(db, ws, investor.id, kind.value)
     if existing is not None:
-        return Started(existing, False, existing.estimate_micros)
+        return Started(existing, False, existing.estimate_micros, reason="active")
     await removal_svc.require_not_suppressed(db, investor)
     identity = await identity_svc.get_identity(db, ws, investor.id)
     status = identity.status if identity else IdentityStatus.NONE.value
+    if kind == ResearchKind.DOSSIER and not force:
+        latest = await dossiers_svc.latest(db, ws, investor.id)
+        if latest is not None and is_fresh(latest, now):
+            behind = await _run_behind(db, ws, investor.id, latest, reuse_svc.GIVING_KINDS)
+            return Started(behind, False, 0, reason="fresh", dossier=latest)
+    if kind == ResearchKind.IDENTITY and not force and status in identity_svc.ANCHORED:
+        behind = await _run_behind(db, ws, investor.id, None, tuple(k.value for k in ResearchKind))
+        return Started(behind, False, 0, reason="identified")
     if kind != ResearchKind.IDENTITY and status in identity_svc.BLOCKING:
         raise IdentityRequired(
             "Pick who this is first: "
@@ -316,16 +389,34 @@ async def start_run(
         kind = ResearchKind.DOSSIER
     anchored = status in identity_svc.ANCHORED
     instant = kind == ResearchKind.IDENTITY and (anchored or bool(investor.linkedin_url))
-    estimate = 0 if instant else (per_run or await per_run_micros(db, ws, kind, row))
+    giver: reuse_svc.Donor | None = None
+    if kind == ResearchKind.DOSSIER:
+        giver = (
+            await reuse_svc.find_donor(db, ws, investor, identity, now=now)
+            if donor is _LOOKUP
+            else donor
+        )
+    if giver is not None:
+        estimate = writer_only_micros(models_of(row), ai_svc.known_prices(row)) or (
+            FALLBACK_RESERVE_MICROS
+        )
+    else:
+        estimate = 0 if instant else (per_run or await per_run_micros(db, ws, kind, row))
     if check_cap and not instant:
         # The run holds its upper bound while it runs (R4), so that is what must fit: a run
         # accepted here is never stopped half-way for lack of room.
-        upper = upper_micros(kind, row, skip_identity=anchored or bool(investor.linkedin_url))
+        upper = (
+            writer_only_reserve_micros(models_of(row), ai_svc.known_prices(row))
+            if giver is not None
+            else upper_micros(kind, row, skip_identity=anchored or bool(investor.linkedin_url))
+        )
         needed = max(estimate, upper if upper is not None else FALLBACK_RESERVE_MICROS * 5)
         used = await _usage_now(db, ws, row, now)
         if used.spent_micros + used.reserved_micros + needed > row.monthly_cap_micros:
             raise _cap_error(used, row.monthly_cap_micros, needed)
-    steps = steps_for(kind.value, skip_identity=anchored or bool(investor.linkedin_url))
+    steps = steps_for(
+        kind.value, skip_identity=anchored or bool(investor.linkedin_url), reuse=giver is not None
+    )
     run = ResearchRun(
         workspace_id=ws.workspace_id,
         investor_id=investor.id,
@@ -340,6 +431,7 @@ async def start_run(
         estimate_micros=estimate,
         progress=initial_progress(steps),
         usage=[],
+        result={"reuse": giver.as_result()} if giver is not None else None,
         created_at=now,
         updated_at=now,
     )
@@ -353,7 +445,7 @@ async def start_run(
         other = await active_run(db, ws, investor.id, kind.value)
         if other is None:
             raise
-        return Started(other, False, other.estimate_micros)
+        return Started(other, False, other.estimate_micros, reason="active")
     if instant:
         await _finish_instant_identity(db, ws, investor, run, now=now)
         return Started(run, True, 0)
@@ -422,10 +514,19 @@ class BulkEstimate:
     needs_identity: int = 0  # dossier runs that match the identity first
     no_profile: bool = False  # dossiers would have no fit verdict
     order: str = "given"  # "fit": best fit first (a round)
+    # Dossiers that reuse the owner's research from another workspace: writer only.
+    reuse: dict[UUID, reuse_svc.Donor] = field(default_factory=dict)
+    writer_micros: int = 0
+
+    def each_micros(self, investor_id: UUID) -> int:
+        if investor_id in self.free:
+            return 0
+        if investor_id in self.reuse:
+            return min(self.writer_micros or self.per_run_micros, self.per_run_micros)
+        return self.per_run_micros
 
     def cost_of(self, n: int) -> int:
-        paid = [i for i in self.eligible[:n] if i.id not in self.free]
-        return self.per_run_micros * len(paid)
+        return sum(self.each_micros(i.id) for i in self.eligible[:n])
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -441,6 +542,7 @@ class BulkEstimate:
             "needs_identity": self.needs_identity,
             "no_profile": self.no_profile,
             "order": self.order,
+            "reused": len(self.reuse),
         }
 
 
@@ -502,9 +604,9 @@ async def bulk_estimate(
     row = settings or await ai_svc.get_or_default(db, ws)
     investors = await _investors_for(db, ws, investor_ids, round_id)
     ids = [i.id for i in investors]
-    idents = (
+    ident_rows = (
         {
-            r.investor_id: r.status
+            r.investor_id: r
             for r in await db.scalars(
                 select(InvestorIdentity).where(
                     InvestorIdentity.workspace_id == ws.workspace_id,
@@ -515,6 +617,7 @@ async def bulk_estimate(
         if ids
         else {}
     )
+    idents = {k: r.status for k, r in ident_rows.items()}
     active = (
         set(
             await db.scalars(
@@ -573,11 +676,22 @@ async def bulk_estimate(
             ):
                 needs_identity += 1
     per_run = await per_run_micros(db, ws, kind, row)
+    reuse: dict[UUID, reuse_svc.Donor] = {}
+    writer = 0
+    if kind == ResearchKind.DOSSIER and eligible:
+        reuse = await reuse_svc.donors_for(db, ws, eligible, ident_rows, now=now)
+        writer = writer_only_micros(models_of(row), ai_svc.known_prices(row)) or per_run
+        for inv_id in reuse:
+            # A reused identity is copied, never matched again.
+            inv_status = idents.get(inv_id, IdentityStatus.NONE.value)
+            inv = next(i for i in eligible if i.id == inv_id)
+            if inv_status not in identity_svc.ANCHORED and not inv.linkedin_url:
+                needs_identity -= 1
     used = await _usage_now(db, ws, row, now)
     remaining = used.remaining(row.monthly_cap_micros)
     paid = [i for i in eligible if i.id not in free]
     fits = len(eligible)
-    if per_run > 0 and paid:
+    if per_run > 0 and paid and not reuse:
         # Runs in flight each hold their upper bound (not the estimate) until they settle,
         # so a batch only counts as fitting when the last runs' holds fit too (as many at
         # once as the worker runs).
@@ -598,12 +712,25 @@ async def bulk_estimate(
                         break
                     counted += 1
                 fits += 1
+    elif per_run > 0 and paid:
+        # Mixed costs (some runs reuse research and only write): fit them in order.
+        extra = max(0, (upper_micros(kind, row) or per_run) - per_run)
+        slots = max(1, get_settings().worker_concurrency)
+        total, fits = 0, 0
+        for k, inv in enumerate(eligible):
+            each = writer if inv.id in reuse else (0 if inv.id in free else per_run)
+            if total + each + min(k + 1, slots) * extra > remaining and each > 0:
+                break
+            total += each
+            fits += 1
     return BulkEstimate(
         kind=kind,
         count=len(eligible),
         skipped=skipped,
         per_run_micros=per_run,
-        total_micros=per_run * len(paid),
+        total_micros=sum(
+            (writer if i.id in reuse else per_run) for i in eligible if i.id not in free
+        ),
         remaining_micros=remaining,
         fits=fits,
         eligible=eligible,
@@ -611,6 +738,8 @@ async def bulk_estimate(
         needs_identity=needs_identity,
         no_profile=kind == ResearchKind.DOSSIER and not await _has_profile(db, ws),
         order="fit" if investor_ids is None else "given",
+        reuse=reuse,
+        writer_micros=writer,
     )
 
 
@@ -687,6 +816,7 @@ async def create_batch(
             check_cap=False,
             settings=row,
             per_run=est.per_run_micros,
+            donor=est.reuse.get(inv.id),
         )
     return batch, take
 
@@ -873,6 +1003,13 @@ def run_dict(run: ResearchRun, sources: dict[str, int] | None = None) -> dict[st
     if run.kind != ResearchKind.PREFILL.value:
         result.pop("draft", None)  # the writer's raw output stays internal
         result.pop("workspace_facts", None)
+        result.pop("notes_text", None)
+    reuse = result.get("reuse")
+    if isinstance(reuse, dict):
+        # Which of the owner's workspaces gave the research, and when; nothing else of it.
+        result["reuse"] = {
+            k: reuse[k] for k in ("workspace_name", "date", "state", "sources") if k in reuse
+        }
     result.pop("idempotency_key", None)
     return {
         "id": run.id,
@@ -1218,6 +1355,7 @@ class Runner:
         self.anchor: Anchor
         self.anchor_trusted: Trust = Trust()
         self.prices: dict[str, openrouter.ModelInfo] = {}
+        self.notes: str | None = None  # the investor's notes, when the workspace allows it
 
     def now(self) -> datetime:
         now: datetime = self.ctx.now()
@@ -1583,7 +1721,9 @@ class Runner:
         result = await self.call(
             step,
             model,
-            prompts.search_messages(_subject(self.investor, self.anchor), key, since=since),
+            prompts.search_messages(
+                _subject(self.investor, self.anchor), key, since=since, notes=self.notes
+            ),
             budget=SEARCH_STEP,
             max_tokens=1200,
             **openrouter.search_options(model, context_size="medium", max_results=8),
@@ -1693,6 +1833,20 @@ class Runner:
                 pf = await dossiers_svc.facts_of(self.db, prev)
                 prev_keys = [f["key"] for f in (pf.facts if pf else [])]
         workspace_facts = await self._workspace_facts()
+        local_ids = {s.url_key: f"s{i}" for i, s in enumerate(sources, start=1)}
+        known: list[dict[str, Any]] = []
+        for f in ((self.run.result or {}).get("reuse") or {}).get("facts") or []:
+            ids = [local_ids[k] for k in f.get("url_keys", []) if k in local_ids]
+            if ids:
+                known.append(
+                    {
+                        "section": f.get("section"),
+                        "kind": f.get("kind"),
+                        "text": f.get("text"),
+                        "date": f.get("date"),
+                        "source_ids": ids,
+                    }
+                )
         messages_kw: dict[str, Any] = {
             "anchor": self.anchor.as_dict(),
             "sources": [
@@ -1710,6 +1864,8 @@ class Runner:
             "workspace_facts": workspace_facts,
             "previous_fact_keys": prev_keys,
             "since": since,
+            "notes": self.notes,
+            "known_facts": known,
         }
         model = self.run.writer_model or self.settings.writer_model
         info = await self._info(model)
@@ -1761,6 +1917,7 @@ class Runner:
                     "draft": doc.model_dump(mode="json"),
                     "workspace_facts": self._fact_values(workspace_facts),
                     "no_profile": messages_kw["company"] is None,
+                    "notes_used": bool(self.notes),
                 }
                 self._mark("write", "done")
                 await self.db.commit()
@@ -1791,6 +1948,7 @@ class Runner:
             workspace_facts=result.get("workspace_facts", []),
             anchor=self.anchor,
             trusted_anchor=self.anchor_trusted,
+            notes_id=prompts.NOTES_SOURCE_ID if result.get("notes_used") else None,
         )
         if result.get("no_profile"):
             # Without a company profile there is no fit verdict: nothing is written to the
@@ -1882,6 +2040,9 @@ class Runner:
         assert settings is not None
         self.settings = settings
         self.prices = ai_svc.known_prices(settings)
+        # Investor notes go to the provider only when an owner or admin turned it on (owner
+        # decision 2026-10-14): trimmed and privacy-filtered first.
+        self.notes = notes_for_research(inv.notes) if settings.use_notes_in_research else None
         self.client = openrouter.OpenRouterClient(key)
         del key
         if await removal_svc.is_suppressed(self.db, inv):
@@ -1905,6 +2066,11 @@ class Runner:
         ident = await identity_svc.get_identity(self.db, self.ws, self.investor.id)
         anchored = ident is not None and ident.status in identity_svc.ANCHORED
         total = 0
+        if self.run.kind != ResearchKind.IDENTITY.value and self._reusing():
+            if not (self._done("write") and (self.run.result or {}).get("draft")):
+                writer = await self._info(self.run.writer_model or self.settings.writer_model)
+                total += call_reserve_micros(writer, WRITER_STEP)
+            return total
         if not anchored and not self.investor.linkedin_url and not self._done("identity"):
             model = self.run.identity_model or self.settings.identity_model
             total += call_reserve_micros(await self._info(model), IDENTITY_STEP)
@@ -1918,6 +2084,88 @@ class Runner:
             writer = await self._info(self.run.writer_model or self.settings.writer_model)
             total += call_reserve_micros(writer, WRITER_STEP)
         return total
+
+    def _reusing(self) -> bool:
+        """Planned to reuse the owner's research, and that has not fallen through."""
+        reuse = (self.run.result or {}).get("reuse")
+        return isinstance(reuse, dict) and reuse.get("state") != "unavailable"
+
+    async def reuse_step(self) -> bool:
+        """Copy the identity anchor and the accepted public sources (and the public facts) of
+        the same person's fresh research in another workspace of the same owner, so this run
+        only writes (``services.research_reuse``, the one cross-workspace read). False when
+        that research is no longer there (removed, gone stale, ownership changed): the run
+        then researches as usual."""
+        if self._done("reuse"):
+            return True
+        self._mark("reuse", "running")
+        await self.db.commit()
+        now = self.now()
+        ident = await identity_svc.get_identity(self.db, self.ws, self.investor.id)
+        donor = await reuse_svc.find_donor(self.db, self.ws, self.investor, ident, now=now)
+        sources = await reuse_svc.donor_sources(self.db, donor) if donor is not None else []
+        if donor is None or not sources:
+            return await self._reuse_unavailable()
+        if ident is None or ident.status not in identity_svc.ANCHORED:
+            got = donor.identity
+            row = await identity_svc.ensure_identity(self.db, self.ws, self.investor.id, now)
+            identity_svc._set_anchor(
+                row,
+                status=IdentityStatus(got["status"]),
+                source=IdentitySource(got["source"] or IdentitySource.AUTO.value),
+                linkedin_url=got["linkedin_url"],
+                firm=got["firm"] or self.investor.firm,
+                firm_website=got["firm_website"],
+                title=got["title"] or self.investor.title,
+                confidence=got["confidence"],
+                run_id=self.run.id,
+                ws=self.ws,
+                now=now,
+            )
+            await self.db.flush()
+            await identity_svc.write_back_identity(
+                self.db, self.ws, self.investor, row, now=now, run_id=self.run.id
+            )
+            ident = row
+        if await self._stop_if_suppressed():
+            raise _Ended()
+        self._set_anchor(ident)
+        stored = await self._store_sources(
+            [
+                openrouter.WebSource(
+                    url=src.url,
+                    title=src.title,
+                    snippet=src.snippet,
+                    published_at=src.published_at.isoformat() if src.published_at else None,
+                )
+                for src in sources
+            ],
+            check=True,
+        )
+        if not any(r.accepted for r in stored):
+            return await self._reuse_unavailable()
+        facts = await reuse_svc.donor_facts(self.db, donor, sources)
+        self.run.result = {
+            **(self.run.result or {}),
+            "reuse": {
+                **donor.as_result(),
+                "state": "done",
+                "sources": sum(1 for r in stored if r.accepted),
+                "facts": facts,
+            },
+        }
+        self._mark("reuse", "done")
+        await self.db.commit()
+        return True
+
+    async def _reuse_unavailable(self) -> bool:
+        reuse = dict((self.run.result or {}).get("reuse") or {})
+        reuse["state"] = "unavailable"
+        self.run.result = {**(self.run.result or {}), "reuse": reuse}
+        self._mark("reuse", "skipped")
+        await self.db.commit()
+        log.info("research_reuse_unavailable", run_id=str(self.run.id))
+        return False
 
     async def _stop_if_suppressed(self) -> bool:
         """The identity research found may be someone who asked not to be researched (R13)."""
@@ -1937,7 +2185,12 @@ class Runner:
                     return
                 await self._end(RunStatus.SUCCEEDED)
                 return
-            if not await self.identity_step():
+            reused = self._reusing() and await self.reuse_step()
+            if not reused and (self.run.result or {}).get("reuse"):
+                # The other workspace's research is gone: research as usual, holding enough
+                # for the identity and search calls first.
+                await self._hold(await self._plan_micros())
+            if not reused and not await self.identity_step():
                 ident = await identity_svc.get_identity(self.db, self.ws, self.investor.id)
                 await self._end(
                     RunStatus.BLOCKED_IDENTITY,
@@ -1957,8 +2210,9 @@ class Runner:
             if self.run.kind == ResearchKind.REFRESH.value:
                 prev = await dossiers_svc.latest(self.db, self.ws, self.investor.id)
                 since = prev.created_at.date().isoformat() if prev else None
-            for key in SEARCH_KEYS:
-                await self.search_step(key, since)
+            if not reused:
+                for key in SEARCH_KEYS:
+                    await self.search_step(key, since)
             await self._checkpoint()
             accepted = len(await self._accepted_sources())
             self._mark("filter", "done", sources_accepted=accepted)

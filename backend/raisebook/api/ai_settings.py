@@ -109,6 +109,7 @@ async def settings_out(
         writer_model=row.writer_model,
         models_verified_at=row.models_verified_at,
         monthly_cap_usd=_usd(row.monthly_cap_micros),
+        use_notes_in_research=bool(row.use_notes_in_research),
         usage=UsageOut(
             month=month.strftime("%Y-%m"),
             spent_usd=_usd(used.spent_micros),
@@ -185,7 +186,8 @@ async def patch_ai_settings(
     now: datetime = Depends(get_now),
 ) -> AiSettingsOut:
     """Change the preset (best, balanced, budget), set model ids by hand (Advanced; the
-    preset becomes ``custom``) or the monthly limit in USD (admin)."""
+    preset becomes ``custom``), the monthly limit in USD, or ``use_notes_in_research``
+    (investor notes are sent to your AI provider during research; default off) (admin)."""
     changes = body.model_dump(include=body.model_fields_set, exclude_none=True)
     row = await ai_svc.update_settings(db, ws, changes, now=now)
     await db.commit()

@@ -956,6 +956,7 @@ export function PipelineTriage({
           store.afterWrite();
         }}
         onAcceptAll={acceptResearch}
+        onOpenDossier={() => onOpenFile(current.investor.id)}
       />
     ) : null;
 

@@ -8,10 +8,10 @@ import { errorMessage, type ApiClient } from "@/lib/api/client";
 import { pickIdentity, startResearch, type AiSettings, type ResearchSummary, type Run, type Suggestion } from "@/lib/api/research";
 import { cn } from "@/lib/cn";
 import { useHotkey } from "@/lib/hotkeys";
-import { approxUsd, groupSuggestions, isActive, sectionsOf, suggestionLine } from "@/lib/research";
+import { approxUsd, groupSuggestions, isActive, researchActions, sectionsOf, startedNote, suggestionLine } from "@/lib/research";
 
 import { Brief } from "./Brief";
-import { forgetInvestorResearch, useInvestorResearch, useRunPoll } from "./hooks";
+import { forgetInvestorResearch, requestDossierTab, useInvestorResearch, useRunPoll } from "./hooks";
 import { IdentityPicker } from "./IdentityPicker";
 import { ResearchError, SpendLimitNote } from "./ResearchError";
 import { RunProgress } from "./RunProgress";
@@ -112,6 +112,7 @@ export function TriageResearch({
   keysEnabled,
   onChanged,
   onAcceptAll,
+  onOpenDossier,
 }: {
   investorId: string;
   name: string;
@@ -128,6 +129,8 @@ export function TriageResearch({
   onChanged: () => void;
   /** Accept every pending suggestion (Triage owns the undo). */
   onAcceptAll: (suggestions: Suggestion[]) => Promise<void>;
+  /** Open the investor's file (the sheet), on its Dossier tab. */
+  onOpenDossier?: () => void;
 }) {
   const { data, loading } = useInvestorResearch(client, investorId, row);
   const [run0, setRun0] = useState<Run | null>(null);
@@ -159,12 +162,14 @@ export function TriageResearch({
 
   const available = Boolean(settings?.research_available);
   const capReached = Boolean(settings?.usage.cap_reached);
-  const start = async (kind: "dossier" | "identity" = "dossier") => {
+  const start = async (kind: "dossier" | "identity" | "refresh" = "dossier") => {
     setStarting(true);
     setStartErr(null);
     try {
       const r = await startResearch(client, investorId, { kind, round });
-      setRun0(r.run);
+      // A fresh dossier (or a confirmed identity) comes back instead of a new paid run.
+      if (startedNote(r)) done();
+      else if (r.run) setRun0(r.run);
     } catch (e) {
       setStartErr(e);
     } finally {
@@ -186,7 +191,37 @@ export function TriageResearch({
       </div>
     );
   } else if (view && parts) {
-    body = <Brief view={view} citations={parts.citations} briefCites={parts.briefCites} today={today} compact />;
+    const actions = researchActions(view.dossier.created_at, new Date());
+    body = (
+      <Brief
+        view={view}
+        citations={parts.citations}
+        briefCites={parts.briefCites}
+        today={today}
+        compact
+        aside={
+          actions.primary === "open" && onOpenDossier ? (
+            <>
+              <button
+                type="button"
+                className="link shrink-0 border-0 bg-transparent p-0"
+                onClick={() => {
+                  requestDossierTab(investorId);
+                  onOpenDossier();
+                }}
+              >
+                Open dossier
+              </button>
+              {canWrite && available && !capReached ? (
+                <button type="button" className="shrink-0 border-0 bg-transparent p-0 text-muted hover:text-fg" onClick={() => void start("refresh")}>
+                  Refresh {approxUsd(settings?.estimates.current)}
+                </button>
+              ) : null}
+            </>
+          ) : null
+        }
+      />
+    );
   } else if (status === "needs_pick" && data?.identity) {
     body = (
       <div className="flex flex-col gap-2">

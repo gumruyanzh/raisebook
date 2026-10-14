@@ -5,7 +5,8 @@
 > the live service handles your data today; the [privacy page](https://raisebook.org/privacy)
 > does. If research ships, the privacy page changes first.
 
-Implements `docs/RESEARCH-SPEC.md` (owner-approved 2026-10-13, 13 decisions, binding). Where
+Implements `docs/RESEARCH-SPEC.md` (owner-approved 2026-10-13, 13 decisions, binding; amended
+2026-10-14 with decisions 14 to 16, "never pay twice": §12 below). Where
 this plan and the spec disagree, the spec wins. Spec decisions are cited as **R1..R13**; the
 "engineering defaults" paragraph as **RE**. Repo rules (`CLAUDE.md`, `docs/SPEC.md` §0,
 `design/SYSTEM.md`) still apply to everything here.
@@ -34,9 +35,11 @@ Three build parts, each landing green on its own (backend pytest, ruff check, ru
   stays true.
 - **SPEC §1.6 "No investor database built from user data"** stays true: research rows are
   workspace-scoped like every other table, no query reads two workspaces, nothing is shared
-  (R8). The single exception is the operator's **removal** action (§6.9), which *deletes*
-  across workspaces by a person's anchor and never reads content back. SPEC §1.6 gets that
-  exception written in.
+  (R8). The exceptions are named and single: the operator's **removal** action (§6.9), which
+  *deletes* across workspaces by a person's anchor and never reads content back, and (since
+  2026-10-14, R15) **reuse across one owner's workspaces** (§12.2), which *reads* the public
+  layer of another workspace only when the requester owns both. SPEC §1.6 gets both written
+  in.
 - **"No scraping"** stays true: Raisebook's servers never fetch third-party pages. Search runs
   inside OpenRouter (Sonar / web plugin); the company website prefill also goes through
   OpenRouter, so there is no server-side URL fetch and no SSRF surface.
@@ -1105,3 +1108,83 @@ meeting offer; policy pages + docs; screenshots)
    domain); `apply` refuses weak proof without `--proof-checked`. The done email carries no
    counts. Suppressions keep every LinkedIn and name+firm key the deleted research knew, and
    are checked after the identity step, on identity candidates and on picks.
+
+---
+
+## 12. Never pay twice (owner decisions 2026-10-14: R14 to R16)
+
+The owner had already spent about three hours researching investors by hand (in investor
+notes) and must never pay twice for the same research. Three changes; no new tables, one
+column (migration `0007_research_reuse_notes`: `workspace_ai_settings.use_notes_in_research
+boolean NOT NULL DEFAULT false`).
+
+### 12.1 No accidental repeats (R14)
+- `services/research.start_run(…, force=False)`: a `dossier` run whose investor's latest
+  dossier is younger than `FRESH_DOSSIER_DAYS` (30; `max(30, research_reuse.FRESH_DAYS)`)
+  returns `Started(run=<the run behind that dossier>, created=False, reason="fresh",
+  dossier=…)` and queues nothing. `refresh` or `force=True` research again. An `identity` run
+  on a `matched`/`confirmed` identity returns `reason="identified"`. A run already going is
+  `reason="active"` (as before).
+- REST `POST /v1/investors/{id}/research` takes `force`; 200 + `created: false` + `reason` +
+  `dossier {id, version, created_at}`; `run` may be null when no run is on record. MCP
+  `research_investor` takes `force`, answers `reason: fresh` with "read it with get_dossier",
+  and its description and the server instructions say it never pays twice. Batches already
+  leave fresh dossiers out (`skipped.fresh`).
+- Web (`lib/research.ts`: `isFreshDossier`, `researchActions`, `startedNote`): Triage's Brief
+  gets **Open dossier** (opens the sheet on its Dossier tab) + a quiet **Refresh**; the Dossier
+  tab's footer shows a ghost **Refresh** for a fresh dossier instead of "Research again"; a
+  start that came back `fresh` reloads and says nothing was charged.
+
+### 12.2 Reuse across the same owner's workspaces (R15)
+- `services/research_reuse.py` is the **single named cross-workspace read**. Conditions, all
+  required: the requester is an `owner` here (session) or the API key's creator is an owner
+  here, **and** an owner of the giving workspace (never a sample workspace); the giving run is
+  `succeeded`, kind `dossier|refresh|agent`, finished within 30 days, with accepted sources;
+  same person = equal confirmed `linkedin_key`, or (when either side has none) equal
+  `norm(name)` and `firm_domain`; no suppression matches the giving identity.
+- It reads only `investor_identities`, accepted `research_sources` and `dossier_facts` (public
+  layer) and the giving workspace's name. Never `dossiers`, notes, suggestions, activities.
+- `start_run` finds the donor (batches pass it from `bulk_estimate`, one candidate query for
+  the whole selection); the run's steps are `reuse → filter → write → save`, its estimate and
+  cap check the writer alone (`research_cost.writer_only_micros` / `…_reserve_micros`), and
+  `result.reuse` records `{workspace_name, date}` (ids stay internal). Reuse runs are left out
+  of the per-run median.
+- Worker `reuse_step` re-finds the donor (ownership or freshness may have changed), copies the
+  anchor into an unanchored identity (same status/source/confidence; write-back as usual),
+  re-checks the copied sources against this workspace's anchor and stores them as this run's
+  sources, and keeps the giving dossier's public facts (by URL) for the writer as KNOWN FACTS.
+  If the donor is gone (removed, stale, not an owner any more) the step is `skipped`,
+  `reuse.state = "unavailable"`, the run holds the full plan and researches as usual.
+- The dossier view returns `dossier.reused {workspace_name, date, line}`; the web shows the
+  line ("Reused research from Kestrel Robotics (Oct 13)") under the Brief; MCP `get_dossier`
+  returns `reused`. `POST /research/estimate` returns `reused` and prices those runs as the
+  writer alone.
+
+### 12.3 Investor notes as starting facts (R16)
+- `use_notes_in_research` (default off) is changed with `PATCH /v1/workspace/ai-settings`
+  (`raisebook:admin`: owners and admin keys); Settings → AI research → "Investor notes" with
+  the copy "Investor notes are sent to your AI provider during research."
+- `privacy_filter.notes_for_research`: NFKC, a line about family, health, politics, religion
+  or a home is dropped, phones/addresses/consumer emails stripped, trimmed to about 2,000
+  characters at a word boundary.
+- Prompts (`PROMPT_VERSION 2026-10-14.1`): searches get "Already known from the founder's notes
+  (verify, don't repeat …)" + `<notes>`; the writer gets NOTES + `NOTES_RULE` (cite `"notes"`
+  alone for a notes-only claim). `finalize(notes_id="notes")` moves such facts to
+  `Outcome.from_notes`, stored as `dossiers.analysis.from_notes` (private), never in
+  `dossier_facts`, never in `unverified`, never reused. The web shows them collapsed under
+  "From your notes"; MCP `get_dossier` returns `from_your_notes`.
+
+### 12.4 Tests
+`tests/research/test_research_reuse.py` (fictional cast, scripted OpenRouter): fresh dossier
+returned (REST + MCP), force/refresh research again, identity not matched twice, batches skip;
+an owner reuses (writer call only, cost = writer, sources copied as new rows, A's company,
+notes and talking points absent from B's prompt), by LinkedIn and by name + firm domain, an
+owner's API key reuses; **isolation**: an editor never reuses, an owner of B who is only an
+editor of A never reuses, workspaces of different owners never reuse (REST, keys, estimates),
+stale or another person never matches, sample workspaces never give, a donor gone before the
+worker runs falls back to full research, and the giving workspace is never written to; notes:
+filter + trim, setting default off and admin-only, notes absent when off, present (filtered) in
+every search and the writer when on, notes-only claims under `from_notes` only. Web:
+`lib/research.test.ts` covers the fresh rule, the started note, the reused line and the
+estimate line.
+

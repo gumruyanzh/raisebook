@@ -115,6 +115,7 @@ async def test_workspace_export_includes_profile_and_settings_without_key(
         "search_model": "perplexity/sonar-pro",
         "writer_model": "anthropic/claude-opus-5.5",
         "monthly_cap_usd": 25.0,
+        "use_notes_in_research": False,
     }
     raw = r.text
     assert FAKE_KEY not in raw and FAKE_KEY[-4:] not in raw and "key_" not in raw

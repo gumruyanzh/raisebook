@@ -63,7 +63,7 @@ def register(server: FastMCP) -> None:
         section: Annotated[Section, Field(description="One section, or all (default).")] = "all",
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Read an investor's research dossier: the Brief (verdict, why, best way in, opener, risk) and the sections Fit, Recent activity, Thesis & public views, Ways in, Talking points and Red flags. Every claim ends with source refs like [s3] that point into `sources` (url, title, date). `new_since` marks a refresh; `stale` means older than 90 days. `unverified` claims are from model memory, not cited: never present them as facts."""  # noqa: E501
+        """Read an investor's research dossier: the Brief (verdict, why, best way in, opener, risk) and the sections Fit, Recent activity, Thesis & public views, Ways in, Talking points and Red flags. Every claim ends with source refs like [s3] that point into `sources` (url, title, date). `new_since` marks a refresh; `stale` means older than 90 days. `unverified` claims are from model memory, not cited: never present them as facts. `from_your_notes` came only from the founder's own notes: say "from your notes", never cite them as public or verified. `reused` names the founder's other workspace whose research (identity and public sources) this dossier reused."""  # noqa: E501
         async with tool_call(ctx) as (db, ws):
             inv = await resolve_investor(db, ws, investor)
             view = await dossiers_svc.view(db, ws, inv, now=Clock.now(), version=version)
@@ -90,6 +90,11 @@ def register(server: FastMCP) -> None:
                 ],
                 "unverified": d.get("unverified") or None,
                 "pending_suggestions": len(view["suggestions"]) or None,
+                "reused": (d.get("reused") or {}).get("line"),
+                "from_your_notes": [
+                    n["text"] for n in (d["analysis"] or {}).get("from_notes") or []
+                ]
+                or None,
             }
             if view["new_since"] is not None and new_keys:
                 out["new_since"] = {
@@ -168,9 +173,16 @@ def register(server: FastMCP) -> None:
         dry_run: Annotated[
             bool, Field(description="Only estimate the cost; start nothing.")
         ] = False,
+        force: Annotated[
+            bool,
+            Field(
+                description="Pay for new research even though the dossier is under 30 days "
+                "old (or the identity is confirmed). Only when the founder asks for it."
+            ),
+        ] = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Start research on an investor with the workspace's OpenRouter key (it runs in the background; poll list_research_runs, then read get_dossier). Respects the monthly AI limit. Safe to repeat: a run already going is returned. Errors: no_ai_key (an owner adds a key in Settings → AI research; or research yourself and use save_dossier), spend_cap_reached, identity_required (call match_identity first)."""  # noqa: E501
+        """Start research on an investor with the workspace's OpenRouter key (it runs in the background; poll list_research_runs, then read get_dossier). Respects the monthly AI limit. Never pays twice: a run already going is returned (reason active), a dossier under 30 days old is returned instead of researching again (created=false, reason fresh: read it with get_dossier; kind=refresh or force=true researches again), and an identity run on a confirmed identity starts nothing (reason identified). When the founder researched the same person in another workspace they own within 30 days, that identity and its public sources are reused and only the writer runs (cheaper; the dossier says "Reused research from <workspace>"). Errors: no_ai_key (an owner adds a key in Settings → AI research; or research yourself and use save_dossier), spend_cap_reached, identity_required (call match_identity first)."""  # noqa: E501
         async with tool_call(ctx, SCOPE_WRITE) as (db, ws):
             now = Clock.now()
             inv = await resolve_investor(db, ws, investor)
@@ -185,11 +197,38 @@ def register(server: FastMCP) -> None:
                 )
                 return {"dry_run": True, **shaping.prune(est.as_dict())}
             started = await research_svc.start_run(
-                db, ws, inv, kind=ResearchKind(kind), now=now, round_id=rnd.id if rnd else None
+                db,
+                ws,
+                inv,
+                kind=ResearchKind(kind),
+                now=now,
+                round_id=rnd.id if rnd else None,
+                force=force,
             )
-            out = _run_brief(research_svc.run_dict(started.run), inv.name)
+            out: dict[str, Any] = (
+                _run_brief(research_svc.run_dict(started.run), inv.name)
+                if started.run is not None
+                else {"investor": inv.name}
+            )
             out["created"] = started.created
+            if started.reason == "fresh" and started.dossier is not None:
+                out["reason"] = "fresh"
+                out["dossier"] = {
+                    "version": started.dossier.version,
+                    "date": started.dossier.created_at.date().isoformat(),
+                }
+                out["next"] = (
+                    "A dossier from the last 30 days exists, so nothing was paid for: read it "
+                    "with get_dossier. Only if the founder wants new research: kind=refresh."
+                )
+                return out
+            if started.reason == "identified":
+                out["reason"] = "identified"
+                out["next"] = "The identity is already confirmed. research_investor next."
+                return out
             out["estimate_usd"] = started.estimate_micros / 1_000_000
+            if started.reason:
+                out["reason"] = started.reason
             out["next"] = (
                 "Research runs in the background (about a minute). Check it with "
                 "list_research_runs, then read the result with get_dossier."
@@ -262,7 +301,8 @@ def register(server: FastMCP) -> None:
                 out["next"] = "No match. Call again with linkedin_url when you know it."
                 return out
             started = await research_svc.start_run(db, ws, inv, kind=ResearchKind.IDENTITY, now=now)
-            out["run"] = _run_brief(research_svc.run_dict(started.run), inv.name)
+            if started.run is not None:
+                out["run"] = _run_brief(research_svc.run_dict(started.run), inv.name)
             out["next"] = "Matching runs in the background; call match_identity again shortly."
             return out
 

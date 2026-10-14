@@ -97,7 +97,10 @@ check the promise in the code.
   workspaces. No query in the codebase may read rows from more than one workspace, except
   admin counts of rows per table for capacity planning, and the operator's research
   **removal** action (`services/research_removal.py`, R13), which only *deletes* research rows
-  about a person who asked, in every workspace, and returns counts, never content.
+  about a person who asked, in every workspace, and returns counts, never content; and research
+  **reuse across one owner's workspaces** (`services/research_reuse.py`, RESEARCH-SPEC #15),
+  which reads only the public layer (identity, accepted sources, cited public facts) of another
+  workspace when the person asking owns both, never private analysis or notes.
 - No paid tier, ads, sponsored placements or selling data.
 - No third-party trackers, analytics scripts, session replay or marketing pixels. Fonts are
   self-hosted (`next/font`), and the web app loads no third-party scripts at runtime.
@@ -1252,7 +1255,7 @@ Five tools, in `mcp/tools/research.py`, calling the same services as REST:
 |---|---|---|---|
 | `get_dossier` | read | `investor`, `version?`, `section?` (brief, fit, activity, thesis, ways_in, talking_points, red_flags, all) | brief, sections with claims ending in `[s3]` refs, sources (url, title, date), date, stale, author, `new_since`, `unverified` (model memory, never facts) |
 | `list_research_runs` | read | `investor?`, `status?`, `kind?`, `limit ≤ 50` | id, investor, kind, status, cost_usd, progress, error, can_resume |
-| `research_investor` | write, idempotent | `investor`, `kind` (identity, dossier, refresh; default dossier), `round?`, `dry_run?` | the run and its estimate; `no_ai_key`, `spend_cap_reached`, `identity_required` say what to do |
+| `research_investor` | write, idempotent | `investor`, `kind` (identity, dossier, refresh; default dossier), `round?`, `dry_run?`, `force?` | the run and its estimate; a dossier under 30 days old comes back instead (`created: false`, `reason: fresh`); `no_ai_key`, `spend_cap_reached`, `identity_required` say what to do |
 | `match_identity` | write, idempotent | `investor`, `pick?` (candidate id or rank 1-3), `linkedin_url?`, `none?` | the anchor, the candidates to pick from, or the identity run it started |
 | `save_dossier` | write, not idempotent unless `idempotency_key` | `investor`, `dossier` (DossierDoc v1), `round?`, `idempotency_key?` | version, kept and dropped counts with reasons, privacy removals, suggestions; "by <agent-name>" |
 

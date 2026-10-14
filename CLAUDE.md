@@ -252,13 +252,32 @@ spends the token on load. Use a throwaway database (for example `raisebook_shots
   their run (`field_suggestions.run_id`, migration 0004). Ignored values are never suggested
   again; accept-all shares one `bulk_id`.
 - `save_dossier` (MCP) / `POST /v1/investors/{id}/dossier` need no key and cost nothing; the
-  dossier and its activity are "by <agent-name>". The writer never sees notes, emails,
-  amounts or timelines (prompts in `services/research_prompts.py`, hash-pinned by a test:
-  bump `PROMPT_VERSION` with any change).
-- Removal (`services/research_removal.py`) holds the only cross-workspace statements
+  dossier and its activity are "by <agent-name>". The writer never sees emails, amounts or
+  timelines, and sees notes only when `use_notes_in_research` is on (prompts in
+  `services/research_prompts.py`, hash-pinned by a test: bump `PROMPT_VERSION` with any change).
+- Removal (`services/research_removal.py`) holds the only cross-workspace writes
   (DELETE/UPDATE, counts only); suppressions refuse research for that person everywhere.
+  `services/research_reuse.py` holds the only cross-workspace **read** (see "Never pay twice").
 - Tests: `tests/research/pipeline_mock.Script` scripts OpenRouter's answers;
   `tests/research/helpers.run_jobs(db)` runs queued jobs in-process on the test session.
+
+## Investor research: never pay twice (spec #14 to #16, owner decisions 2026-10-14; plan §12)
+- A `dossier` run on a dossier under `FRESH_DOSSIER_DAYS` (30) returns it (`created: false`,
+  `reason: "fresh"`, `dossier`); only `kind=refresh` or `force` pays again. An identity run on
+  a confirmed/matched identity returns `reason: "identified"`. Web: a fresh dossier shows
+  **Open dossier** + a secondary **Refresh**.
+- Reuse (`services/research_reuse.py`) is the single named cross-workspace read: only when the
+  requester (a session owner, or the owner who created the API key) owns **both** workspaces,
+  the same person (confirmed LinkedIn, else exact normalized name + firm domain), research
+  finished within 30 days, nothing suppressed, never from a sample workspace. It copies the
+  identity, accepted sources and public `dossier_facts` only (never `dossiers`, notes or
+  suggestions); the run is `reuse → filter → write → save`, priced as the writer alone, and the
+  dossier says "Reused research from <workspace> (<date>)". Non-owners and different owners
+  never reuse (`tests/research/test_research_reuse.py`).
+- `workspace_ai_settings.use_notes_in_research` (default off; admin): notes go through
+  `privacy_filter.notes_for_research` (≈2,000 chars, phones/addresses/private lines removed) to
+  the searches ("Already known …") and the writer (NOTES). Notes-only claims live in
+  `dossiers.analysis.from_notes` ("from your notes"), never in `dossier_facts`, never reused.
 
 ## Investor research, Part 3 web (keep these)
 - Research runs only on the workspace's own OpenRouter key, only on a click (never on import,

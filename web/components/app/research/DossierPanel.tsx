@@ -18,7 +18,17 @@ import {
 } from "@/lib/api/research";
 import { cn } from "@/lib/cn";
 import { formatDate, num } from "@/lib/format";
-import { approxUsd, isActive, sectionsOf, stoppedRun, verdictLabel, type Section } from "@/lib/research";
+import {
+  approxUsd,
+  isActive,
+  researchActions,
+  reusedLine,
+  sectionsOf,
+  startedNote,
+  stoppedRun,
+  verdictLabel,
+  type Section,
+} from "@/lib/research";
 
 import { AgentBy, Brief, Cites } from "./Brief";
 import { useAiSettings, useRunAnnouncements, useRunPoll } from "./hooks";
@@ -91,6 +101,7 @@ export function DossierPanel({
   const [version, setVersion] = useState<number | undefined>(undefined);
   const [starting, setStarting] = useState<string | null>(null);
   const [run0, setRun0] = useState<Run | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [n, setN] = useState(0);
   const base = `/w/${encodeURIComponent(wsSlug)}`;
 
@@ -113,6 +124,7 @@ export function DossierPanel({
     setVersion(undefined);
     setRun0(null);
     setStartErr(null);
+    setNote(null);
   }, [investorId]);
 
   const reload = useCallback(() => setN((x) => x + 1), []);
@@ -133,9 +145,17 @@ export function DossierPanel({
   const start = async (kind: "identity" | "dossier" | "refresh") => {
     setStarting(kind);
     setStartErr(null);
+    setNote(null);
     try {
       const r = await startResearch(client, investorId, { kind, ...(round ? { round } : {}) });
-      setRun0(r.run);
+      // Nothing new started (a fresh dossier, an identity already confirmed): open what is
+      // there and say so; nothing was charged.
+      const why = startedNote(r, today);
+      if (why) {
+        setNote(why);
+        setVersion(undefined);
+        reload();
+      } else if (r.run) setRun0(r.run);
     } catch (e) {
       setStartErr(e);
     } finally {
@@ -297,6 +317,7 @@ export function DossierPanel({
   const newLines = sections.flatMap((s) => s.lines.filter((l) => l.isNew).map((l) => ({ ...l, section: s.label })));
   const refreshing = starting === "refresh" || (running && run?.kind === "refresh");
   const profileEmpty = profile?.is_empty ?? false;
+  const actions = researchActions(view.dossier.created_at, new Date());
 
   return (
     <div className="flex min-w-0 flex-col gap-16">
@@ -342,6 +363,12 @@ export function DossierPanel({
             ) : null
           }
         />
+        {view.dossier.reused ? (
+          <p className="t-micro mt-6 text-muted" data-testid="dossier-reused">
+            {reusedLine(view.dossier.reused, today)}
+          </p>
+        ) : null}
+        {note ? <p className="t-body-s mt-6 text-muted">{note}</p> : null}
         {profileEmpty ? (
           <p className="t-body-s mt-8 text-muted">
             <Link href={`${base}/settings/company`} className="link">
@@ -392,6 +419,30 @@ export function DossierPanel({
         {sections.map((s) => (
           <Disclosure key={s.key} section={s} citations={citations} today={today} />
         ))}
+        {view.dossier.analysis.from_notes?.length ? (
+          <details className="group border-b border-line">
+            <summary className="flex h-36 cursor-pointer list-none items-center gap-8 [&::-webkit-details-marker]:hidden">
+              <span aria-hidden className="w-12 text-muted group-open:hidden">
+                →
+              </span>
+              <span aria-hidden className="hidden w-12 text-muted group-open:inline">
+                ↓
+              </span>
+              <span className="t-label">From your notes</span>
+              <span className="t-micro ml-auto text-muted">{num(view.dossier.analysis.from_notes.length)}</span>
+            </summary>
+            <div className="pb-10 pl-20">
+              <p className="t-body-s mb-6 text-muted">Only your own notes say these. They are not from a public source and were not verified.</p>
+              <ul className="m-0 flex list-disc flex-col gap-4 pl-16 text-13 text-muted">
+                {view.dossier.analysis.from_notes.map((u, i) => (
+                  <li key={i}>
+                    {u.text} <span className="t-micro">from your notes</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
+        ) : null}
         {view.dossier.unverified.length ? (
           <details className="group border-b border-line">
             <summary className="flex h-36 cursor-pointer list-none items-center gap-8 [&::-webkit-details-marker]:hidden">
@@ -437,9 +488,16 @@ export function DossierPanel({
           </Select>
         ) : null}
         {canRun && !running && !viewingOld ? (
-          <Button size="sm" busy={refreshing ? "Starting…" : false} onClick={() => void start("refresh")}>
-            Research again {dossierCost}
-          </Button>
+          actions.primary === "open" ? (
+            // A fresh dossier is already open here: refreshing is the secondary choice.
+            <Button size="sm" variant="ghost" busy={refreshing ? "Starting…" : false} onClick={() => void start("refresh")}>
+              Refresh {dossierCost}
+            </Button>
+          ) : (
+            <Button size="sm" busy={refreshing ? "Starting…" : false} onClick={() => void start("refresh")}>
+              Research again {dossierCost}
+            </Button>
+          )
         ) : null}
         <span className="t-micro text-muted">
           {num(citations.length)} {citations.length === 1 ? "source" : "sources"} cited

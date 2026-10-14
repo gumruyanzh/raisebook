@@ -745,5 +745,6 @@ async def _research_dict(db: AsyncSession, ws: WorkspaceContext) -> dict[str, An
             "search_model": settings.search_model,
             "writer_model": settings.writer_model,
             "monthly_cap_usd": settings.monthly_cap_micros / 1_000_000,
+            "use_notes_in_research": bool(settings.use_notes_in_research),
         },
     }

@@ -102,6 +102,7 @@ def default_row(workspace_id: UUID) -> WorkspaceAiSettings:
         search_model=p.search,
         writer_model=p.writer,
         monthly_cap_micros=DEFAULT_CAP_MICROS,
+        use_notes_in_research=False,
     )
 
 
@@ -412,7 +413,8 @@ def cap_micros(usd: Decimal | float | int) -> int:
 async def update_settings(
     db: AsyncSession, ws: WorkspaceContext, changes: Mapping[str, Any], *, now: datetime
 ) -> WorkspaceAiSettings:
-    """PATCH preset / Advanced model ids / monthly cap (``raisebook:admin``; the API checks)."""
+    """PATCH preset / Advanced model ids / monthly cap / whether investor notes go to research
+    (``raisebook:admin``; the API checks)."""
     row = await _locked_row(db, ws.workspace_id, now)
     models = _models_of(row)
     preset = changes.get("preset")
@@ -439,6 +441,8 @@ async def update_settings(
     row.preset = AiPreset.CUSTOM.value if preset == AiPreset.CUSTOM else detected.value
     if changes.get("monthly_cap_usd") is not None:
         row.monthly_cap_micros = cap_micros(changes["monthly_cap_usd"])
+    if changes.get("use_notes_in_research") is not None:
+        row.use_notes_in_research = bool(changes["use_notes_in_research"])
     row.updated_at = now
     await db.flush()
     return row

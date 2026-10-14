@@ -62,6 +62,18 @@ export function announceRun(investorId: string): void {
   for (const l of runListeners) l(investorId);
 }
 
+/** "Open dossier" from Triage: the investor sheet that opens next shows its Dossier tab. */
+let dossierTabFor: string | null = null;
+export function requestDossierTab(investorId: string): void {
+  dossierTabFor = investorId;
+}
+/** True once for the investor "Open dossier" asked for (the sheet then forgets it). */
+export function takeDossierTab(investorId: string | null | undefined): boolean {
+  if (!investorId || dossierTabFor !== investorId) return false;
+  dossierTabFor = null;
+  return true;
+}
+
 export function useRunAnnouncements(investorId: string, onRun: () => void): void {
   const ref = useRef(onRun);
   ref.current = onRun;
