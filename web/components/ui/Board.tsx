@@ -116,7 +116,7 @@ export function BoardColumn({
       </header>
       <div
         ref={bodyRef}
-        className={cn("flex min-h-40 flex-col overflow-y-auto overscroll-contain px-8 pb-8 scrollbar-thin", fill && "flex-1")}
+        className={cn("flex min-h-40 flex-col overflow-x-hidden overflow-y-auto overscroll-y-contain px-8 pb-8 scrollbar-thin", fill && "flex-1")}
       >
         {children}
         {empty ? (

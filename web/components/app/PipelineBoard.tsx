@@ -1,5 +1,6 @@
 "use client";
 
+import { useBoardPan } from "@/lib/useBoardPan";
 import {
   useCallback,
   useEffect,
@@ -154,6 +155,7 @@ export function PipelineBoard({
   const [activeId, setActiveId] = useState<string | null>(null);
   const anchor = useRef<string | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
+  useBoardPan(boardRef);
   const apis = useRef<Record<string, ColumnApi>>({});
   const sel = selected ?? EMPTY;
   const anySelected = sel.size > 0;
