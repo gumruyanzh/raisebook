@@ -391,7 +391,14 @@ export function InvestorPage({
               className="mt-4"
               draft={null}
               person={{ name: inv.name, firm: inv.firm, fit: 0, email: inv.email, linkedin_url: inv.linkedin_url, website_url: inv.website_url, x_url: inv.x_url }}
+              fromResearch={inv.research?.from_research}
             />
+            {/* On a phone the dossier sits below the profile: one tap to it before a meeting. */}
+            {inv.research?.verdict ? (
+              <a href="#dossier" className="link t-body-s mt-4 self-start xl:hidden">
+                Read the dossier ↓
+              </a>
+            ) : null}
           </header>
           <div className="rounded-md border border-line bg-surface px-16 pt-16 pb-8">
             <InvestorProfile client={client} investor={inv} currency={currency} canWrite={canWrite} onSaved={setInv} />
@@ -464,6 +471,8 @@ export function InvestorPage({
                 void getInvestor(client, inv.id)
                   .then(setInv)
                   .catch(() => {});
+                // Research may have set or suggested the fit: re-read each round's card.
+                void Promise.all(parts.map((p) => getParticipant(client, p.round_id, inv.id).catch(() => p))).then(setParts);
                 void reloadTimeline();
                 router.refresh();
               }}

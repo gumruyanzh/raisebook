@@ -220,21 +220,41 @@ export interface InvestorResearch {
 
 const investorCache = new Map<string, { at: number; p: Promise<InvestorResearch> }>();
 
+function researchSig(investorId: string | null, row: ResearchSummary | null | undefined): string {
+  return [
+    investorId,
+    row?.verdict ?? "",
+    row?.dossier_at ?? "",
+    row?.identity_status ?? "",
+    row?.pending_suggestions ?? 0,
+    row?.active_run?.id ?? "",
+    row?.active_run?.status ?? "",
+    row?.stopped_run?.id ?? "",
+  ].join("|");
+}
+
 /** What the panel needs for one investor, guided by the round's summary row (no wasted calls). */
 export function investorResearchCached(c: ApiClient, investorId: string, row: ResearchSummary | null | undefined): Promise<InvestorResearch> {
-  const sig = `${investorId}|${row?.verdict ?? ""}|${row?.dossier_at ?? ""}|${row?.identity_status ?? ""}|${row?.pending_suggestions ?? 0}|${row?.active_run?.id ?? ""}|${row?.active_run?.status ?? ""}`;
+  const sig = researchSig(investorId, row);
   const hit = investorCache.get(sig);
   if (hit && Date.now() - hit.at < 60_000) return hit.p;
   const p = (async (): Promise<InvestorResearch> => {
     const [view, identity, suggestions, run] = await Promise.all([
       row?.dossier_at ? getDossier(c, investorId).catch(() => null) : Promise.resolve(null),
-      row?.identity_status === "needs_pick" || row?.identity_status === "not_found" ? getIdentity(c, investorId).catch(() => null) : Promise.resolve(null),
+      row?.identity_status === "needs_pick" || row?.identity_status === "not_found" || row?.identity_status === "rejected"
+        ? getIdentity(c, investorId).catch(() => null)
+        : Promise.resolve(null),
       row?.pending_suggestions && !row?.dossier_at
         ? listSuggestions(c, { investor_id: investorId, status: "pending" })
             .then((r) => r.data)
             .catch(() => [] as Suggestion[])
         : Promise.resolve(null),
-      row?.active_run && isActive(row.active_run.status) ? getRun(c, row.active_run.id).catch(() => null) : Promise.resolve(null),
+      // The run going now, or the last one when it stopped without a result (with its reason).
+      row?.active_run && isActive(row.active_run.status)
+        ? getRun(c, row.active_run.id).catch(() => null)
+        : row?.stopped_run
+          ? getRun(c, row.stopped_run.id).catch(() => null)
+          : Promise.resolve(null),
     ]);
     return { view, identity, suggestions: suggestions ?? view?.suggestions ?? [], run };
   })();
@@ -256,7 +276,7 @@ export function useInvestorResearch(
 ): { data: InvestorResearch | null; loading: boolean } {
   const [data, setData] = useState<InvestorResearch | null>(null);
   const [loading, setLoading] = useState(false);
-  const sig = `${investorId}|${row?.verdict ?? ""}|${row?.dossier_at ?? ""}|${row?.identity_status ?? ""}|${row?.pending_suggestions ?? 0}|${row?.active_run?.id ?? ""}|${row?.active_run?.status ?? ""}`;
+  const sig = researchSig(investorId, row);
   useEffect(() => {
     if (!investorId || !enabled) {
       setData(null);

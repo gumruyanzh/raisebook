@@ -57,6 +57,7 @@ export function ReachOut({
   kbd = false,
   big = false,
   className,
+  fromResearch,
 }: {
   person: ReachPerson;
   draft: string | null;
@@ -66,15 +67,23 @@ export function ReachOut({
   /** 40px targets (phones). */
   big?: boolean;
   className?: string;
+  /** Fields research filled in (R7): their buttons carry a "from research" mark. */
+  fromResearch?: readonly string[];
 }) {
   const toast = useToast();
   const linkedin = person.linkedin_url ?? null;
   const search = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([person.name, person.firm].filter(Boolean).join(" "))}`;
   const email = person.email ?? null;
   const web = [
-    ...(person.website_url ? [{ href: person.website_url, label: "Website" }] : []),
-    ...(person.x_url ? [{ href: person.x_url, label: "X" }] : []),
+    ...(person.website_url ? [{ href: person.website_url, label: "Website", field: "website_url" }] : []),
+    ...(person.x_url ? [{ href: person.x_url, label: "X", field: "x_url" }] : []),
   ].filter((l) => /^https?:\/\//i.test(l.href));
+  const researched = (field: string) =>
+    fromResearch?.includes(field) ? (
+      <span className="t-micro shrink-0 text-muted" title="Filled in by research. Check it before you use it; edit it and the mark goes away.">
+        from research
+      </span>
+    ) : null;
   const btn = cn(
     "inline-flex max-w-full min-w-0 items-center gap-6 rounded-sm border border-line bg-surface text-fg hover:border-accent",
     big ? "h-40 px-12" : "h-32 px-12 text-base",
@@ -88,6 +97,7 @@ export function ReachOut({
     <div className={cn("flex min-w-0 flex-wrap items-center gap-6", className)}>
       <a href={linkedin ?? search} target="_blank" rel="noopener noreferrer" className={btn}>
         {linkedin ? "LinkedIn" : "Search LinkedIn"} {arrow}
+        {linkedin ? researched("linkedin_url") : null}
         {kbd ? <Kbd>L</Kbd> : null}
       </a>
       {draft ? (
@@ -110,12 +120,14 @@ export function ReachOut({
           }}
         >
           <span className="min-w-0 truncate text-muted">{email}</span>
+          {researched("email")}
           <span className="shrink-0">Copy</span>
         </button>
       ) : null}
       {web.map((l) => (
         <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" className={btn}>
           {l.label} {arrow}
+          {researched(l.field)}
         </a>
       ))}
     </div>

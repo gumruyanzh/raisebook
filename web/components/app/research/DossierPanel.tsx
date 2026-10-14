@@ -18,12 +18,12 @@ import {
 } from "@/lib/api/research";
 import { cn } from "@/lib/cn";
 import { formatDate, num } from "@/lib/format";
-import { approxUsd, isActive, sectionsOf, verdictLabel, type Section } from "@/lib/research";
+import { approxUsd, isActive, sectionsOf, stoppedRun, verdictLabel, type Section } from "@/lib/research";
 
 import { AgentBy, Brief, Cites } from "./Brief";
 import { useAiSettings, useRunAnnouncements, useRunPoll } from "./hooks";
 import { IdentityPicker } from "./IdentityPicker";
-import { ResearchError } from "./ResearchError";
+import { ResearchError, SpendLimitNote } from "./ResearchError";
 import { RunProgress } from "./RunProgress";
 import { SuggestionList } from "./SuggestionList";
 
@@ -45,7 +45,9 @@ async function loadAll(c: ApiClient, investorId: string, version?: number): Prom
       .then((r) => r.data)
       .catch(() => [] as Run[]),
   ]);
-  return { identity, view, versions, active: runs.find((r) => isActive(r.status)) ?? null };
+  // A run going now, or else the last one when it stopped without a result (failed, partial,
+  // capped): it stays visible with its reason and Resume after a reload.
+  return { identity, view, versions, active: runs.find((r) => isActive(r.status)) ?? stoppedRun(runs, view?.dossier.created_at) };
 }
 
 const host = (u: string | null | undefined) => (u ? u.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "") : "");
@@ -154,7 +156,20 @@ export function DossierPanel({
 
   const identity = data.identity;
   const available = Boolean(settings?.research_available);
-  const canRun = canWrite && available;
+  // The monthly limit is used up: no paid buttons, one sentence and where to raise it.
+  const capped = Boolean(settings?.usage.cap_reached);
+  const canRun = canWrite && available && !capped;
+  const limitNote = canWrite && available && capped ? <SpendLimitNote settings={settings} wsSlug={wsSlug} /> : null;
+  const noProfileNote =
+    canRun && profile?.is_empty ? (
+      <p className="t-body-s text-muted">
+        No company profile yet, so this dossier would have no fit verdict.{" "}
+        <Link href={`/w/${encodeURIComponent(wsSlug)}/settings/company`} className="link">
+          Add it first
+        </Link>{" "}
+        to get one.
+      </p>
+    ) : null;
   const dossierCost = approxUsd(settings?.estimates.current);
   const identityCost = approxUsd(settings?.estimates.identity);
   const anchored = identity.status === "matched" || identity.status === "confirmed";
@@ -231,6 +246,8 @@ export function DossierPanel({
                 </Button>
               </div>
             ) : null}
+            {noProfileNote}
+            {limitNote}
             {noKey}
           </section>
         ) : identity.status === "not_found" || identity.status === "rejected" ? (
@@ -249,6 +266,7 @@ export function DossierPanel({
                 </Button>
               </div>
             ) : null}
+            {limitNote}
           </section>
         ) : anchored ? (
           <section className="flex flex-col gap-8" aria-label="Research">
@@ -263,6 +281,8 @@ export function DossierPanel({
                 </Button>
               </div>
             ) : null}
+            {noProfileNote}
+            {limitNote}
             {noKey}
           </section>
         ) : null}
@@ -431,6 +451,7 @@ export function DossierPanel({
           ) : null}
         </span>
         {!available && canWrite ? <span className="w-full">{noKey}</span> : null}
+        {limitNote ? <span className="w-full">{limitNote}</span> : null}
       </footer>
     </div>
   );

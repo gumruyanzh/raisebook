@@ -5,6 +5,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { MIN_SIMILAR, SIMILAR_GAP_MS, runKeyOf, similarKeyOf, type ActivityRun, type FeedActivity } from "@/lib/api/activities";
 import type { Activity, ActivityKind } from "@/lib/api/types";
+import { FIT_WORD, coveredByResearch, fieldList } from "@/lib/activityWords";
 import { cn } from "@/lib/cn";
 import {
   dayLabel,
@@ -33,6 +34,7 @@ export function matchesTimelineFilter(a: Activity, f: TimelineFilter): boolean {
 }
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
+
 const stageLabel = (v: unknown): string =>
   v && typeof v === "object" && "label" in v ? s((v as { label: unknown }).label) : "";
 
@@ -86,7 +88,8 @@ export function activitySentence(
       return `added ${who || "this investor"}`;
     case "investor_updated": {
       const fields = Array.isArray(d.fields) ? (d.fields as unknown[]).map(String) : [];
-      const list = fields.length ? fields.join(", ").replaceAll("_", " ") : "contact details";
+      const list = fields.length ? fieldList(fields) : "contact details";
+      if (d.source === "research") return `accepted research's ${list}${who ? ` for ${who}` : ""}`;
       return `updated ${list}${who ? ` for ${who}` : ""}`;
     }
     case "added_to_round": {
@@ -96,23 +99,40 @@ export function activitySentence(
     case "removed_from_round":
       return `removed ${who || "them"} from the round`;
     case "participant_updated": {
-      const changes = d.changes && typeof d.changes === "object" ? Object.keys(d.changes) : [];
-      const list = changes.length ? changes.join(", ").replaceAll("_", " ") : "round details";
+      const changes = d.changes && typeof d.changes === "object" ? (d.changes as Record<string, unknown>) : {};
+      const keys = Object.keys(changes);
+      const fit = changes.fit as { from?: unknown; to?: unknown } | undefined;
+      if (keys.length === 1 && fit && typeof fit.to === "number") {
+        const from = typeof fit.from === "number" && fit.from > 0 ? ` from ${FIT_WORD[fit.from] ?? fit.from}` : "";
+        const research = d.source === "research" ? " (research's suggestion)" : "";
+        return `changed fit${who ? ` for ${who}` : ""}${from} to ${FIT_WORD[fit.to] ?? fit.to}${research}`;
+      }
+      const list = keys.length ? fieldList(keys) : "round details";
       return `changed ${list}${who ? ` for ${who}` : ""}`;
     }
     case "research": {
-      const filled = Array.isArray(d.filled) ? d.filled.length : 0;
+      const filled = Array.isArray(d.filled) ? fieldList(d.filled as unknown[]) : "";
       const suggested = Array.isArray(d.suggested) ? d.suggested.length : 0;
-      const tail = [filled ? `filled ${filled === 1 ? "1 field" : `${filled} fields`}` : "", suggested ? `suggested ${suggested === 1 ? "1 change" : `${suggested} changes`}` : ""]
+      const tail = [filled ? `filled ${filled}` : "", suggested ? `suggested ${suggested === 1 ? "1 change" : `${suggested} changes`}` : ""]
         .filter(Boolean)
-        .join(", ");
+        .join("; ");
+      const whose = who ? `${who}'s` : "the";
       if (d.event === "identity") {
-        const verb = s(d.status) === "matched" ? "matched" : "confirmed";
-        return `${verb} ${who ? `${who}'s` : "the"} identity${tail ? `; ${tail}` : ""}`;
+        const src = s(d.source);
+        const head =
+          src === "existing"
+            ? `confirmed ${whose} identity from the LinkedIn on file`
+            : src === "user"
+              ? `picked who ${who || "this"} is`
+              : src === "agent"
+                ? `confirmed ${whose} identity`
+                : `ran research that matched ${whose} identity`;
+        return `${head}${tail ? `; ${tail}` : ""}`;
       }
       const verdict = s(d.verdict);
-      const word = verdict === "strong" ? "Strong fit" : verdict === "possible" ? "Possible fit" : verdict === "poor" ? "Poor fit" : "";
-      return `researched ${who || "them"}${word ? `: ${word}` : ""}${tail ? `; ${tail}` : ""}`;
+      const word =
+        verdict === "strong" ? "Strong fit" : verdict === "possible" ? "Possible fit" : verdict === "poor" ? "Poor fit" : verdict === "unrated" ? "no fit verdict yet" : "";
+      return `ran research on ${who || "them"}${word ? `: ${word}` : ""}${tail ? `; ${tail}` : ""}`;
     }
     default:
       return String(a.kind).replaceAll("_", " ");
@@ -142,11 +162,11 @@ export function runSentence(head: Activity, run: Pick<ActivityRun, "kind" | "inv
       return `added ${n} to the round`;
     case "participant_updated": {
       const changes = d.changes && typeof d.changes === "object" ? Object.keys(d.changes) : [];
-      return changes.length ? `changed ${changes.join(", ").replaceAll("_", " ")} for ${n}` : `changed ${n}`;
+      return changes.length ? `changed ${fieldList(changes)} for ${n}` : `changed ${n}`;
     }
     case "investor_updated": {
       const fields = Array.isArray(d.fields) ? (d.fields as unknown[]).map(String) : [];
-      return fields.length ? `updated ${fields.join(", ").replaceAll("_", " ")} for ${n}` : `updated ${n}`;
+      return fields.length ? `updated ${fieldList(fields)} for ${n}` : `updated ${n}`;
     }
     case "investor_created":
       return `added ${n}`;
@@ -238,7 +258,7 @@ function linkName(sentence: string, a: Activity, href?: (a: Activity) => string)
  * Vertical activity list (SYSTEM 3.18): mono time column (64px), actor, action sentence and an
  * optional body (pre-wrap, 65ch), grouped under day separators. Agent items get the orchid
  * rule and a 50% agent-soft tint. `filterable` adds the All / Conversations / Stage & money /
- * Agent actions control.
+ * Agents control (it scrolls sideways on a phone rather than clip).
  *
  * Runs (UX-PASS-1 P1-11): an import or a bulk change is one expandable entry ("Sam imported
  * 420 investors from investors.csv"). The API collapses them with `collapse_runs` (pass
@@ -291,7 +311,7 @@ export function Timeline({
   const today = todayIn(timeZone, now);
   const groups = useMemo(() => {
     const out: { day: string; items: Activity[] }[] = [];
-    for (const a of items.filter((x) => matchesTimelineFilter(x, filter))) {
+    for (const a of items.filter((x) => matchesTimelineFilter(x, filter) && !coveredByResearch(x))) {
       const day = isoDate(a.occurred_at, timeZone);
       const last = out[out.length - 1];
       if (last && last.day === day) last.items.push(a);
@@ -344,12 +364,12 @@ export function Timeline({
           label="Filter timeline"
           value={filter}
           onChange={setFilter}
-          className="self-start"
+          className="max-w-full self-start overflow-x-auto"
           options={[
             { value: "all", label: "All" },
             { value: "conversations", label: "Conversations" },
             { value: "stage_money", label: "Stage & money" },
-            { value: "agent", label: "Agent actions" },
+            { value: "agent", label: "Agents" },
           ]}
         />
       ) : null}

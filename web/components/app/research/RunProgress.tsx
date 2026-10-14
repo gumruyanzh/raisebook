@@ -7,7 +7,7 @@ import { Button } from "@/components/ui";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
 import { cancelRun, resumeRun, type Run, type StepState } from "@/lib/api/research";
 import { cn } from "@/lib/cn";
-import { isActive, runNextAction, runProgressLabel } from "@/lib/research";
+import { isActive, runNextAction, runProgressLabel, runStallHint } from "@/lib/research";
 
 const GLYPH: Record<StepState, string> = { done: "✓", running: "→", pending: "·", skipped: "–", failed: "✕" };
 
@@ -54,6 +54,7 @@ export function RunProgress({
     }
   };
   const steps = run.progress?.steps ?? [];
+  const stall = active ? runStallHint(run, new Date()) : null;
   return (
     <div className={cn("flex min-w-0 flex-col gap-6", className)} aria-live="polite">
       <div className="flex min-w-0 flex-wrap items-center gap-x-10 gap-y-4">
@@ -101,6 +102,11 @@ export function RunProgress({
             </li>
           ))}
         </ol>
+      ) : null}
+      {stall ? (
+        <p className="t-body-s text-warm-ink" role="status">
+          {stall}
+        </p>
       ) : null}
       {failed && run.error?.message ? (
         <p className="t-body-s text-muted">

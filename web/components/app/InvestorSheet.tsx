@@ -35,18 +35,11 @@ import { useOptionalSession, useWorkspace } from "@/lib/session";
 
 import { LogComposer } from "./LogComposer";
 import { DossierPanel } from "./research/DossierPanel";
+import { FromResearch } from "./research/FromResearch";
 import { ParticipantFields, useParticipantSave } from "./ParticipantFields";
 import { draftHref, ReachOut } from "./ReachOut";
 
-/** A quiet "from research" mark beside a value research filled in (R7). */
-export function FromResearch({ fields, of }: { fields: readonly string[] | undefined; of: readonly string[] }) {
-  if (!fields || !of.some((f) => fields.includes(f))) return null;
-  return (
-    <span className="t-micro ml-6 whitespace-nowrap text-muted" title="Filled in by research. Edit it and the mark goes away.">
-      from research
-    </span>
-  );
-}
+export { FromResearch };
 
 /** "$250k–$1M" from check_min/max, else the free-text note. */
 export function checkSize(inv: Pick<Investor, "check_min" | "check_max" | "check_note">, currency: string) {
@@ -367,14 +360,14 @@ export function InvestorSheet({
       : rs.identity_status === "needs_pick"
         ? "pick"
         : rs.verdict
-          ? (rs.verdict === "strong" ? "Strong" : rs.verdict === "possible" ? "Possible" : "Poor")
+          ? (rs.verdict === "strong" ? "Strong" : rs.verdict === "possible" ? "Possible" : rs.verdict === "poor" ? "Poor" : "Researched")
           : null
     : null;
   const contactAndFacts = investor ? (
     <>
       <section aria-label="Contact">
         <SectionLabel>Contact</SectionLabel>
-        <ReachOut person={person!} draft={draft} />
+        <ReachOut person={person!} draft={draft} fromResearch={fromResearch} />
       </section>
       <section aria-label="Facts">
         <SectionLabel>Facts</SectionLabel>

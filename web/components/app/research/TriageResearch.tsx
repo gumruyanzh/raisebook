@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 
-import { Button, Kbd } from "@/components/ui";
-import type { ApiClient } from "@/lib/api/client";
-import { startResearch, type AiSettings, type ResearchSummary, type Run, type Suggestion } from "@/lib/api/research";
+import { Button, Input, Kbd } from "@/components/ui";
+import { errorMessage, type ApiClient } from "@/lib/api/client";
+import { pickIdentity, startResearch, type AiSettings, type ResearchSummary, type Run, type Suggestion } from "@/lib/api/research";
 import { cn } from "@/lib/cn";
 import { useHotkey } from "@/lib/hotkeys";
 import { approxUsd, groupSuggestions, isActive, sectionsOf, suggestionLine } from "@/lib/research";
@@ -13,8 +13,80 @@ import { approxUsd, groupSuggestions, isActive, sectionsOf, suggestionLine } fro
 import { Brief } from "./Brief";
 import { forgetInvestorResearch, useInvestorResearch, useRunPoll } from "./hooks";
 import { IdentityPicker } from "./IdentityPicker";
-import { researchErrorText } from "./ResearchError";
+import { ResearchError, SpendLimitNote } from "./ResearchError";
 import { RunProgress } from "./RunProgress";
+
+/** Not found / "none of these": type their LinkedIn, or search again (one cheap call). */
+function FindAgain({
+  investorId,
+  name,
+  client,
+  settings,
+  onPicked,
+  onSearch,
+}: {
+  investorId: string;
+  name: string;
+  client: ApiClient;
+  settings: AiSettings | null | undefined;
+  onPicked: () => void;
+  onSearch: () => Promise<void>;
+}) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState<"save" | "search" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <form
+      className="flex min-w-0 items-center gap-6"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (!url.trim()) return;
+        setBusy("save");
+        setErr(null);
+        try {
+          await pickIdentity(client, investorId, { linkedin_url: url.trim() });
+          onPicked();
+        } catch (x) {
+          setErr(errorMessage(x));
+        } finally {
+          setBusy(null);
+        }
+      }}
+    >
+      <Input
+        size="sm"
+        type="url"
+        inputMode="url"
+        placeholder="https://www.linkedin.com/in/…"
+        aria-label={`LinkedIn URL for ${name}`}
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        className="min-w-0 flex-1"
+      />
+      <Button size="sm" type="submit" disabled={!url.trim()} busy={busy === "save" ? "Saving…" : false}>
+        Use this
+      </Button>
+      {settings?.research_available && !settings.usage.cap_reached ? (
+        <button
+          type="button"
+          className="link t-body-s shrink-0 border-0 bg-transparent p-0"
+          disabled={busy !== null}
+          onClick={async () => {
+            setBusy("search");
+            try {
+              await onSearch();
+            } finally {
+              setBusy(null);
+            }
+          }}
+        >
+          {busy === "search" ? "Starting…" : `Search again ${approxUsd(settings.estimates.identity)}`}
+        </button>
+      ) : null}
+      {err ? <span className="t-body-s text-bad">{err}</span> : null}
+    </form>
+  );
+}
 
 /** The research block's fixed height: the decision panel never moves between investors. */
 export const TRIAGE_RESEARCH_H = 148;
@@ -85,11 +157,12 @@ export function TriageResearch({
   });
 
   const available = Boolean(settings?.research_available);
-  const start = async () => {
+  const capReached = Boolean(settings?.usage.cap_reached);
+  const start = async (kind: "dossier" | "identity" = "dossier") => {
     setStarting(true);
     setStartErr(null);
     try {
-      const r = await startResearch(client, investorId, { kind: "dossier", round });
+      const r = await startResearch(client, investorId, { kind, round });
       setRun0(r.run);
     } catch (e) {
       setStartErr(e);
@@ -101,6 +174,8 @@ export function TriageResearch({
   const view = data?.view ?? null;
   const parts = useMemo(() => (view ? sectionsOf(view) : null), [view]);
   const active = run && isActive(run.status);
+  const stopped = run && !active && run.status !== "succeeded" && !view ? run : null;
+  const status = row?.identity_status;
   let body: React.ReactNode;
   if (active) {
     body = (
@@ -111,7 +186,7 @@ export function TriageResearch({
     );
   } else if (view && parts) {
     body = <Brief view={view} citations={parts.citations} briefCites={parts.briefCites} today={today} compact />;
-  } else if (row?.identity_status === "needs_pick" && data?.identity) {
+  } else if (status === "needs_pick" && data?.identity) {
     body = (
       <div className="flex flex-col gap-2">
         <p className="t-body-s text-muted">
@@ -132,27 +207,37 @@ export function TriageResearch({
         , or have your agent save one with <span className="font-mono text-micro">save_dossier</span>.
       </p>
     );
+  } else if (status === "not_found" || status === "rejected") {
+    body = (
+      <div className="flex flex-col gap-6">
+        <p className="t-body-s text-muted">
+          {status === "not_found" ? `No public profile clearly matched ${name}.` : `None of the people found was ${first}.`} Add their LinkedIn to
+          anchor research{canWrite ? ", or search again." : "."}
+        </p>
+        {canWrite ? <FindAgain investorId={investorId} name={name} client={client} settings={settings} onPicked={done} onSearch={() => start("identity")} /> : null}
+        {startErr ? <ResearchError error={startErr} wsSlug={wsSlug} /> : null}
+      </div>
+    );
   } else {
-    const e = startErr ? researchErrorText(startErr) : null;
     body = (
       <div className="flex flex-col gap-8">
-        <p className="t-body-s text-muted">
-          {row?.identity_status === "not_found"
-            ? `No public profile clearly matched ${name}. Add their LinkedIn in the file to anchor research.`
-            : `No dossier on ${first} yet: who they are, recent deals, a way in and an opener, each with its source.`}
-        </p>
-        {canWrite && row?.identity_status !== "not_found" ? (
-          <div>
-            <Button size="sm" busy={starting ? "Starting…" : false} onClick={() => void start()}>
-              Research {first} {approxUsd(settings?.estimates.current)}
-            </Button>
-          </div>
+        {stopped ? (
+          <RunProgress run={stopped} client={client} wsSlug={wsSlug} canWrite={canWrite} onChange={setRun0} compact />
+        ) : (
+          <p className="t-body-s text-muted">No dossier on {first} yet: who they are, recent deals, a way in and an opener, each with its source.</p>
+        )}
+        {canWrite && !stopped ? (
+          capReached ? (
+            <SpendLimitNote settings={settings} wsSlug={wsSlug} />
+          ) : (
+            <div>
+              <Button size="sm" busy={starting ? "Starting…" : false} onClick={() => void start()}>
+                Research {first} {approxUsd(settings?.estimates.current)}
+              </Button>
+            </div>
+          )
         ) : null}
-        {e ? (
-          <p className="t-body-s text-bad">
-            {e.text} {e.code ? <span className="font-mono text-micro">{e.code}</span> : null}
-          </p>
-        ) : null}
+        {startErr ? <ResearchError error={startErr} wsSlug={wsSlug} /> : null}
       </div>
     );
   }

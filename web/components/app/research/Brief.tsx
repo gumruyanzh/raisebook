@@ -7,9 +7,13 @@ import type { DossierView, Verdict } from "@/lib/api/research";
 import { cn } from "@/lib/cn";
 import { citationTitle, researchedLine, verdictLabel, type Citation } from "@/lib/research";
 
-const VERDICT_TONE: Record<Verdict, ChipTone> = { strong: "strong", possible: "maybe", poor: "low" };
+const VERDICT_TONE: Record<Verdict, ChipTone> = { strong: "strong", possible: "maybe", poor: "low", unrated: "low" };
 
 export function VerdictChip({ verdict, className }: { verdict: Verdict; className?: string }) {
+  if (verdict === "unrated") {
+    // Written without a company profile: no verdict, so no coloured pill next to "why".
+    return <span className={cn("t-micro text-muted", className)}>{verdictLabel(verdict)}</span>;
+  }
   return (
     <Chip tone={VERDICT_TONE[verdict]} className={className}>
       {verdictLabel(verdict)}

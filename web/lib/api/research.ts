@@ -21,6 +21,12 @@ export interface AiUsage {
   reserved_usd: number;
   remaining_usd: number;
   calls: number;
+  /** Dossier and refresh runs that cost something this month. */
+  dossiers?: number;
+  /** Identity matches that ran a model call this month. */
+  matches?: number;
+  /** Nothing is left under the monthly limit: paid research is off until it is raised. */
+  cap_reached?: boolean;
 }
 
 export interface PresetInfo {
@@ -39,6 +45,9 @@ export interface AiSettings {
   key_label: string | null;
   key_set_at: Timestamp | null;
   key_validated_at: Timestamp | null;
+  /** OpenRouter refused the saved key during research (saving it again clears this). */
+  key_error?: "openrouter_key_rejected" | "openrouter_out_of_credits" | string | null;
+  key_error_at?: Timestamp | null;
   preset: Preset;
   identity_model: string;
   search_model: string;
@@ -208,7 +217,8 @@ export type IdentityPick =
   | { none: true }
   | { linkedin_url: string; firm_website?: string; title?: string };
 
-export type Verdict = "strong" | "possible" | "poor";
+/** `unrated`: written without a company profile, so there is no fit verdict. */
+export type Verdict = "strong" | "possible" | "poor" | "unrated";
 export type FactSection = "profile" | "fit" | "activity" | "thesis" | "red_flags";
 
 export interface Claim {
@@ -323,11 +333,22 @@ export interface EstimateRequest {
 export interface Estimate {
   kind: "identity" | "dossier";
   count: number;
-  skipped: { no_identity?: number; suppressed?: number; fresh?: number; active?: number };
+  /** Of `count`, need no model call (their LinkedIn is already known). */
+  free?: number;
+  /** Of `count`, need a model call at `per_run_usd`. */
+  paid?: number;
+  /** `fresh`: a dossier from the last 30 days; `identified`: identity already confirmed. */
+  skipped: { no_identity?: number; suppressed?: number; fresh?: number; identified?: number; active?: number };
   per_run_usd: number | null;
   total_usd: number | null;
   remaining_usd: number | null;
   fits: number;
+  /** Dossier runs that match the identity first (and stop to ask when unsure). */
+  needs_identity?: number;
+  /** No company profile: dossiers would have no fit verdict. */
+  no_profile?: boolean;
+  /** `fit`: a round's investors, best fit first (who goes first under the limit). */
+  order?: "fit" | "given";
 }
 
 export interface Batch {
@@ -337,6 +358,10 @@ export interface Batch {
   total: number;
   counts: Partial<Record<RunStatus, number>>;
   active: number;
+  /** Identity outcomes now: needs_pick and not_found need a person. */
+  identity?: Partial<Record<IdentityStatus, number>>;
+  /** Stopped runs by error code ("openrouter_key_rejected": 114). */
+  errors?: Record<string, number>;
   estimate_usd: number | null;
   spent_usd: number | null;
   created_at: Timestamp;
@@ -350,6 +375,8 @@ export interface ResearchSummary {
   stale: boolean;
   pending_suggestions: number;
   active_run: { id: UUID; kind: RunKind; status: RunStatus } | null;
+  /** The last run, when it stopped without a result and nothing newer replaced it. */
+  stopped_run?: { id: UUID; kind: RunKind; status: RunStatus; error_code: string | null } | null;
   refresh_offer: boolean;
   /** Fields whose value research filled in. */
   from_research: string[];

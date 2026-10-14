@@ -10,6 +10,7 @@ import { INVESTOR_TYPE_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { money, stageFocusLabel } from "@/lib/format";
 
+import { FromResearch } from "./research/FromResearch";
 import { moneyInput, parseMoney } from "./util";
 
 type TextKey =
@@ -274,14 +275,26 @@ export function InvestorProfile({
   };
 
   const s = (v: string | null | undefined) => v ?? "";
+  // "from research" beside values research filled in (R7), so a researched email or website
+  // is never mistaken for one the founder typed.
+  const filled = inv.research?.from_research;
+  const mark = (fields: string[], shown: ReactNode): ReactNode =>
+    shown ? (
+      <>
+        {shown}
+        <FromResearch fields={filled} of={fields} />
+      </>
+    ) : (
+      shown
+    );
 
   return (
     <section aria-label="Profile">
       <SectionLabel aside={<SaveState state={state} />}>Profile</SectionLabel>
       <dl className="mt-4 grid grid-cols-[112px_minmax(0,1fr)] gap-x-10 gap-y-2 text-13">
         <Fact label="Name" value={inv.name} onCommit={text("name")} readOnly={ro} error={errors.name} />
-        <Fact label="Firm" value={s(inv.firm)} onCommit={text("firm")} readOnly={ro} error={errors.firm} />
-        <Fact label="Title" value={s(inv.title)} onCommit={text("title")} readOnly={ro} error={errors.title} />
+        <Fact label="Firm" value={s(inv.firm)} display={mark(["firm"], inv.firm)} onCommit={text("firm")} readOnly={ro} error={errors.firm} />
+        <Fact label="Title" value={s(inv.title)} display={mark(["title"], inv.title)} onCommit={text("title")} readOnly={ro} error={errors.title} />
         <Fact label="Type" value={inv.type} display={INVESTOR_TYPE_LABEL[inv.type]} onCommit={() => {}} readOnly={ro}>
           {(stop) => (
             <Select
@@ -315,18 +328,18 @@ export function InvestorProfile({
           type="email"
           inputMode="email"
           value={s(inv.email)}
-          display={inv.email ? <span title={inv.email}>{middleTruncateEmail(inv.email)}</span> : null}
+          display={mark(["email"], inv.email ? <span title={inv.email}>{middleTruncateEmail(inv.email)}</span> : null)}
           link={inv.email ? `mailto:${inv.email}` : null}
           onCommit={text("email")}
           readOnly={ro}
           error={errors.email}
         />
-        <Fact label="Location" value={s(inv.location)} onCommit={text("location")} readOnly={ro} error={errors.location} />
+        <Fact label="Location" value={s(inv.location)} display={mark(["location"], inv.location)} onCommit={text("location")} readOnly={ro} error={errors.location} />
         <Fact
           label="LinkedIn"
           inputMode="url"
           value={s(inv.linkedin_url)}
-          display={inv.linkedin_url ? shortUrl(inv.linkedin_url, "linkedin") : null}
+          display={mark(["linkedin_url"], inv.linkedin_url ? shortUrl(inv.linkedin_url, "linkedin") : null)}
           link={inv.linkedin_url}
           placeholder="linkedin.com/in/…"
           onCommit={text("linkedin_url")}
@@ -337,7 +350,7 @@ export function InvestorProfile({
           label="Website"
           inputMode="url"
           value={s(inv.website_url)}
-          display={inv.website_url ? shortUrl(inv.website_url, "web") : null}
+          display={mark(["website_url"], inv.website_url ? shortUrl(inv.website_url, "web") : null)}
           link={inv.website_url}
           onCommit={text("website_url")}
           readOnly={ro}
@@ -366,7 +379,7 @@ export function InvestorProfile({
           mono
           inputMode="decimal"
           value={moneyInput(inv.check_min)}
-          display={inv.check_min != null ? money(inv.check_min, currency) : null}
+          display={mark(["check_min"], inv.check_min != null ? money(inv.check_min, currency) : null)}
           onCommit={amount("check_min")}
           readOnly={ro}
           error={errors.check_min}
@@ -377,7 +390,7 @@ export function InvestorProfile({
           mono
           inputMode="decimal"
           value={moneyInput(inv.check_max)}
-          display={inv.check_max != null ? money(inv.check_max, currency) : null}
+          display={mark(["check_max"], inv.check_max != null ? money(inv.check_max, currency) : null)}
           onCommit={amount("check_max")}
           readOnly={ro}
           error={errors.check_max}
@@ -386,13 +399,13 @@ export function InvestorProfile({
         <Fact
           label="Invests at"
           value={inv.stage_focus.join(", ")}
-          display={inv.stage_focus.length ? inv.stage_focus.map(stageFocusLabel).join(", ") : null}
+          display={mark(["stage_focus"], inv.stage_focus.length ? inv.stage_focus.map(stageFocusLabel).join(", ") : null)}
           onCommit={list("stage_focus")}
           readOnly={ro}
           error={errors.stage_focus}
           hint="Comma-separated: pre-seed, seed, series a"
         />
-        <Fact label="Industries" value={inv.industries.join(", ")} onCommit={list("industries")} readOnly={ro} error={errors.industries} hint="Comma-separated" />
+        <Fact label="Industries" value={inv.industries.join(", ")} display={mark(["industries"], inv.industries.length ? inv.industries.join(", ") : null)} onCommit={list("industries")} readOnly={ro} error={errors.industries} hint="Comma-separated" />
         <Fact label="Tags" value={inv.tags.join(", ")} onCommit={list("tags")} readOnly={ro} error={errors.tags} hint="Comma-separated" />
         <Fact label="Source" value={s(inv.source)} onCommit={text("source")} readOnly={ro} error={errors.source} />
         <Fact label="Warm intro by" value={s(inv.warm_intro_by)} onCommit={text("warm_intro_by")} readOnly={ro} error={errors.warm_intro_by} />

@@ -6,6 +6,7 @@ import { Button, Input } from "@/components/ui";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
 import { pickIdentity, type Candidate, type Identity } from "@/lib/api/research";
 import { cn } from "@/lib/cn";
+import { candidateMatchLine } from "@/lib/research";
 
 const linkCls = "link t-body-s whitespace-nowrap";
 const hostOf = (u: string | null | undefined) => (u ? u.replace(/^https?:\/\/(www\.)?/, "").replace(/\/.*$/, "") : "");
@@ -82,13 +83,18 @@ export function IdentityPicker({
         <ul className="m-0 flex list-none flex-col p-0">
           {cands.map((c) => (
             <li key={c.id} className="flex h-32 min-w-0 items-center gap-8">
-              <span className="min-w-0 flex-1 truncate">
+              <span className="min-w-0 flex-1 truncate" title={candidateMatchLine(c).reasons}>
                 <span className="font-medium">{[c.title, c.firm].filter(Boolean).join(", ") || c.name}</span>
-                <span className="t-micro ml-6 text-muted">{c.confidence_label}</span>
+                <span className="t-micro ml-6 text-muted">{candidateMatchLine(c).word}</span>
               </span>
               {c.linkedin_url ? (
                 <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className={linkCls}>
                   LinkedIn ↗
+                </a>
+              ) : null}
+              {c.firm_website ? (
+                <a href={c.firm_website} target="_blank" rel="noopener noreferrer" className={linkCls}>
+                  {hostOf(c.firm_website)} ↗
                 </a>
               ) : null}
               <Button size="sm" disabled={!canWrite} busy={busy === c.id ? "Saving…" : false} onClick={() => void pick(c.id, { candidate_id: c.id })}>
@@ -156,8 +162,9 @@ function CandidateRow({ c, name, canWrite, busy, onPick }: { c: Candidate; name:
       <div className="min-w-0 flex-1">
         <p className="flex min-w-0 items-baseline gap-8">
           <span className="truncate font-semibold">{what}</span>
-          <span className={cn("t-micro shrink-0", c.confidence_label === "likely" ? "text-fg" : "text-muted")}>{c.confidence_label}</span>
+          <span className={cn("t-micro shrink-0", c.confidence_label === "likely" ? "text-fg" : "text-muted")}>{candidateMatchLine(c).word}</span>
         </p>
+        <p className="t-micro text-muted">{candidateMatchLine(c).reasons}</p>
         {sameName ? null : <p className="t-body-s truncate text-muted">{c.name}</p>}
         <p className="mt-4 flex flex-wrap items-baseline gap-x-10 gap-y-2">
           {c.linkedin_url ? (

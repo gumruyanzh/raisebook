@@ -7,7 +7,7 @@ import { Button, Dialog } from "@/components/ui";
 import { ApiError, errorMessage, type ApiClient } from "@/lib/api/client";
 import { batchBody, estimateResearch, startBatch, type AiSettings, type Batch, type Estimate } from "@/lib/api/research";
 import { num } from "@/lib/format";
-import { capUsd, estimateLine, formatUsd, overCapLine, skippedLine } from "@/lib/research";
+import { capUsd, estimateLine, formatUsd, overCapLine, perRunLine, skippedLine } from "@/lib/research";
 
 export interface ResearchTarget {
   kind: "identity" | "dossier";
@@ -122,7 +122,7 @@ export function EstimateDialog({
               <dt className="text-muted">{identity ? "To match" : "To research"}</dt>
               <dd className="m-0">
                 <b className="font-semibold">{num(est.count)}</b> {est.count === 1 ? "investor" : "investors"}
-                {est.per_run_usd !== null ? <span className="text-muted"> · ≈ {formatUsd(est.per_run_usd)} each</span> : null}
+                <span className="text-muted"> · {perRunLine(est)}</span>
               </dd>
               <dt className="text-muted">Estimate</dt>
               <dd className="m-0 font-mono">{est.total_usd !== null ? `≈ ${formatUsd(est.total_usd)}` : "unknown"}</dd>
@@ -139,9 +139,26 @@ export function EstimateDialog({
               </dd>
             </dl>
           )}
+          {!identity && est.no_profile ? (
+            <p className="rounded-sm border border-warm bg-warm-soft px-12 py-8 text-warm-ink" role="status">
+              <b className="font-semibold">No company profile yet.</b> These dossiers will have no fit verdict and no talking points, and
+              nothing changes anyone&apos;s fit.{" "}
+              <Link href={`/w/${encodeURIComponent(wsSlug)}/settings/company`} className="underline underline-offset-2">
+                Add your company profile
+              </Link>{" "}
+              first to get them.
+            </p>
+          ) : null}
+          {!identity && est.needs_identity ? (
+            <p className="t-body-s text-muted">
+              {num(est.needs_identity)} {est.needs_identity === 1 ? "has" : "have"} no identity yet: each is matched first, and stops to ask
+              you when unsure (only the match is charged then).
+            </p>
+          ) : null}
           {over ? (
             <p className="rounded-sm border border-warm bg-warm-soft px-12 py-8 text-warm-ink" role="status">
               <b className="font-semibold">{over}</b>{" "}
+              {est.order === "fit" && est.fits > 0 ? "The best fit go first (Hot, then Warm, then Maybe). " : null}
               {settings?.can_edit ? (
                 <>
                   <Link href={`/w/${encodeURIComponent(wsSlug)}/settings/ai`} className="underline underline-offset-2">

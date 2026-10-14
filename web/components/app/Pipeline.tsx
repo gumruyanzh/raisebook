@@ -34,8 +34,8 @@ import {
 import { Avatar } from "@/components/ui/Avatar";
 import { FilterChips, FilterMenu, type FilterField, type FilterMenuHandle } from "@/components/ui/FilterBar";
 import { errorMessage } from "@/lib/api/client";
-import { startResearch, type Batch } from "@/lib/api/research";
-import { approxUsd, refreshOffer } from "@/lib/research";
+import { acceptAllSuggestions, startResearch, type Batch } from "@/lib/api/research";
+import { RESEARCH_FILTERS, approxUsd, refreshOffer, researchMatches } from "@/lib/research";
 import {
   bulkUpdateParticipants,
   cardFacts,
@@ -80,6 +80,7 @@ import { PipelineTriage, type TriageStore } from "./PipelineTriage";
 import { RoundHeader } from "./RoundHeader";
 import { BatchProgress } from "./research/BatchProgress";
 import { EstimateDialog, type ResearchTarget } from "./research/EstimateDialog";
+import { researchErrorText } from "./research/ResearchError";
 import { RoundResearchMenu } from "./research/RoundResearchMenu";
 import { announceRun, invalidateResearch, useAiSettings, useRoundResearch } from "./research/hooks";
 import {
@@ -115,7 +116,7 @@ const DENSITY_KEY = (view: "board" | "table") => `rb-density:${view}`;
 const BOARD_SORT_KEY = (roundId: string) => `rb-board-sort:${roundId}`;
 /** Columns hidden until the founder turns them on. */
 const DEFAULT_HIDDEN: TableCol[] = ["title"];
-const FILTER_KEYS = ["stage", "prio", "type", "industry", "follow", "owner", "tag", "kind"] as const;
+const FILTER_KEYS = ["stage", "prio", "type", "industry", "follow", "owner", "tag", "kind", "research"] as const;
 /** URL keys a built-in view sets (the filters and the search). */
 const FILTER_PARAMS = ["q", ...FILTER_KEYS] as const;
 /** URL keys a saved view captures: filters, search, view and sort. */
@@ -346,6 +347,7 @@ export function Pipeline(props: PipelineProps) {
   const tag = get("tag");
   const stageFilter = get("stage");
   const kindFilter = get("kind");
+  const researchFilter = get("research");
   const openId = params.get("investor");
 
   const setParams = useCallback((patch: Record<string, string | null>) => {
@@ -542,7 +544,7 @@ export function Pipeline(props: PipelineProps) {
     (investorId: string, name: string): { label: string; onClick: () => void } | null => {
       const row = researchRowsRef.current.get(investorId);
       const ai = aiRef.current;
-      if (!canWrite || !ai?.research_available || !refreshOffer("meeting", row?.dossier_at, new Date())) return null;
+      if (!canWrite || !ai?.research_available || ai.usage.cap_reached || !refreshOffer("meeting", row?.dossier_at, new Date())) return null;
       return {
         label: `Refresh ${approxUsd(ai.estimates.current)}`.trim(),
         onClick: () =>
@@ -552,7 +554,7 @@ export function Pipeline(props: PipelineProps) {
               toast.show(`Refreshing ${name}'s dossier. What is new shows at the top when it is done.`);
               void research.refresh();
             })
-            .catch((err) => toast.show(`The refresh did not start. ${errorMessage(err)}`)),
+            .catch((err) => toast.show(`The refresh did not start. ${researchErrorText(err).text}`)),
       };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -679,9 +681,10 @@ export function Pipeline(props: PipelineProps) {
       if (owner === "none" && p.owner) return false;
       if (owner && owner !== "none" && p.owner?.user_id !== owner) return false;
       if (query && !matchesQuery(searchText(p), query)) return false;
+      if (researchFilter && !researchMatches(research.rows.get(p.investor.id), researchFilter)) return false;
       return true;
     },
-    [extras, prio, kindFilter, type, industry, tag, follow, owner, query, searchText, today],
+    [extras, prio, kindFilter, type, industry, tag, follow, owner, query, searchText, today, researchFilter, research.rows],
   );
   const matches = useCallback((p: Participant) => matchesAll(p, true), [matchesAll]);
   // Triage's queue is New only: stage and stage kind say nothing there (critique 4).
@@ -700,6 +703,7 @@ export function Pipeline(props: PipelineProps) {
     owner: owner || undefined,
     tag: tag || undefined,
     kind: kindFilter || undefined,
+    research: researchFilter || undefined,
   };
   const activeFilters = FILTER_KEYS.filter((k) => active[k]).length;
 
@@ -779,8 +783,22 @@ export function Pipeline(props: PipelineProps) {
           { value: "lost", label: "Passed" },
         ],
       },
+      // Who research is waiting on (after "Match all"): the people to pick or find by hand.
+      ...(research.rows.size
+        ? [
+            {
+              key: "research",
+              label: "Research",
+              values: RESEARCH_FILTERS.map((f) => ({
+                value: f.value,
+                label: f.label,
+                hint: num([...research.rows.values()].filter((r) => researchMatches(r, f.value)).length),
+              })),
+            },
+          ]
+        : []),
     ],
-    [stages, counts, props.members],
+    [stages, counts, props.members, research.rows],
   );
 
   const triageFilterFields = useMemo(() => filterFields.filter((f) => f.key !== "stage" && f.key !== "kind"), [filterFields]);
@@ -789,7 +807,7 @@ export function Pipeline(props: PipelineProps) {
     if (qTimer.current) clearTimeout(qTimer.current);
     qTimer.current = null;
     setQText("");
-    setParams({ q: null, prio: null, type: null, industry: null, follow: null, owner: null, stage: null, tag: null, kind: null });
+    setParams({ q: null, prio: null, type: null, industry: null, follow: null, owner: null, stage: null, tag: null, kind: null, research: null });
   };
 
   /* ---------- saved views (P2-1): built-ins plus the founder's own, per round ---------- */
@@ -1070,6 +1088,7 @@ export function Pipeline(props: PipelineProps) {
 
   const selectedRows = () => participantsRef.current.filter((p) => selected.has(p.investor.id));
   const allIds = useMemo(() => participants.map((p) => p.investor.id), [participants]);
+  const withLinkedin = useMemo(() => new Set(participants.filter((p) => p.investor.linkedin_url).map((p) => p.investor.id)), [participants]);
   const researchSelection = (kind: "identity" | "dossier", ids: string[]) =>
     setEstimateTarget({ kind, investorIds: ids, scope: `the ${num(ids.length)} selected` });
   const n = selected.size;
@@ -1463,8 +1482,18 @@ export function Pipeline(props: PipelineProps) {
           <BatchProgress
             key={batch.id}
             batch={batch}
+            onTick={() => {
+              void research.refresh();
+              afterWrite(); // research may have set fits and filled fields
+            }}
             client={client}
-            onTick={() => void research.refresh()}
+            onNeedsPick={() => setParams({ research: "pick", view: view === "triage" ? "board" : view })}
+            onAcceptAll={async () => {
+              const r = await acceptAllSuggestions(client, { round: round.id });
+              void research.refresh();
+              afterWrite();
+              return r.accepted;
+            }}
             onDone={() => {
               setBatch(null);
               invalidateResearch(client);
@@ -1475,11 +1504,13 @@ export function Pipeline(props: PipelineProps) {
         ) : null}
         <RoundResearchMenu
           ids={allIds}
+          withLinkedin={withLinkedin}
           rows={research.rows}
           settings={aiSettings}
           wsSlug={workspace.slug}
           onMatchAll={() => setEstimateTarget({ kind: "identity", round: round.id, scope: `everyone in ${round.name}` })}
-          onResearchAll={() => setEstimateTarget({ kind: "dossier", round: round.id, scope: `everyone in ${round.name} with an identity` })}
+          onResearchAll={() => setEstimateTarget({ kind: "dossier", round: round.id, scope: `everyone in ${round.name}` })}
+          onShowNeedsPick={() => setParams({ research: "pick", view: view === "triage" ? "board" : view })}
         />
       </span>
     ) : null;
@@ -1515,6 +1546,7 @@ export function Pipeline(props: PipelineProps) {
         ...(splitOpen ? { paddingRight: sheetW - 8 } : null),
       }}
     >
+      {phone && researchNode ? <div className="flex min-w-0 justify-end">{researchNode}</div> : null}
       {phone ? (
         empty ? null : (
           <>
@@ -1790,7 +1822,10 @@ export function Pipeline(props: PipelineProps) {
             research={{
               rows: research.rows,
               settings: aiSettings,
-              onChange: () => void research.refresh(),
+              onChange: () => {
+                void research.refresh();
+                afterWrite(); // a fit research set or a suggestion accepted shows at once
+              },
               refreshOffer: (id) => meetingOffer(id, participantsRef.current.find((p) => p.investor.id === id)?.investor.name ?? "this investor"),
               onBulk: researchSelection,
             }}

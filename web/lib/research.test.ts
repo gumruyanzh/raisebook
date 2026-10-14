@@ -22,6 +22,14 @@ import {
   skippedLine,
   suggestionLine,
   verdictLabel,
+  batchOutcome,
+  candidateMatchLine,
+  limitUsedLine,
+  perRunLine,
+  researchCounts,
+  researchMatches,
+  runStallHint,
+  stoppedRun,
 } from "./research";
 
 const NOW = new Date("2026-10-13T12:00:00Z");
@@ -180,7 +188,12 @@ test("estimateLine, skippedLine and overCapLine", () => {
   assert.equal(estimateLine({ kind: "identity", count: 411, total_usd: 2.9 }), "Match 411 identities ≈ $2.90");
   assert.equal(estimateLine({ kind: "dossier", count: 40, total_usd: 8 }, 20), "Research 20 investors ≈ $4.00");
   assert.equal(estimateLine({ kind: "dossier", count: 1, total_usd: null }), "Research 1 investor");
-  assert.equal(skippedLine({ no_identity: 12, fresh: 1, active: 0, suppressed: 2 }), "12 have no identity yet · 1 already has a recent dossier · 2 asked not to be researched");
+  assert.equal(
+    skippedLine({ no_identity: 12, fresh: 1, active: 0, suppressed: 2 }),
+    "12 need a pick first (Is this them?) · 1 already has a recent dossier · 2 asked not to be researched",
+  );
+  // An identity run's left-outs already have an identity; they are not "recent dossiers".
+  assert.equal(skippedLine({ identified: 3 }), "3 already have identities");
   assert.equal(skippedLine({}), "");
   assert.equal(overCapLine({ count: 37, fits: 23 }, 25), "Only 23 fit under your $25 monthly limit.");
   assert.equal(overCapLine({ count: 5, fits: 5 }, 25), null);
@@ -213,4 +226,84 @@ test("researchedLine: model dossiers name the writer and cost; agent ones do not
     "Researched Oct 13 · Claude Opus 5.5 · $0.21",
   );
   assert.equal(researchedLine({ created_at: "2026-10-01T10:00:00Z", cost_usd: null }, { kind: "agent", label: "claude-code" }, "2026-10-13"), "Researched Oct 1");
+});
+
+
+/* ---------- verification-pass regressions ---------- */
+
+test("researchCounts: the menu agrees with the estimate (LinkedIn on file is free; picks wait)", () => {
+  const rows = new Map([
+    ["a", { identity_status: "none" as const, verdict: null }],
+    ["b", { identity_status: "none" as const, verdict: null }],
+    ["c", { identity_status: "needs_pick" as const, verdict: null }],
+    ["d", { identity_status: "not_found" as const, verdict: null }],
+    ["e", { identity_status: "confirmed" as const, verdict: "strong" as const }],
+  ]);
+  const c = researchCounts(["a", "b", "c", "d", "e", "f"], rows, new Set(["a"]));
+  assert.equal(c.noIdentity, 3); // a, b and f (no row yet)
+  assert.equal(c.paidMatches, 2); // a has a LinkedIn: free
+  assert.equal(c.needsPick, 1);
+  assert.equal(c.notFound, 1);
+  assert.equal(c.researchable, 4); // everyone but c and d, like POST /research/estimate
+  assert.equal(c.needsIdentity, 2);
+  assert.equal(c.dossiers, 1);
+});
+
+test("researchMatches: the Research filter finds who needs a pick or a LinkedIn", () => {
+  assert.equal(researchMatches({ identity_status: "needs_pick", verdict: null }, "pick"), true);
+  assert.equal(researchMatches({ identity_status: "rejected", verdict: null }, "notfound"), true);
+  assert.equal(researchMatches({ identity_status: "matched", verdict: null }, "pick"), false);
+  assert.equal(researchMatches(undefined, "none"), true);
+  assert.equal(researchMatches({ identity_status: "confirmed", verdict: "poor", stopped_run: null }, "dossier"), true);
+  assert.equal(
+    researchMatches({ identity_status: "confirmed", verdict: null, stopped_run: { id: "r", kind: "dossier", status: "failed", error_code: "x" } }, "stopped"),
+    true,
+  );
+});
+
+test("batchOutcome: a match batch says who needs a pick; a refused key says why", () => {
+  const m = batchOutcome({
+    kind: "identity",
+    counts: { succeeded: 411 },
+    identity: { matched: 123, confirmed: 192, needs_pick: 60, not_found: 36 },
+    errors: {},
+  });
+  assert.equal(m.line, "315 matched · 60 need a pick · 36 not found");
+  assert.equal(m.needsYou, true);
+  const k = batchOutcome({ kind: "dossier", counts: { failed: 114 }, identity: {}, errors: { openrouter_key_rejected: 114 } });
+  assert.equal(k.line, "114 failed");
+  assert.match(k.problem ?? "", /OpenRouter refused the key/);
+});
+
+test("perRunLine: free matches are said, not hidden in the average", () => {
+  assert.equal(perRunLine({ kind: "identity", count: 411, free: 192, paid: 219, per_run_usd: 0.007 }), "219 searches ≈ $0.01 each; 192 already have a LinkedIn (free)");
+  assert.equal(perRunLine({ kind: "dossier", count: 38, per_run_usd: 0.21 }), "38 investors ≈ $0.21 each");
+});
+
+test("stoppedRun: a failed, partial or capped run stays visible until a newer dossier", () => {
+  const failed = { kind: "dossier", status: "failed" as const, created_at: "2026-10-12T10:00:00Z", error: { code: "openrouter_unavailable", message: "x" } };
+  assert.equal(stoppedRun([failed]), failed);
+  assert.equal(stoppedRun([failed], "2026-10-12T11:00:00Z"), null);
+  assert.equal(stoppedRun([{ ...failed, status: "cancelled" as const, error: { code: "cancelled", message: null } }]), null);
+  assert.equal(stoppedRun([{ ...failed, status: "succeeded" as const, error: null }]), null);
+});
+
+test("runStallHint: OpenRouter down while retrying, or no worker after a minute", () => {
+  const base = { created_at: daysAgo(0), started_at: null, error: null };
+  assert.match(runStallHint({ ...base, status: "running", error: { code: "openrouter_unavailable", message: "busy" } }, NOW) ?? "", /retries/);
+  assert.equal(runStallHint({ ...base, status: "queued" }, NOW), null);
+  assert.match(runStallHint({ ...base, status: "queued", created_at: new Date(NOW.getTime() - 120_000).toISOString() }, NOW) ?? "", /worker/);
+});
+
+test("candidateMatchLine: a match word, never the fit word alone, with what tells them apart", () => {
+  const c = { confidence_label: "possible", firm: "Lodestar Collective", linkedin_url: null, firm_website: "https://lodestar.example", sources: [1, 2] };
+  const out = candidateMatchLine(c, "Lodestar Collective");
+  assert.equal(out.word, "Possible match");
+  assert.equal(out.reasons, "firm matches · no LinkedIn found · 2 sources");
+});
+
+test("unrated verdicts and the spend-limit sentence", () => {
+  assert.equal(verdictLabel("unrated"), "No fit verdict");
+  assert.equal(fitFromVerdict("unrated"), 0);
+  assert.equal(limitUsedLine(13, 13.3), "This month's $13 AI research limit is used up ($13.30 spent).");
 });

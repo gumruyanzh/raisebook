@@ -233,7 +233,7 @@ export function AiResearchSettings({
                 <>
                   Key ending <span className="font-mono">••••{s.key_last4}</span>
                   {s.key_label ? <span className="text-muted"> · {s.key_label}</span> : null}
-                  {s.key_validated_at ? (
+                  {s.key_error ? null : s.key_validated_at ? (
                     <span className="t-micro ml-8 text-muted" title={s.key_validated_at}>
                       checked {relativeTime(s.key_validated_at, new Date(), workspace.timezone)}
                     </span>
@@ -241,6 +241,16 @@ export function AiResearchSettings({
                 </>
               )}
             </p>
+            {s.key_error ? (
+              <p className="t-body-s w-full text-bad" role="alert">
+                {s.key_error === "openrouter_out_of_credits"
+                  ? "OpenRouter says this key's account is out of credits, so research stopped."
+                  : "OpenRouter refused this key during research, so research stopped."}{" "}
+                {s.key_error === "openrouter_out_of_credits" ? "Add credits at openrouter.ai, then replace the key to check it again." : "Replace it with a working key."}
+                {s.key_error_at ? <span className="t-micro ml-6 text-muted">{relativeTime(s.key_error_at, new Date(), workspace.timezone)}</span> : null}
+                <span className="ml-6 font-mono text-micro">{s.key_error}</span>
+              </p>
+            ) : null}
             {s.can_manage_key ? (
               <span className="flex gap-8">
                 <Button size="sm" onClick={() => setReplacing(true)}>
@@ -380,7 +390,10 @@ export function AiResearchSettings({
           <SpendMeter spent={used} cap={s.monthly_cap_usd} />
           <p className="t-body-s text-muted">
             <span className="font-mono text-fg">{formatUsd(u.spent_usd)}</span> of <span className="font-mono text-fg">{formatUsd(s.monthly_cap_usd)}</span>{" "}
-            used in {monthName(u.month)} · {num(u.calls)} {u.calls === 1 ? "call" : "calls"}
+            used in {monthName(u.month)}
+            {u.dossiers !== undefined || u.matches !== undefined
+              ? ` · ${num(u.dossiers ?? 0)} ${(u.dossiers ?? 0) === 1 ? "dossier" : "dossiers"}, ${num(u.matches ?? 0)} ${(u.matches ?? 0) === 1 ? "match" : "matches"}`
+              : ` · ${num(u.calls)} ${u.calls === 1 ? "call" : "calls"}`}
             {u.reserved_usd > 0 ? ` · ${formatUsd(u.reserved_usd)} held for runs in progress` : ""}
           </p>
           {used >= s.monthly_cap_usd && s.monthly_cap_usd > 0 ? (
@@ -454,7 +467,8 @@ export function AiResearchSettings({
                     </Td>
                     <Td variant="muted">{KIND_WORD[r.kind] ?? r.kind}</Td>
                     <Td className={cn(r.status === "failed" || r.status === "capped" ? "text-bad" : r.status === "succeeded" ? "text-fg" : "text-muted")}>
-                      {STATUS_WORD[r.status] ?? r.status}
+                      <span title={r.error?.message ?? undefined}>{STATUS_WORD[r.status] ?? r.status}</span>
+                      {r.error && r.status !== "succeeded" ? <span className="ml-6 font-mono text-micro text-muted">{r.error.code}</span> : null}
                     </Td>
                     <Td variant="num" className="text-right">
                       {r.cost_usd ? formatUsd(r.cost_usd) : "—"}

@@ -71,6 +71,7 @@ import {
 } from "@/lib/pipeline";
 
 import { checkSize } from "./InvestorSheet";
+import { FromResearch } from "./research/FromResearch";
 import { forgetInvestorResearch } from "./research/hooks";
 import { TriageResearch } from "./research/TriageResearch";
 import { draftHref, ReachOut, type ReachPerson } from "./ReachOut";
@@ -1713,12 +1714,20 @@ function InvestorPane({
   const type = p.investor.type !== "other" ? INVESTOR_TYPE_LABEL[p.investor.type] : null;
   const otherRounds = (inv?.rounds ?? []).filter((r) => r.round_id !== round.id);
   // Source is a chip above, so it is not repeated as a fact row.
+  const filled = inv?.research?.from_research;
+  const marked = (v: ReactNode, fields: string[]): ReactNode =>
+    v ? (
+      <>
+        {v}
+        <FromResearch fields={filled} of={fields} />
+      </>
+    ) : null;
   const facts: [string, ReactNode][] = inv
     ? (
         [
-          ["Invests at", inv.stage_focus.map(stageFocusLabel).join(", ")],
-          ["Check size", checkSize(inv, round.currency)],
-          ["Location", inv.location],
+          ["Invests at", marked(inv.stage_focus.map(stageFocusLabel).join(", "), ["stage_focus"])],
+          ["Check size", marked(checkSize(inv, round.currency), ["check_min", "check_max"])],
+          ["Location", marked(inv.location, ["location"])],
           ["Warm intro by", inv.warm_intro_by],
           [
             "Other rounds",
@@ -1764,7 +1773,7 @@ function InvestorPane({
       </div>
 
       {/* Reach out: the actions that come before "Contacted", one style and one order. */}
-      <ReachOut person={person} draft={draft} onDrafted={onDrafted} kbd />
+      <ReachOut person={person} draft={draft} onDrafted={onDrafted} kbd fromResearch={inv?.research?.from_research} />
       {full?.error ? <p className="t-body-s text-bad">{full.error}</p> : null}
 
       {inv ? (
@@ -2431,7 +2440,7 @@ function TriagePhone({
                 ) : null}
                 {inv ? (
                   <div className="mt-12">
-                    <ReachOut person={reachPerson(p, inv)} draft={draft} onDrafted={onDrafted} big />
+                    <ReachOut person={reachPerson(p, inv)} draft={draft} onDrafted={onDrafted} big fromResearch={inv.research?.from_research} />
                   </div>
                 ) : (
                   <Skeleton className="mt-12" width="60%" />

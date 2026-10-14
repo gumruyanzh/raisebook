@@ -6,11 +6,13 @@
  */
 
 import type {
+  Batch,
   Claim,
   DossierView,
   Estimate,
   Fact,
   FactSection,
+  ResearchSummary,
   Run,
   RunStatus,
   Suggestion,
@@ -27,6 +29,12 @@ export function formatUsd(n: number | null | undefined): string {
   if (n > 0 && n < 0.005) return "<$0.01";
   const v = Math.round(n * 100) / 100;
   return `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** The one way every screen says the monthly limit is used up. */
+export function limitUsedLine(capUsdValue: number, spentUsd?: number | null): string {
+  const spent = typeof spentUsd === "number" && spentUsd > 0 ? ` (${formatUsd(spentUsd)} spent)` : "";
+  return `This month's ${capUsd(capUsdValue)} AI research limit is used up${spent}.`;
 }
 
 /** `≈ $0.20` for an estimate; empty when unknown. */
@@ -68,13 +76,18 @@ export function refreshOffer(stageKey: string | null | undefined, dossierAt: str
 
 /* ---------- verdicts ---------- */
 
-export const VERDICT_LABEL: Record<Verdict, string> = { strong: "Strong fit", possible: "Possible fit", poor: "Poor fit" };
+export const VERDICT_LABEL: Record<Verdict, string> = {
+  strong: "Strong fit",
+  possible: "Possible fit",
+  poor: "Poor fit",
+  unrated: "No fit verdict",
+};
 
 export function verdictLabel(v: Verdict | string | null | undefined): string {
   return v && v in VERDICT_LABEL ? VERDICT_LABEL[v as Verdict] : "";
 }
 
-/** The fit a verdict writes back (Hot stays a human call). */
+/** The fit a verdict writes back (Hot stays a human call; `unrated` writes nothing). */
 export function fitFromVerdict(v: Verdict | string | null | undefined): number {
   return v === "strong" ? 4 : v === "possible" ? 3 : v === "poor" ? 1 : 0;
 }
@@ -82,6 +95,24 @@ export function fitFromVerdict(v: Verdict | string | null | undefined): number {
 /** The word for a confidence score (never a bare percentage). */
 export function confidenceWord(c: number): "likely" | "possible" | "unlikely" {
   return c >= 0.8 ? "likely" : c >= 0.5 ? "possible" : "unlikely";
+}
+
+/**
+ * How an identity candidate reads next to the others: "Likely match", "Possible match",
+ * "Unlikely match" (never just "possible", which is a fit word), with the evidence that
+ * tells candidates apart ("firm matches · LinkedIn found · 2 sources").
+ */
+export function candidateMatchLine(
+  c: { confidence_label: string; firm: string | null; linkedin_url: string | null; firm_website: string | null; sources: readonly unknown[] },
+  investorFirm?: string | null,
+): { word: string; reasons: string } {
+  const word = `${c.confidence_label.charAt(0).toUpperCase()}${c.confidence_label.slice(1)} match`;
+  const norm = (x: string | null | undefined) => (x ?? "").toLowerCase().replace(/\b(ventures|capital|partners|vc|fund|llc|inc)\b/g, "").replace(/[^a-z0-9]/g, "");
+  const reasons: string[] = [];
+  if (investorFirm && c.firm) reasons.push(norm(investorFirm) === norm(c.firm) ? "firm matches" : "another firm");
+  reasons.push(c.linkedin_url ? "LinkedIn found" : "no LinkedIn found");
+  if (c.sources.length) reasons.push(plural(c.sources.length, "source"));
+  return { word, reasons: reasons.join(" · ") };
 }
 
 /** "anthropic/claude-opus-5.5" → "Claude Opus 5.5"; "perplexity/sonar-pro" → "Sonar Pro". */
@@ -334,11 +365,38 @@ export function estimateLine(e: Pick<Estimate, "kind" | "count" | "total_usd">, 
 /** Why some are left out: "12 have no identity yet · 3 researched in the last 30 days". */
 export function skippedLine(skipped: Estimate["skipped"]): string {
   const parts: string[] = [];
-  if (skipped.no_identity) parts.push(`${num(skipped.no_identity)} ${skipped.no_identity === 1 ? "has" : "have"} no identity yet`);
+  if (skipped.identified) parts.push(`${num(skipped.identified)} already ${skipped.identified === 1 ? "has an identity" : "have identities"}`);
+  if (skipped.no_identity) parts.push(`${num(skipped.no_identity)} ${skipped.no_identity === 1 ? "needs" : "need"} a pick first (Is this them?)`);
   if (skipped.fresh) parts.push(`${num(skipped.fresh)} already ${skipped.fresh === 1 ? "has a" : "have"} recent ${skipped.fresh === 1 ? "dossier" : "dossiers"}`);
   if (skipped.active) parts.push(`${num(skipped.active)} already running`);
   if (skipped.suppressed) parts.push(`${num(skipped.suppressed)} asked not to be researched`);
   return parts.join(" · ");
+}
+
+/**
+ * The money line of a bulk estimate, honest about free matches: "18 searches ≈ $0.13 each;
+ * 19 already have a LinkedIn (free)".
+ */
+export function perRunLine(e: Pick<Estimate, "kind" | "count" | "free" | "paid" | "per_run_usd">): string {
+  const free = e.free ?? 0;
+  const paid = e.paid ?? e.count - free;
+  const each = e.per_run_usd !== null ? ` ≈ ${formatUsd(e.per_run_usd)} each` : "";
+  if (e.kind !== "identity") return `${num(e.count)} ${e.count === 1 ? "investor" : "investors"}${each}`;
+  const head = `${num(paid)} ${paid === 1 ? "search" : "searches"}${paid ? each : ""}`;
+  return free ? `${head}; ${num(free)} already ${free === 1 ? "has a LinkedIn" : "have a LinkedIn"} (free)` : head;
+}
+
+/** The latest run to show when nothing is running: one that stopped without a result. */
+export function stoppedRun<R extends Pick<Run, "status" | "created_at" | "error"> & { kind?: string }>(
+  runs: readonly R[],
+  dossierAt?: string | null,
+): R | null {
+  const r = runs.find((x) => x.kind !== "agent" && x.kind !== "prefill");
+  if (!r) return null;
+  const stopped = r.status === "failed" || r.status === "partial" || r.status === "capped" || (r.status === "cancelled" && r.error && r.error.code !== "cancelled");
+  if (!stopped) return null;
+  if (dossierAt && Date.parse(dossierAt) >= Date.parse(r.created_at)) return null;
+  return r;
 }
 
 /** "Only 23 fit under your $25 monthly limit." when the cap cuts a batch. */
@@ -348,7 +406,141 @@ export function overCapLine(e: Pick<Estimate, "count" | "fits">, capUsdValue: nu
   return `Only ${num(e.fits)} fit under your ${capUsd(capUsdValue)} monthly limit.`;
 }
 
+/* ---------- the round's AI research menu ---------- */
+
+/**
+ * Who in the round needs what, with the same rules as the API's estimate: matching someone
+ * whose LinkedIn is on file is free; a dossier run skips those waiting for a pick or a
+ * LinkedIn, and matches the identity first for those with none yet.
+ */
+export function researchCounts(
+  ids: readonly string[],
+  rows: Map<string, Pick<ResearchSummary, "identity_status" | "verdict">>,
+  withLinkedin: ReadonlySet<string> = new Set(),
+): {
+  noIdentity: number;
+  paidMatches: number;
+  needsPick: number;
+  notFound: number;
+  withIdentity: number;
+  researchable: number;
+  needsIdentity: number;
+  dossiers: number;
+} {
+  const out = { noIdentity: 0, paidMatches: 0, needsPick: 0, notFound: 0, withIdentity: 0, researchable: 0, needsIdentity: 0, dossiers: 0 };
+  for (const id of ids) {
+    const r = rows.get(id);
+    const st = r?.identity_status ?? "none";
+    if (st === "none" || st === "pending") {
+      out.noIdentity++;
+      if (!withLinkedin.has(id)) {
+        out.paidMatches++;
+        out.needsIdentity++;
+      }
+    }
+    if (st === "needs_pick") out.needsPick++;
+    if (st === "not_found" || st === "rejected") out.notFound++;
+    if (st === "matched" || st === "confirmed") out.withIdentity++;
+    if (st !== "needs_pick" && st !== "not_found" && st !== "rejected") out.researchable++;
+    if (r?.verdict) out.dossiers++;
+  }
+  return out;
+}
+
+/* ---------- a finished batch ---------- */
+
+const ERROR_WORD: Record<string, string> = {
+  openrouter_key_rejected: "OpenRouter refused the key: replace it in Settings",
+  openrouter_out_of_credits: "the OpenRouter account is out of credits",
+  openrouter_unavailable: "OpenRouter did not answer",
+  spend_cap_reached: "the monthly limit was reached",
+  model_unavailable: "a model is no longer on OpenRouter",
+  no_key: "the key was removed",
+};
+
+/**
+ * How a batch ended, in words: "192 confirmed · 60 need a pick · 36 not found" for a match,
+ * "37 done · 2 stopped at the limit" for research, plus the reason when runs failed together
+ * (a refused key) and whether a person is needed now.
+ */
+export function batchOutcome(b: Pick<Batch, "kind" | "counts" | "identity" | "errors">): { line: string; needsYou: boolean; problem: string | null } {
+  const c = b.counts;
+  const id = b.identity ?? {};
+  const pick = id.needs_pick ?? 0;
+  const notFound = (id.not_found ?? 0) + (id.rejected ?? 0);
+  const parts =
+    b.kind === "identity"
+      ? [
+          (id.matched ?? 0) + (id.confirmed ?? 0) ? `${num((id.matched ?? 0) + (id.confirmed ?? 0))} matched` : "",
+          pick ? `${num(pick)} need a pick` : "",
+          notFound ? `${num(notFound)} not found` : "",
+        ]
+      : [c.succeeded ? `${num(c.succeeded)} done` : "", c.blocked_identity ? `${num(c.blocked_identity)} need a pick` : ""];
+  parts.push(
+    c.partial ? `${num(c.partial)} partial` : "",
+    c.capped ? `${num(c.capped)} stopped at the limit` : "",
+    c.failed ? `${num(c.failed)} failed` : "",
+    c.cancelled ? `${num(c.cancelled)} cancelled` : "",
+  );
+  const errors = Object.entries(b.errors ?? {}).sort((x, y) => y[1] - x[1]);
+  const top = errors[0];
+  const problem = top && ERROR_WORD[top[0]] ? `${ERROR_WORD[top[0]]} (${top[0]})` : top ? top[0] : null;
+  const needsYou = pick > 0 || notFound > 0 || (c.blocked_identity ?? 0) > 0;
+  return { line: parts.filter(Boolean).join(" · ") || "nothing to do", needsYou, problem };
+}
+
+/* ---------- the pipeline's Research filter ---------- */
+
+export const RESEARCH_FILTERS = [
+  { value: "pick", label: "Needs a pick (Is this them?)" },
+  { value: "notfound", label: "Not found: add their LinkedIn" },
+  { value: "none", label: "No identity yet" },
+  { value: "dossier", label: "Has a dossier" },
+  { value: "stopped", label: "Research stopped" },
+] as const;
+
+/** Does an investor's research summary match the Research filter value? */
+export function researchMatches(
+  row: Pick<ResearchSummary, "identity_status" | "verdict" | "stopped_run"> | null | undefined,
+  value: string,
+): boolean {
+  const st = row?.identity_status ?? "none";
+  switch (value) {
+    case "pick":
+      return st === "needs_pick";
+    case "notfound":
+      return st === "not_found" || st === "rejected";
+    case "none":
+      return st === "none" || st === "pending";
+    case "dossier":
+      return Boolean(row?.verdict);
+    case "stopped":
+      return Boolean(row?.stopped_run);
+    default:
+      return true;
+  }
+}
+
 /* ---------- runs ---------- */
+
+/**
+ * Why a run that should be going is not (shown under its progress): OpenRouter not
+ * answering (it retries), or a run still waiting after a minute (no worker running).
+ */
+export function runStallHint(run: Pick<Run, "status" | "error" | "created_at" | "started_at">, now: Date): string | null {
+  if (run.status === "running" && run.error) {
+    return run.error.code === "openrouter_unavailable" || run.error.code === "openrouter_rate_limited"
+      ? "OpenRouter is not answering right now. Raisebook retries on its own, waiting longer each time."
+      : `The last call failed (${run.error.code}); Raisebook retries on its own.`;
+  }
+  if (run.status === "queued") {
+    const since = Date.parse(run.started_at ?? run.created_at);
+    if (!Number.isNaN(since) && now.getTime() - since > 60_000) {
+      return "Not started after a minute. Research runs in a background worker: if this stays, the worker may not be running (self-hosting: start the worker service).";
+    }
+  }
+  return null;
+}
 
 export const ACTIVE: readonly RunStatus[] = ["queued", "running"];
 
@@ -382,6 +574,9 @@ export function runProgressLabel(run: Pick<Run, "status" | "progress" | "cost_us
     const at = total ? ` · ${Math.min(done + (current ? 1 : 0), total)} of ${total}` : "";
     return [`${label}${at}`, cost].filter(Boolean).join(" · ");
   }
+  if (run.status === "cancelled" && (run as Partial<Pick<Run, "error">>).error?.code === "no_key") {
+    return "Stopped: the OpenRouter key was removed";
+  }
   const word = run.kind === "prefill" && run.status === "succeeded" ? "Draft ready" : (TERMINAL_WORD[run.status] ?? run.status);
   return [word, cost].filter(Boolean).join(" · ");
 }
@@ -391,7 +586,7 @@ export function runNextAction(run: Pick<Run, "status" | "can_resume" | "error">)
   if (run.status === "capped") return "raise_limit";
   if (run.status === "blocked_identity") return "pick_identity";
   const code = run.error?.code ?? "";
-  if (/key|unauthorized|401|402|credits/.test(code)) return "fix_key";
+  if (/key|unauthorized|401|402|credits/.test(code) || code === "model_unavailable") return "fix_key";
   if (run.can_resume) return "resume";
   return null;
 }

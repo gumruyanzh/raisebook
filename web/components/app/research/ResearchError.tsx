@@ -3,7 +3,8 @@
 import Link from "next/link";
 
 import { ApiError, errorMessage } from "@/lib/api/client";
-import { capUsd, formatUsd } from "@/lib/research";
+import type { AiSettings } from "@/lib/api/research";
+import { capUsd, formatUsd, limitUsedLine } from "@/lib/research";
 
 /**
  * What a refused research request means and where to go next (SYSTEM §6: say what went
@@ -18,8 +19,16 @@ export function researchErrorText(err: unknown): { text: string; code: string | 
     case "spend_cap_reached": {
       const cap = typeof d.cap_usd === "number" ? d.cap_usd : null;
       const spent = typeof d.spent_usd === "number" ? d.spent_usd : null;
-      const head = cap !== null ? `This month's ${capUsd(cap)} research limit is used up` : "This month's research limit is used up";
-      return { text: `${head}${spent !== null ? ` (${formatUsd(spent)} spent)` : ""}. Raise it, or wait for next month.`, code: err.code, action: "settings" };
+      const left = typeof d.remaining_usd === "number" ? d.remaining_usd : null;
+      const needed = typeof d.needed_usd === "number" ? d.needed_usd : null;
+      if (cap !== null && left !== null && left > 0 && needed !== null) {
+        return {
+          text: `This can cost up to ${formatUsd(needed)}, and ${formatUsd(left)} of this month's ${capUsd(cap)} AI research limit is left.`,
+          code: err.code,
+          action: "settings",
+        };
+      }
+      return { text: cap !== null ? limitUsedLine(cap, spent) : "This month's AI research limit is used up.", code: err.code, action: "settings" };
     }
     case "identity_required":
       return { text: "Pick who this investor is first; research needs a confirmed identity.", code: err.code, action: "pick" };
@@ -30,6 +39,23 @@ export function researchErrorText(err: unknown): { text: string; code: string | 
     default:
       return { text: err.message, code: err.code, action: null };
   }
+}
+
+/** The monthly limit is used up: one sentence, and where to raise it (owners and admins). */
+export function SpendLimitNote({ settings, wsSlug }: { settings: AiSettings | null | undefined; wsSlug: string }) {
+  if (!settings) return null;
+  return (
+    <p className="t-body-s text-warm-ink" role="status">
+      {limitUsedLine(settings.monthly_cap_usd, settings.usage.spent_usd)}{" "}
+      {settings.can_edit ? (
+        <Link className="link" href={`/w/${encodeURIComponent(wsSlug)}/settings/ai`}>
+          Raise it in Settings
+        </Link>
+      ) : (
+        "An owner can raise it in Settings."
+      )}
+    </p>
+  );
 }
 
 export function ResearchError({ error, wsSlug, className }: { error: unknown; wsSlug: string; className?: string }) {
