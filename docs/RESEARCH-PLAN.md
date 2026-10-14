@@ -524,10 +524,14 @@ Order matters; each step is a pure function with unit tests:
    the compact full name), `firm_domain` (source domain = firm domain or a subdomain: always
    counts), `name_firm` (the name **and** the firm name or domain in title, snippet or URL
    path), `name_past_firm` (the name and a firm the person is known to have left),
-   `name_title` (full name and title, and no other firm next to the name), `name` (a
-   **distinctive** full name alone, with nothing pointing at someone else).
+   `name_title` (full name and title, and no other firm on the page), `name` (a
+   **distinctive** full name alone on a page about investing, with nothing pointing at
+   someone else).
    - *Name forms*: the full name is matched in the title, the snippet or the URL slug, with
      case, accents, a middle name and common nicknames tolerated (Nikolaos ~ Niko ~ Nikos).
+     Surname particles belong to the surname (`van der Berg`; "Pieter Berg" is not him). A
+     surname given as an initial (`Celia R`) matches only "Celia R…" right next to each
+     other, never a common word ("Celia raises", "Celia, reporter").
      A distinctive surname (≥5 letters, not on the common-surname list) alone counts only
      with the firm by its full name or domain, or with a past firm. A first name alone never
      counts.
@@ -537,6 +541,16 @@ Order matters; each step is a pure function with unit tests:
      `Name, Partner at Org`) that is neither the anchor's firm nor a known past firm →
      `conflict` (probably someone else with the same name; discarded). History (`ex-Org`,
      `former Org`, `Name leaves Org`, `Org appoints Name`) is never a conflict.
+   - *Namesakes* (a dossier about the wrong person is the worst outcome): the full name
+     alone (`name`) needs investing words on the page or in the site name (investor, fund,
+     founders, startup, seed round, VC…), and nothing off-topic (obituary, filmography,
+     athletics…); a distinctive name is still shared by actors, athletes and doctors. A
+     firm right after the name (`Name - Acme Capital`, `Name | Engineer at Northwind`) is
+     an affiliation. On the weakest ties (`name`, `name_title`) any firm on the page that is
+     neither the anchor's nor a past one is a `conflict`. A surname match with another first
+     name before it ("Tom Wrenfield" for Niko Wrenfield) is a `conflict`. LinkedIn
+     `/pub/dir/` pages and "12 people named …" lists are `anchor_mismatch`. The firm domain
+     counts in text only as a whole domain.
    - *Past firms* are learned per run (`learn_past_firms`, two passes over the run's
      sources): pages tied by more than the name (anchor LinkedIn/X, firm domain, name+firm)
      teach every firm they put next to the name; pages tied by a distinctive name alone teach

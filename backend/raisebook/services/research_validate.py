@@ -222,6 +222,8 @@ class SourceCheck:
 
 
 _X_HOSTS = ("x.com", "twitter.com")
+# A page listing everyone with a name ("12 people named …", "30+ profiles").
+_NAME_LIST = re.compile(r"(?i)\b\d+\+?\s+(?:people|profiles|persons|records)\b|\bpeople named\b")
 _X_RESERVED = frozenset({"i", "search", "hashtag", "intent", "share", "home", "explore"})
 
 
@@ -231,6 +233,9 @@ def _linkedin_page(path: str, anchor: Anchor) -> str:
     parts = [p for p in path.lower().split("/") if p]
     if len(parts) >= 2 and parts[0] == "in":
         return "anchor" if anchor.linkedin_key == f"in/{parts[1]}" else "profile"
+    if parts and parts[0] == "pub":
+        # /pub/dir/First/Last lists everyone with the name; /pub/<slug> is an old profile URL.
+        return "directory" if len(parts) < 2 or parts[1] == "dir" else "profile"
     if len(parts) >= 2 and parts[0] == "posts" and anchor.linkedin_key:
         slug = anchor.linkedin_key.removeprefix("in/")
         if parts[1].startswith(slug + "_") or parts[1] == slug:
@@ -259,7 +264,11 @@ class _Signals:
     firm_named: bool  # the anchor's firm (or its domain) is named
     firm_named_strong: bool  # …by its full name or domain (enough next to a surname alone)
     title_named: bool
-    other_firm: bool  # "at/of/with … Capital" for a firm that is not the anchor's
+    other_firms: list[str]  # "at/of/with … Capital" for firms that are not the anchor's
+    other_person: bool  # another first name right before the surname ("Tom Wrenfield")
+    context: bool  # the page is about investing (research_anchor.investing_context)
+    off_context: bool  # …or plainly about something else (an obituary, a film page)
+    name_list: bool  # a list of everyone with the name ("12 people named …")
 
 
 def _signals(url: str, title: str | None, snippet: str | None, anchor: Anchor) -> _Signals:
@@ -275,8 +284,10 @@ def _signals(url: str, title: str | None, snippet: str | None, anchor: Anchor) -
         orgs.history += [o for o in got.history if o not in orgs.history]
     firm_full = norm(anchor_text.fold(anchor.firm)) if anchor.firm else ""
     firm_core = norm_firm(anchor_text.fold(anchor.firm)) if anchor.firm else ""
-    lowered = raw.lower()
-    domain_named = bool(anchor.firm_domain) and (anchor.firm_domain or "") in lowered
+    lowered = anchor_text.fold(raw).lower()
+    domain_named = bool(anchor.firm_domain) and bool(
+        re.search(rf"(?<![\w.-]){re.escape(anchor.firm_domain or '')}(?![\w-]|\.\w)", lowered)
+    )
     full_named = bool(firm_full) and any(anchor_text.phrase_in(t, firm_full) for t in texts)
     core_named = bool(firm_core) and any(anchor_text.phrase_in(t, firm_core) for t in texts)
     strong = domain_named or (full_named and (len(firm_full.split()) >= 2 or len(firm_full) >= 5))
@@ -288,14 +299,28 @@ def _signals(url: str, title: str | None, snippet: str | None, anchor: Anchor) -
         for m in _OTHER_FIRM.finditer(anchor_text.fold(raw))
         if not anchor.firm or not anchor_text.same_org(m.group(1), anchor.firm)
     ]
+    level = name.level(body, body_split, slug)
+    host = domain_of(url)
     return _Signals(
-        level=name.level(body, body_split, slug),
+        level=level,
         texts=texts,
         orgs=orgs,
         firm_named=domain_named or full_named or core_named,
         firm_named_strong=strong,
         title_named=bool(title_n) and anchor_text.phrase_in(body, title_n),
-        other_firm=bool(others),
+        other_firms=others,
+        other_person=level == "surname"
+        and any(
+            # Words of the firms the page names may precede the surname ("Ex-Fernhill Group
+            # Wrenfield"); another first name may not.
+            name.other_person(
+                part, [k for k in (anchor.firm, anchor.firm_domain_label) if k] + orgs.all()
+            )
+            for part in (title, snippet)
+        ),
+        context=anchor_text.investing_context(texts, host),
+        off_context=anchor_text.off_context(texts, host),
+        name_list=bool(_NAME_LIST.search(raw)),
     )
 
 
@@ -311,6 +336,8 @@ def _url_check(url: str, anchor: Anchor) -> SourceCheck | None:
         kind = _linkedin_page(path, anchor)
         if kind == "anchor":
             return SourceCheck(True, matched=AnchorMatch.LINKEDIN.value)
+        if kind == "directory":
+            return SourceCheck(False, reason="anchor_mismatch")
         if kind == "profile" and anchor.linkedin_key:
             # Another profile than the confirmed one: someone else, even with the same name.
             return SourceCheck(False, reason="anchor_mismatch")
@@ -334,8 +361,11 @@ def _handles(anchor: Anchor) -> set[str]:
 def _decide(sig: _Signals, anchor: Anchor, past_firms: Sequence[str]) -> SourceCheck:
     """Rules that read the text (``_url_check`` found no answer)."""
     name = anchor.person
-    if sig.level not in ("full", "surname"):
+    if sig.level not in ("full", "surname") or sig.name_list:
         return SourceCheck(False, reason="anchor_mismatch")
+    if sig.other_person:
+        # "Tom Wrenfield, Partner at Larkspur": the surname, but someone else's first name.
+        return SourceCheck(False, reason="conflict")
     known = [k for k in (anchor.firm, anchor.firm_domain_label) if k]
     past_named = any(anchor_text.org_in_text(p, *sig.texts) for p in past_firms) or any(
         anchor_text.matches_any(o, past_firms) for o in sig.orgs.all()
@@ -355,11 +385,15 @@ def _decide(sig: _Signals, anchor: Anchor, past_firms: Sequence[str]) -> SourceC
         return SourceCheck(False, reason="conflict")
     if not full:
         return SourceCheck(False, reason="anchor_mismatch")
+    # The weakest ties (name and title, or the name alone): any other firm on the page, or a
+    # page plainly about something other than investing, points at a namesake.
+    if any(not anchor_text.matches_any(o, past_firms) for o in sig.other_firms):
+        return SourceCheck(False, reason="conflict")
+    if sig.off_context:
+        return SourceCheck(False, reason="anchor_mismatch")
     if sig.title_named:
-        if name.common and sig.other_firm:
-            return SourceCheck(False, reason="conflict")
         return SourceCheck(True, matched=AnchorMatch.NAME_TITLE.value)
-    if not name.common:
+    if not name.common and sig.context:
         return SourceCheck(True, matched=AnchorMatch.NAME.value)
     return SourceCheck(False, reason="anchor_mismatch")
 

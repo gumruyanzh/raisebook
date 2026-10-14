@@ -51,8 +51,8 @@ def test_name_forms() -> None:
     [
         # Full name, nickname, case and middle name tolerated; title-only sources count.
         ("https://news.example/a", "Niko Wrenfield on seed rounds", "", ("name", None)),
-        ("https://news.example/b", "NIKOLAOS P. WRENFIELD SPEAKS", "", ("name", None)),
-        ("https://news.example/c", "Wrenfield, Niko · Brief", "", ("name", None)),
+        ("https://news.example/b", "NIKOLAOS P. WRENFIELD SPEAKS TO FOUNDERS", "", ("name", None)),
+        ("https://news.example/c", "Wrenfield, Niko · Investor brief", "", ("name", None)),
         # The full name only in the URL slug (no snippet, generic title).
         ("https://db.example/investors/niko-wrenfield", "Investor database", "", ("name", None)),
         # Glued directory titles still read.
@@ -110,7 +110,12 @@ def test_name_forms() -> None:
             (None, "conflict"),
         ),
         # History is not a conflict: "ex-Org" and "leaves Org" describe the same person.
-        ("https://news.example/k", "Niko Wrenfield leaves Cinderford Group", "", ("name", None)),
+        (
+            "https://news.example/k",
+            "Niko Wrenfield leaves Cinderford Group to start a fund",
+            "",
+            ("name", None),
+        ),
         # The firm's own pages always count; so do the person's own profiles.
         ("https://larkspur.example/about", "About", "", ("firm_domain", None)),
         ("https://blog.larkspur.example/p/1", "", "", ("firm_domain", None)),
@@ -171,11 +176,11 @@ def test_common_name_needs_an_org_or_role(
 
 
 def test_accents_and_case() -> None:
-    assert _check(RENEE, "https://news.example/r", "RENEE QUILLFEATHER joins a panel") == (
+    assert _check(RENEE, "https://news.example/r", "RENEE QUILLFEATHER joins a founders panel") == (
         "name",
         None,
     )
-    assert _check(RENEE, "https://news.example/r2", "Renée Quillfeather") == ("name", None)
+    assert _check(RENEE, "https://vc.example/r2", "Renée Quillfeather") == ("name", None)
     assert _check(RENEE, "https://news.example/r3", "Renée Q. talks") == (None, "anchor_mismatch")
 
 
@@ -244,3 +249,158 @@ def test_org_mentions_and_same_org() -> None:
     assert not same_org("Capital", "Larkspur Capital")
     assert not same_org("General", "General Cinderford")
     assert not same_org("Fernhill Dental", "Larkspur Capital")
+
+
+# --- namesakes: a dossier about the wrong person is the worst outcome --------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "title", "snippet", "expected"),
+    [
+        # The full name alone counts only on a page about investing.
+        (
+            "https://films.example/nm1",
+            "Niko Wrenfield - Filmography",
+            "",
+            (None, "anchor_mismatch"),
+        ),
+        (
+            "https://u.example/team",
+            "Niko Wrenfield - Rowing - Athletics",
+            "",
+            (None, "anchor_mismatch"),
+        ),
+        ("https://doc.example/a", "Dr. Niko Wrenfield, Pediatrics", "", (None, "anchor_mismatch")),
+        ("https://news.example/z", "Niko Wrenfield", "", (None, "anchor_mismatch")),
+        ("https://db.example/x", "Niko Wrenfield | Investor Database", "", ("name", None)),
+        ("https://fundersdb.example/niko-wrenfield", "Niko Wrenfield", "", ("name", None)),
+        # …and never on a page plainly about something else, investing words or not.
+        (
+            "https://news.example/o",
+            "Niko Wrenfield obituary: retired investor, 91",
+            "",
+            (None, "anchor_mismatch"),
+        ),
+        # Another firm right after the name, in title formats directories use.
+        ("https://dir.example/1", "Niko Wrenfield - Stonepine Capital", "", (None, "conflict")),
+        (
+            "https://dir.example/2",
+            "Niko Wrenfield | Senior Engineer at Northwind",
+            "",
+            (None, "conflict"),
+        ),
+        (
+            "https://dir.example/3",
+            "Niko Wrenfield, Partner, Stonepine Ventures",
+            "",
+            (None, "conflict"),
+        ),
+        # A site name after the name is not a firm.
+        ("https://dir.example/4", "Niko Wrenfield · Investor brief | Dirsite", "", ("name", None)),
+        # Any other firm on a page tied by the name (and title) alone.
+        (
+            "https://news.example/p",
+            "Niko Wrenfield, General Partner",
+            "Niko Wrenfield is a general partner at Stonepine Capital",
+            (None, "conflict"),
+        ),
+        # The surname with the firm, but another first name: a colleague or relative.
+        (
+            "https://news.example/q",
+            "Tom Wrenfield, Partner at Larkspur Capital",
+            "",
+            (None, "conflict"),
+        ),
+        ("https://news.example/r", "Why Wrenfield left Larkspur Capital", "", ("name_firm", None)),
+        (
+            "https://news.example/r2",
+            "Ex-Fernhill Group Wrenfield joins Larkspur Capital",
+            "",
+            ("name_firm", None),
+        ),
+        # A list of everyone with the name.
+        (
+            "https://www.linkedin.com/pub/dir/Niko/Wrenfield",
+            "Niko Wrenfield profiles | LinkedIn",
+            "",
+            (None, "anchor_mismatch"),
+        ),
+        (
+            "https://people.example/n",
+            "12 people named Niko Wrenfield - investors and more",
+            "",
+            (None, "anchor_mismatch"),
+        ),
+        # The firm domain counts only as a whole domain.
+        (
+            "https://news.example/s",
+            "Niko Wrenfield",
+            "see notlarkspur.example",
+            (None, "anchor_mismatch"),
+        ),
+        (
+            "https://news.example/t",
+            "Niko Wrenfield",
+            "see larkspur.example/team",
+            ("name_firm", None),
+        ),
+        # Empty texts, and a percent-encoded slug.
+        ("https://news.example/u", "", "", (None, "anchor_mismatch")),
+    ],
+)
+def test_namesakes_are_kept_out(
+    url: str, title: str, snippet: str, expected: tuple[str | None, ...]
+) -> None:
+    assert _check(TOBIAS, url, title, snippet) == expected
+
+
+def test_missing_texts_and_encoded_slugs() -> None:
+    assert check_source("https://news.example/v", None, None, TOBIAS).reason == "anchor_mismatch"
+    zoe = Anchor.of(name="Zoë Ångström", firm="Fjordlight Capital")
+    assert _check(zoe, "https://vcdb.example/zo%C3%AB-%C3%A5ngstr%C3%B6m") == ("name", None)
+    assert _check(zoe, "https://news.example/a", "ZOE ANGSTROM, angel investor") == ("name", None)
+
+
+def test_surname_initial_needs_a_real_word() -> None:
+    celia = Anchor.of(name="Celia R", firm="Harbor Light Ventures")
+    assert PersonName.of("Celia R").initial
+    # "Celia R…" right next to each other, with the firm: accepted (a common name needs it).
+    assert _check(celia, "https://n.example/1", "Celia Rowe - Harbor Light Ventures") == (
+        "name_firm",
+        None,
+    )
+    # A first name followed by any word starting with the letter is not the name.
+    for title in (
+        "Celia and her colleague raise for Harbor Light",
+        "Celia, a reporter, on Harbor Light Ventures",
+        "Celia raises a fund with Harbor Light Ventures",
+        "Rowe Celia at Harbor Light Ventures",
+    ):
+        assert _check(celia, "https://n.example/2", title) == (None, "anchor_mismatch"), title
+    assert _check(celia, "https://n.example/3", "Celia Partners with Harbor Light Ventures") == (
+        None,
+        "anchor_mismatch",
+    )
+
+
+def test_surname_particles() -> None:
+    pieter = PersonName.of("Pieter van der Brugge")
+    assert pieter.last == "van der brugge" and pieter.core_last == "brugge"
+    assert not pieter.common
+    assert "pietervanderbrugge" in pieter.handles()
+    anchor = Anchor.of(name="Pieter van der Brugge", firm="Polder Light Ventures")
+    assert _check(anchor, "https://n.example/1", "Pieter van der Brugge, angel investor") == (
+        "name",
+        None,
+    )
+    # Without the particles it is another surname (and so another person, often).
+    assert _check(anchor, "https://n.example/2", "Pieter Brugge, angel investor") == (
+        None,
+        "anchor_mismatch",
+    )
+    assert _check(anchor, "https://n.example/3", "Van der Brugge leaves Polder Light") == (
+        "name_firm",
+        None,
+    )
+    # Particle surnames on the frequent list stay common.
+    assert PersonName.of("Maria de la Cruz").common

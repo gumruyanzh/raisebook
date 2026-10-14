@@ -194,6 +194,10 @@ _GENERIC_ORG_WORDS: frozenset[str] = frozenset(
     labs studio studios growth equity asset assets private public company the
     """.split()
 )
+# A capitalized name ending in one of these is a firm ("Acme Capital"), not a site name.
+_FIRM_WORDS: frozenset[str] = frozenset(
+    "capital ventures venture partners vc fund funds investments holdings group management".split()
+)
 _JUNK_ORGS: frozenset[str] = frozenset(
     "linkedin x twitter email profile vc ai us uk usa nyc sf la eu news blog".split()
 )
@@ -238,10 +242,84 @@ def _compact(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+# Words a headline puts before a surname that are not a first name ("Why Wrenfield Left").
+_HEADLINE_WORDS: frozenset[str] = frozenset(
+    """
+    why how what when where who whom meet ask asks says said told tells per via about
+    exclusive interview opinion inside report update breaking watch listen read
+    """.split()
+)
+
+# Words that place a page in investing (needed for the full name alone to count: a
+# distinctive name is still shared by actors, athletes and doctors).
+_CONTEXT_WORDS: frozenset[str] = frozenset(
+    """
+    invest invests invested investing investor investors investment investments vc vcs
+    venture ventures capitalist capitalists fund funds funding funded fundraise fundraising
+    raise raises startup startups founder founders cofounder entrepreneur entrepreneurs
+    accelerator incubator portfolio angel angels backer backers backed gp lp lps unicorn
+    fintech saas crunchbase pitchbook techcrunch dealroom tracxn
+    """.split()
+)
+# Words that place a page outside investing (a namesake's obituary, film or sports page).
+_OFF_CONTEXT_WORDS: frozenset[str] = frozenset(
+    """
+    obituary obituaries obit funeral memorial imdb filmography actor actress athletics roster
+    mugshot arrest arrested inmate
+    """.split()
+)
+_CONTEXT_PHRASES = (
+    "seed round",
+    "seed rounds",
+    "seed stage",
+    "pre seed",
+    "series a",
+    "series b",
+    "pitch competition",
+    "pitch night",
+    "demo day",
+    "tech week",
+)
+_CONTEXT_SITE_STEMS = ("invest", "fund", "ventur", "capital", "startup", "founder")
+
+
+def _site(host: str | None) -> str:
+    labels = (host or "").split(".")
+    return labels[-2] if len(labels) >= 2 else ""
+
+
+def off_context(texts: Iterable[str], host: str | None = None) -> bool:
+    """Normalized ``texts`` (or the site) place the page outside investing (an obituary, a
+    film or sports page)."""
+    site = _site(host)
+    return bool({w for t in texts for w in t.split()} & _OFF_CONTEXT_WORDS) or any(
+        w in site for w in ("obituar", "imdb")
+    )
+
+
+def investing_context(texts: Iterable[str], host: str | None = None) -> bool:
+    """Normalized ``texts`` (or the site's name) place the page in investing, and nothing
+    places it elsewhere."""
+    texts = list(texts)
+    if off_context(texts, host):
+        return False
+    site = _site(host)
+    if {w for t in texts for w in t.split()} & _CONTEXT_WORDS:
+        return True
+    if any(phrase_in(t, p) for t in texts for p in _CONTEXT_PHRASES):
+        return True
+    return site.startswith("vc") or any(s in site for s in _CONTEXT_SITE_STEMS)
+
+
 # --- the name -------------------------------------------------------------------------------
 
 _HONORIFICS = frozenset("dr mr mrs ms miss prof sir dame".split())
 _SUFFIXES = frozenset("jr sr ii iii iv phd md mba cfa esq".split())
+# Surname particles: "Pieter van der Berg" has the surname "van der berg", so "Pieter Berg"
+# (another person as often as not) is not his full name.
+_PARTICLES = frozenset(
+    "van von der den de del della di da das dos du la le ten ter bin al el".split()
+)
 
 
 @dataclass(frozen=True)
@@ -259,7 +337,10 @@ class PersonName:
         if not tokens:
             return cls("", (), "", False)
         first = tokens[0]
-        last = tokens[-1] if len(tokens) > 1 else ""
+        start = len(tokens) - 1
+        while start > 1 and tokens[start - 1] in _PARTICLES:
+            start -= 1
+        last = " ".join(tokens[start:]) if len(tokens) > 1 else ""
         variants = {first}
         for group in _NICKNAMES:
             if first in group:
@@ -267,9 +348,15 @@ class PersonName:
         return cls(first, tuple(sorted(variants, key=lambda v: (-len(v), v))), last, len(last) == 1)
 
     @property
+    def core_last(self) -> str:
+        """The surname without particles (``berg`` for ``van der berg``)."""
+        return self.last.split()[-1] if self.last else ""
+
+    @property
     def common(self) -> bool:
         """The name alone does not single anyone out."""
-        return not self.last or self.initial or len(self.last) <= 3 or self.last in COMMON_SURNAMES
+        core = self.core_last
+        return not core or self.initial or len(core) <= 3 or core in COMMON_SURNAMES
 
     @property
     def distinctive_surname(self) -> bool:
@@ -277,9 +364,21 @@ class PersonName:
         return not self.common and len(self.last) >= 5
 
     @cached_property
+    def _initial_word(self) -> str:
+        """For a surname given as an initial: a word starting with it that is not a common
+        word ("Celia R" is not "Celia raises" or "Celia, reporter")."""
+        skip = sorted(w for w in _STOP_WORDS | _GENERIC_ORG_WORDS if w.startswith(self.last))
+        not_word = f"(?!(?:{'|'.join(map(re.escape, skip))})(?![a-z0-9]))" if skip else ""
+        return rf"{not_word}{re.escape(self.last)}[a-z]*"
+
+    @cached_property
     def _full_norm(self) -> re.Pattern[str]:
         firsts = "|".join(re.escape(f) for f in self.firsts)
-        last = re.escape(self.last) + (r"\w*" if self.initial else "")
+        if self.initial:
+            # Only "First Lastname" right next to each other: with an initial, a middle word
+            # or the reversed order would let any word starting with the letter through.
+            return re.compile(rf"(?<!\w)(?:{firsts}) {self._initial_word}(?!\w)")
+        last = re.escape(self.last)
         return re.compile(
             rf"(?<!\w)(?:(?:{firsts})(?: \w+){{0,2}} {last}|{last} (?:{firsts}))(?!\w)"
         )
@@ -290,9 +389,11 @@ class PersonName:
         a glued "...investorsNiko Wrenfield" still counts)."""
         sep = r"[\s.-]+"
         firsts = "|".join(re.escape(f) for f in self.firsts)
-        last = re.escape(self.last) + (r"[a-z]*" if self.initial else "")
+        last = sep.join(re.escape(p) for p in self.last.split())
         if not self.last:
             body = rf"(?i:{firsts})"
+        elif self.initial:
+            body = rf"(?i:(?:{firsts})[\s.]+{self._initial_word})"
         else:
             full = rf"(?:{firsts})(?:{sep}[a-z][\w']*\.?){{0,2}}{sep}{last}"
             body = rf"(?i:{full}|{last})" if self.distinctive_surname else rf"(?i:{full})"
@@ -319,7 +420,23 @@ class PersonName:
         """Account names that are plainly this person's (``nikowrenfield``)."""
         if not self.last or self.initial:
             return set()
-        return {f + self.last for f in self.firsts}
+        return {f + self.last.replace(" ", "") for f in self.firsts}
+
+    def other_person(self, text: str | None, allowed: Iterable[str] = ()) -> bool:
+        """``text`` (raw) puts another first name right before the surname ("Tom Wrenfield"
+        for Niko Wrenfield): a relative or a namesake, not the person. ``allowed`` are words
+        that may precede the surname (the anchor's firm names: "Larkspur Wrenfield")."""
+        if not self.last or self.initial or not text:
+            return False
+        ok = set(self.firsts) | _ROLE_WORDS | _STOP_WORDS | _HONORIFICS | _GENERIC_ORG_WORDS
+        ok |= _HEADLINE_WORDS | {w for a in allowed for w in norm(fold(a)).split()}
+        last = r"[\s.-]+".join(re.escape(p) for p in self.last.split())
+        for m in re.finditer(
+            rf"(?<![\w'])([A-Z][a-z]+)\s+(?:[A-Z]\.\s+)?(?i:{last})(?!\w)", fold(text)
+        ):
+            if m.group(1).lower() not in ok:
+                return True
+        return False
 
 
 # --- organizations --------------------------------------------------------------------------
@@ -370,7 +487,7 @@ def _usable(org: str | None, name: PersonName) -> str | None:
     if not n or n in _JUNK_ORGS or n in _GENERIC_ORG_WORDS:
         return None
     toks = n.split()
-    if (name.last and name.last in toks) or any(f in toks for f in name.firsts):
+    if (name.core_last and name.core_last in toks) or any(f in toks for f in name.firsts):
         return None
     return org
 
@@ -416,9 +533,15 @@ def org_mentions(text: str | None, name: PersonName) -> OrgMentions:
         add(out.affiliations, _org_backward(m.group(1)))
     roles = "|".join(sorted(_ROLE_WORDS | {"a", "an", "the", "&", "and"}, key=len, reverse=True))
     for m in re.finditer(
-        rf"{nm}\s*[,:\-\u2013\u2014]?\s+(?i:(?:(?:{roles})\s+){{0,5}}(?:at|of|from)\s+)", s
+        rf"{nm}\s*[,:|\u00b7\-\u2013\u2014]?\s+(?i:(?:(?:{roles})[\s,]+){{0,5}}(?:at|of|from)\s+)",
+        s,
     ):
         add(out.affiliations, _org_forward(s[m.end() :]))
+    # "Name - Acme Capital", "Name | Partner, Acme Ventures": a firm right after the name.
+    for m in re.finditer(rf"{nm}\s*[,:|\u00b7\-\u2013\u2014]\s*", s):
+        org = _org_forward(s[m.end() :], skip_roles=True)
+        if org and any(w in _FIRM_WORDS for w in norm(org).split()[1:]):
+            add(out.affiliations, org)
     out.affiliations = [o for o in out.affiliations if not any(same_org(o, h) for h in out.history)]
     return out
 
