@@ -133,7 +133,8 @@ export function NextMeeting({
             changed(res);
             const when = whenLine(res.meeting, viewerTz, today);
             const moved = res.moved_stage ? ` Moved to ${res.moved_stage.to.label}.` : "";
-            toast.show(res.created ? `Meeting with ${investor.name} on ${when}.${moved}` : "That meeting is already scheduled.");
+            const note = res.warnings[0] ? ` ${res.warnings[0]}` : "";
+            toast.show(res.created ? `Meeting with ${investor.name} on ${when}.${moved}${note}` : "That meeting is already scheduled.");
           }}
         />
       ) : null}

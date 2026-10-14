@@ -100,8 +100,9 @@ async def list_all(
         investor_id=investor_id,
         round_id=rnd.id if rnd else None,
         statuses=status,
-        start_from=start_from,
-        start_to=start_to,
+        # A time without an offset is workspace time, as everywhere else in meetings.
+        start_from=svc.parse_when(start_from, ws, "from"),
+        start_to=svc.parse_when(start_to, ws, "to"),
         upcoming=when == "upcoming",
         needs_outcome_only=when == "needs_outcome",
         order=order,

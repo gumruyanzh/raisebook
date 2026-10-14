@@ -190,7 +190,8 @@ export function MeetingsView({ initial }: { initial: Meeting[] }) {
             setWho(null);
             changed(res);
             const moved = res.moved_stage ? ` Moved to ${res.moved_stage.to.label}.` : "";
-            toast.show(`Meeting with ${res.meeting.investor.name}, ${whenLine(res.meeting, viewerTz, today)}.${moved}`);
+            const note = res.warnings[0] ? ` ${res.warnings[0]}` : "";
+            toast.show(`Meeting with ${res.meeting.investor.name}, ${whenLine(res.meeting, viewerTz, today)}.${moved}${note}`);
           }}
         />
       ) : null}

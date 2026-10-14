@@ -449,3 +449,55 @@ async def test_mcp_meeting_tools(db: AsyncSession, mcp_call: Any, frozen_now: An
     assert not res.ok and res.code == "validation_error"
     res = await mcp_call(w.reader, "schedule_meeting", {"investor": "Dana", "starts_at": "x"})
     assert not res.ok
+
+
+async def test_dst_local_times(db: AsyncSession, key_client: Any, frozen_now: Any) -> None:
+    """Workspace times across DST changes: stored in UTC, real durations, no skipped times."""
+    w = await world(db, timezone="America/Los_Angeles")
+    inv = await _dana(db, w.ws)
+    c = key_client(w.key)
+    # After the fall-back change (PST, UTC-8): 11:00 local is 19:00Z, in the ICS too.
+    r = await c.post(
+        "/v1/meetings", json={"investor_id": str(inv.id), "starts_at": "2026-11-03T11:00"}
+    )
+    assert r.json()["meeting"]["starts_at"] == "2026-11-03T19:00:00Z", r.text
+    mid = r.json()["meeting"]["id"]
+    assert "DTSTART:20261103T190000Z" in (await c.get(f"/v1/meetings/{mid}/ics")).text
+    # 01:45 on the fall-back night, 30 minutes: really 30 minutes (not 1 h 30).
+    r = await c.post(
+        "/v1/meetings",
+        json={"investor_id": str(inv.id), "starts_at": "2026-11-01T01:45", "duration_minutes": 30},
+    )
+    assert r.status_code == 201, r.text
+    m = r.json()["meeting"]
+    assert (m["starts_at"], m["ends_at"]) == ("2026-11-01T08:45:00Z", "2026-11-01T09:15:00Z")
+    # 02:30 on the spring-forward night does not exist: a clear 422, not a 500.
+    r = await c.post(
+        "/v1/meetings", json={"investor_id": str(inv.id), "starts_at": "2027-03-14T02:30"}
+    )
+    assert r.status_code == 422 and "does not exist" in r.text
+    # List bounds without an offset are workspace time too.
+    r = await c.get("/v1/meetings", params={"from": "2026-11-03T10:30", "to": "2026-11-03T11:30"})
+    assert r.status_code == 200, r.text
+    assert [x["id"] for x in r.json()["data"]] == [mid]
+
+
+async def test_closed_round_never_moves(db: AsyncSession, key_client: Any, frozen_now: Any) -> None:
+    w = await world(db)
+    closed = await make_round(db, w.ws, name="Pre-seed", slug="pre-seed")
+    closed.status = "closed"
+    await db.flush()
+    inv = await _dana(db, w.ws)
+    c = key_client(w.key)
+    r = await c.post(
+        "/v1/meetings",
+        json={
+            "investor_id": str(inv.id),
+            "starts_at": "2026-10-15T10:00:00Z",
+            "round": "pre-seed",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["moved_stage"] is None
+    assert any("not open" in x for x in r.json()["warnings"])
+    assert await participant(db, closed, inv) is None

@@ -613,14 +613,17 @@ Rules (`services/meetings.py`):
 - **Stage**: scheduling in a round moves the investor to the round's Meeting stage (key
   `meeting`, else a stage labelled "Meeting") when their stage is open or active and earlier
   (`move_to_meeting_stage`, default true); an investor not in that round is added there.
-  A later stage (Diligence) is never moved back.
+  A later stage (Diligence) is never moved back, and a closed round is never touched (a
+  warning says so).
 - **Idempotent scheduling**: the same investor at the same start (still scheduled) returns the
   existing meeting with `created: false` and writes nothing.
 - **Status**: `scheduled → cancelled | no_show` (and back with `scheduled`); rescheduling a
   cancelled or no-show meeting brings it back. `done` is final (409 `meeting_done`).
   Marking done is refused more than 30 minutes before the start.
-- **Times**: a time without an offset is read in the workspace timezone; a bare date is
-  refused (a meeting needs a time). Up to 1 year back and 2 years ahead. The web enters times
+- **Times**: a time without an offset is read in the workspace timezone (the list's `from`
+  and `to` too); a bare date is refused (a meeting needs a time), and so is a local time that
+  a DST change skips (02:30 on a spring-forward night). Times are stored and computed in UTC,
+  so a meeting across a DST change keeps its real length. Up to 1 year back and 2 years ahead. The web enters times
   in the workspace timezone and shows them in the viewer's.
 - **Audit trail**: `meeting_scheduled`, then one `meeting_updated` per change (§8.1), and the
   outcome as a `meeting` activity with `data.meeting_id`; `GET /v1/meetings/{id}` returns

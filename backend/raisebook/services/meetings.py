@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -89,8 +89,20 @@ def parse_when(value: str | datetime | None, ws: WorkspaceContext, field_: str) 
                 "or a local time such as 2026-10-20T11:00 (workspace timezone).",
             ) from None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=ZoneInfo(ws.timezone))
-    return dt
+        tz = ZoneInfo(ws.timezone)
+        local = dt.replace(tzinfo=tz)
+        # A wall time skipped by a DST change (02:30 on a spring-forward night) does not
+        # exist: refuse it instead of silently shifting it by an hour.
+        if local.astimezone(UTC).astimezone(tz).replace(tzinfo=None) != dt:
+            raise ValidationFailed(
+                field_,
+                f"{dt.strftime('%Y-%m-%d %H:%M')} does not exist in {ws.timezone} (the clocks "
+                "change that night). Pick another time.",
+            )
+        dt = local
+    # Store and compute in UTC: arithmetic on a zoned datetime is wall-clock arithmetic, so a
+    # 30-minute meeting across a DST change would otherwise last 30 minutes ± 1 hour.
+    return dt.astimezone(UTC)
 
 
 def clean_url(value: str | None) -> str | None:
@@ -559,9 +571,12 @@ async def _advance_stage(
 ) -> tuple[StageMoved | None, RoundParticipant | None, str | None]:
     from raisebook.services import participants as parts_svc
 
+    part = await parts_svc.get_participant(db, ws, rnd.id, inv.id)
+    if rnd.status != "open":
+        # A closed round's pipeline is history: never add anyone to it or move them.
+        return None, part, f"{rnd.name} is not open, so the stage was not changed."
     stages = await stages_for(db, ws, rnd.id)
     target = meeting_stage(stages)
-    part = await parts_svc.get_participant(db, ws, rnd.id, inv.id)
     if target is None:
         return None, part, f"{rnd.name} has no Meeting stage, so the stage was not changed."
     note = f"Meeting scheduled for {when_text(starts_at, ws.timezone)}."
