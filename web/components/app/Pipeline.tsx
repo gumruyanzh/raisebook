@@ -2406,8 +2406,8 @@ function BulkBar({
           ]}
         />
         <Menu
-          label="Research the selection"
-          trigger="Research"
+          label="AI research on the selection"
+          trigger="AI research"
           triggerClassName={trigger}
           items={[
             { label: "Research selected…", onSelect: () => onResearch("dossier") },

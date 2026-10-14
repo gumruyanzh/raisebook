@@ -89,6 +89,7 @@ function FindAgain({
 }
 
 /** The research block's fixed height: the decision panel never moves between investors. */
+/** The research block's height beside the keyboard panel (the `sm:h-[148px]` below). */
 export const TRIAGE_RESEARCH_H = 148;
 
 /**
@@ -243,8 +244,10 @@ export function TriageResearch({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-6 overflow-hidden" style={{ height: TRIAGE_RESEARCH_H }} aria-label={`Research on ${name}`}>
-      <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
+    // Fixed height beside the keyboard panel (no jump between investors); on a phone it grows,
+    // so the "Is this them?" rows can show the whole title and firm.
+    <div className="flex min-h-[148px] min-w-0 flex-col gap-6 sm:h-[148px] sm:overflow-hidden" aria-label={`Research on ${name}`}>
+      <div className="min-h-0 flex-1 sm:overflow-hidden">{body}</div>
       {groups.length && !active ? (
         <div className="flex h-22 min-w-0 shrink-0 items-center gap-10 border-t border-line pt-4">
           <span className="t-body-s min-w-0 flex-1 truncate">{suggestionLine(groups[0]!, currency)}</span>

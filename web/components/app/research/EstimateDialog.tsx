@@ -122,7 +122,7 @@ export function EstimateDialog({
               <dt className="text-muted">{identity ? "To match" : "To research"}</dt>
               <dd className="m-0">
                 <b className="font-semibold">{num(est.count)}</b> {est.count === 1 ? "investor" : "investors"}
-                <span className="text-muted"> · {perRunLine(est)}</span>
+                {perRunLine(est) ? <span className="text-muted"> · {perRunLine(est)}</span> : null}
               </dd>
               <dt className="text-muted">Estimate</dt>
               <dd className="m-0 font-mono">{est.total_usd !== null ? `≈ ${formatUsd(est.total_usd)}` : "unknown"}</dd>

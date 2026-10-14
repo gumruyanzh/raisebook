@@ -356,9 +356,9 @@ export function InvestorSheet({
   const rs = investor?.research;
   const researchHint = rs
     ? rs.active_run
-      ? "running"
+      ? "Running"
       : rs.identity_status === "needs_pick"
-        ? "pick"
+        ? "Pick one"
         : rs.verdict
           ? (rs.verdict === "strong" ? "Strong" : rs.verdict === "possible" ? "Possible" : rs.verdict === "poor" ? "Poor" : "Researched")
           : null

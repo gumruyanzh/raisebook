@@ -82,21 +82,26 @@ export function IdentityPicker({
       <div className="flex min-w-0 flex-col gap-4">
         <ul className="m-0 flex list-none flex-col p-0">
           {cands.map((c) => (
-            <li key={c.id} className="flex h-32 min-w-0 items-center gap-8">
-              <span className="min-w-0 flex-1 truncate" title={candidateMatchLine(c).reasons}>
-                <span className="font-medium">{[c.title, c.firm].filter(Boolean).join(", ") || c.name}</span>
-                <span className="t-micro ml-6 text-muted">{candidateMatchLine(c).word}</span>
+            <li key={c.id} className="flex min-w-0 items-center gap-8 py-4 sm:h-32 sm:py-0">
+              {/* One line beside the keyboard panel; on a phone the links go under the name. */}
+              <span className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-8">
+                <span className="min-w-0 truncate sm:flex-1" title={candidateMatchLine(c).reasons}>
+                  <span className="font-medium">{[c.title, c.firm].filter(Boolean).join(", ") || c.name}</span>
+                  <span className="t-micro ml-6 text-muted">{candidateMatchLine(c).word}</span>
+                </span>
+                <span className="flex shrink-0 gap-8">
+                  {c.linkedin_url ? (
+                    <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className={linkCls}>
+                      LinkedIn ↗
+                    </a>
+                  ) : null}
+                  {c.firm_website ? (
+                    <a href={c.firm_website} target="_blank" rel="noopener noreferrer" className={linkCls}>
+                      {hostOf(c.firm_website)} ↗
+                    </a>
+                  ) : null}
+                </span>
               </span>
-              {c.linkedin_url ? (
-                <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className={linkCls}>
-                  LinkedIn ↗
-                </a>
-              ) : null}
-              {c.firm_website ? (
-                <a href={c.firm_website} target="_blank" rel="noopener noreferrer" className={linkCls}>
-                  {hostOf(c.firm_website)} ↗
-                </a>
-              ) : null}
               <Button size="sm" disabled={!canWrite} busy={busy === c.id ? "Saving…" : false} onClick={() => void pick(c.id, { candidate_id: c.id })}>
                 This one
               </Button>

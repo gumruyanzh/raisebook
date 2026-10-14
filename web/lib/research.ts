@@ -381,7 +381,8 @@ export function perRunLine(e: Pick<Estimate, "kind" | "count" | "free" | "paid" 
   const free = e.free ?? 0;
   const paid = e.paid ?? e.count - free;
   const each = e.per_run_usd !== null ? ` ≈ ${formatUsd(e.per_run_usd)} each` : "";
-  if (e.kind !== "identity") return `${num(e.count)} ${e.count === 1 ? "investor" : "investors"}${each}`;
+  // The dialog already says "6 investors": a dossier line is just the price of one.
+  if (e.kind !== "identity") return each.trim();
   const head = `${num(paid)} ${paid === 1 ? "search" : "searches"}${paid ? each : ""}`;
   return free ? `${head}; ${num(free)} already ${free === 1 ? "has a LinkedIn" : "have a LinkedIn"} (free)` : head;
 }

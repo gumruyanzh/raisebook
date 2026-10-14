@@ -277,7 +277,8 @@ test("batchOutcome: a match batch says who needs a pick; a refused key says why"
 
 test("perRunLine: free matches are said, not hidden in the average", () => {
   assert.equal(perRunLine({ kind: "identity", count: 411, free: 192, paid: 219, per_run_usd: 0.007 }), "219 searches ≈ $0.01 each; 192 already have a LinkedIn (free)");
-  assert.equal(perRunLine({ kind: "dossier", count: 38, per_run_usd: 0.21 }), "38 investors ≈ $0.21 each");
+  assert.equal(perRunLine({ kind: "dossier", count: 38, per_run_usd: 0.21 }), "≈ $0.21 each");
+  assert.equal(perRunLine({ kind: "dossier", count: 38, per_run_usd: null }), "");
 });
 
 test("stoppedRun: a failed, partial or capped run stays visible until a newer dossier", () => {
