@@ -1188,3 +1188,19 @@ every search and the writer when on, notes-only claims under `from_notes` only. 
 `lib/research.test.ts` covers the fresh rule, the started note, the reused line and the
 estimate line.
 
+### 12.5 Hardening after adversarial review (2026-10-14)
+- **No dossier and refresh at once.** `start_run` treats `dossier` and `refresh` as one for
+  "a run is already going": asking for either while the other is queued or running returns it
+  (`reason: active`); `bulk_estimate` counts both as `skipped.active`.
+- **`force` never reuses.** `force` asks to pay for new research, so it skips the reuse lookup
+  too (identity + searches + writer, as `refresh` always did).
+- **Dry runs price what will be paid.** MCP `research_investor(dry_run, kind=refresh | force)`
+  calls `bulk_estimate(force=True)`: fresh dossiers and confirmed identities are priced, not
+  reported as `skipped.fresh`, and nothing is counted as reused.
+- **Facts worded with notes stay home.** A fact citing `"notes"` *and* a source is a cited
+  fact in its own workspace, but `finalize` marks it (internal `notes: true`, stripped from
+  the API and exports) and `research_reuse.donor_facts` never copies it to another workspace.
+- **Stricter notes filter.** Notes are informal, so `notes_for_research` also drops any line
+  that looks like a street address in lower case ("300 w 57th st") or a flat/suite/unit
+  number, and strips every email address (work ones too), not only consumer ones.
+

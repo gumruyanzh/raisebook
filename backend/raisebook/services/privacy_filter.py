@@ -246,13 +246,24 @@ def scrub_source_text(text: str | None) -> tuple[str | None, int]:
 
 NOTES_MAX_CHARS = 2000
 
+# Notes are typed fast and in lower case ("300 w 57th st, apt 4b"), so the address check for
+# them is looser than the one for published text: a line that looks like it holds a street
+# address or a flat number is dropped whole rather than half-stripped.
+_NOTES_ADDRESS = re.compile(
+    r"(?i)\b\d{1,6}[a-z]?\s+(?:[\w'.-]+\s+){0,3}"
+    r"(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|terrace|highway|hwy|"
+    r"parkway|pkwy|crescent|mews)\b\.?"
+)
+_NOTES_UNIT = re.compile(r"(?i)\b(?:apt|apartment|suite|ste|unit|flat|floor)\.?\s*#?\d+\w?\b")
+_NOTES_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
 
 def notes_for_research(text: str | None, *, limit: int = NOTES_MAX_CHARS) -> str | None:
     """An investor's notes as research may send them (owner decision 2026-10-14, setting
-    ``use_notes_in_research``): phones, addresses and consumer emails stripped, a line about
-    family, health, politics, religion or someone's home dropped whole, blank lines folded,
-    and the rest trimmed to about ``limit`` characters at a word boundary. None when nothing
-    is left."""
+    ``use_notes_in_research``): phones and every email address stripped, a line that looks
+    like a street address or flat number, or that touches family, health, politics, religion
+    or someone's home, dropped whole, blank lines folded, and the rest trimmed to about
+    ``limit`` characters at a word boundary. None when nothing is left."""
     if not text:
         return None
     kept: list[str] = []
@@ -260,6 +271,9 @@ def notes_for_research(text: str | None, *, limit: int = NOTES_MAX_CHARS) -> str
         line = " ".join(raw.split())
         if not line or is_sensitive(line):
             continue
+        if _NOTES_ADDRESS.search(line) or _NOTES_UNIT.search(line):
+            continue
+        line = _NOTES_EMAIL.sub(REMOVED, line)
         cleaned, _ = strip_contacts(line)
         if mostly_removed(cleaned) or not cleaned.replace(REMOVED, "").strip(" ,;:-"):
             continue

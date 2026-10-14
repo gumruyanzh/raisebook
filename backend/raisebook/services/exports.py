@@ -693,7 +693,7 @@ async def _research_dict(db: AsyncSession, ws: WorkspaceContext) -> dict[str, An
                 "analysis": d.analysis,
                 "unverified": d.unverified,
                 "facts": [
-                    {k: v for k, v in fact.items() if k not in ("fid", "loose")}
+                    {k: v for k, v in fact.items() if k not in ("fid", "loose", "notes")}
                     for fact in (f.facts if f else [])
                 ],
             }

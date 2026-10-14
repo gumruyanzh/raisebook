@@ -367,7 +367,9 @@ async def view(
             "cost_usd": _usd(run_cost),
             "reused": reused,
         },
-        "facts": [{k: v for k, v in f.items() if k not in ("fid", "loose")} for f in facts],
+        "facts": [
+            {k: v for k, v in f.items() if k not in ("fid", "loose", "notes")} for f in facts
+        ],
         "sources": [
             {
                 "id": s.id,

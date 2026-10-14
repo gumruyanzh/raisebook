@@ -321,6 +321,8 @@ async def donor_facts(
     url_of = {str(s.id): s.url_key for s in sources}
     out: list[dict[str, Any]] = []
     for f in row.facts or []:
+        if f.get("notes"):
+            continue  # worded with the giving workspace's private notes: stays there
         keys = [url_of[s] for s in f.get("source_ids", []) if s in url_of]
         if not keys or not f.get("text"):
             continue

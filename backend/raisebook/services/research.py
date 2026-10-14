@@ -359,6 +359,11 @@ async def start_run(
         raise ValidationFailed("kind", "kind must be identity, dossier or refresh.")
     row = settings or await _settings_with_key(db, ws)
     existing = await active_run(db, ws, investor.id, kind.value)
+    if existing is None and kind in (ResearchKind.DOSSIER, ResearchKind.REFRESH):
+        # A dossier and a refresh of one investor at once would pay twice for one person: the
+        # one already going is returned whichever of the two was asked for.
+        sibling = ResearchKind.REFRESH if kind == ResearchKind.DOSSIER else ResearchKind.DOSSIER
+        existing = await active_run(db, ws, investor.id, sibling.value)
     if existing is not None:
         return Started(existing, False, existing.estimate_micros, reason="active")
     await removal_svc.require_not_suppressed(db, investor)
@@ -390,7 +395,8 @@ async def start_run(
     anchored = status in identity_svc.ANCHORED
     instant = kind == ResearchKind.IDENTITY and (anchored or bool(investor.linkedin_url))
     giver: reuse_svc.Donor | None = None
-    if kind == ResearchKind.DOSSIER:
+    if kind == ResearchKind.DOSSIER and not force:
+        # ``force`` asks to pay for new research, so it never reuses either.
         giver = (
             await reuse_svc.find_donor(db, ws, investor, identity, now=now)
             if donor is _LOOKUP
@@ -597,8 +603,12 @@ async def bulk_estimate(
     investor_ids: Sequence[UUID] | None = None,
     round_id: UUID | None = None,
     settings: WorkspaceAiSettings | None = None,
+    force: bool = False,
 ) -> BulkEstimate:
-    """What "Research selected" / "Match identities" would cost, before anyone confirms."""
+    """What "Research selected" / "Match identities" would cost, before anyone confirms.
+
+    ``force`` prices research that pays again (a refresh, or ``force``): fresh dossiers and
+    confirmed identities count, and nothing is reused."""
     if kind not in (ResearchKind.IDENTITY, ResearchKind.DOSSIER):
         raise ValidationFailed("kind", "kind must be identity or dossier.")
     row = settings or await ai_svc.get_or_default(db, ws)
@@ -624,7 +634,11 @@ async def bulk_estimate(
                 select(ResearchRun.investor_id).where(
                     ResearchRun.workspace_id == ws.workspace_id,
                     ResearchRun.investor_id.in_(ids),
-                    ResearchRun.kind == kind.value,
+                    ResearchRun.kind.in_(
+                        [ResearchKind.DOSSIER.value, ResearchKind.REFRESH.value]
+                        if kind == ResearchKind.DOSSIER
+                        else [kind.value]
+                    ),
                     ResearchRun.status.in_(ACTIVE),
                 )
             )
@@ -643,7 +657,7 @@ async def bulk_estimate(
                 )
             )
         )
-        if ids and kind == ResearchKind.DOSSIER
+        if ids and kind == ResearchKind.DOSSIER and not force
         else set()
     )
     suppressed = await removal_svc.suppressed_ids(db, investors)
@@ -659,7 +673,7 @@ async def bulk_estimate(
             skipped["suppressed"] += 1
         elif inv.id in active:
             skipped["active"] += 1
-        elif kind == ResearchKind.IDENTITY and status in identity_svc.ANCHORED:
+        elif kind == ResearchKind.IDENTITY and status in identity_svc.ANCHORED and not force:
             skipped["identified"] += 1
         elif kind == ResearchKind.DOSSIER and status in identity_svc.BLOCKING:
             skipped["no_identity"] += 1
@@ -667,7 +681,9 @@ async def bulk_estimate(
             skipped["fresh"] += 1
         else:
             eligible.append(inv)
-            if kind == ResearchKind.IDENTITY and inv.linkedin_url:
+            if kind == ResearchKind.IDENTITY and (
+                inv.linkedin_url or status in identity_svc.ANCHORED
+            ):
                 free.add(inv.id)
             if (
                 kind == ResearchKind.DOSSIER
@@ -678,7 +694,7 @@ async def bulk_estimate(
     per_run = await per_run_micros(db, ws, kind, row)
     reuse: dict[UUID, reuse_svc.Donor] = {}
     writer = 0
-    if kind == ResearchKind.DOSSIER and eligible:
+    if kind == ResearchKind.DOSSIER and eligible and not force:
         reuse = await reuse_svc.donors_for(db, ws, eligible, ident_rows, now=now)
         writer = writer_only_micros(models_of(row), ai_svc.known_prices(row)) or per_run
         for inv_id in reuse:

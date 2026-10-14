@@ -194,6 +194,8 @@ def register(server: FastMCP) -> None:
                     kind=ResearchKind.IDENTITY if kind == "identity" else ResearchKind.DOSSIER,
                     now=now,
                     investor_ids=[inv.id],
+                    # A refresh or force pays again: price it, never "skipped: fresh".
+                    force=force or kind == "refresh",
                 )
                 return {"dry_run": True, **shaping.prune(est.as_dict())}
             started = await research_svc.start_run(

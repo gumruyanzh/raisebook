@@ -586,3 +586,110 @@ async def test_mcp_get_dossier_labels_notes_and_reuse(
     got = await mcp_call(w.key, "get_dossier", {"investor": NAME})
     assert got.ok and got.data["from_your_notes"] == ["Prefers pitch decks under 12 slides."]
     assert "reused" not in got.data
+
+
+# --- adversarial verification (2026-10-14) -------------------------------------------------------
+
+
+def test_notes_drop_lowercase_addresses_flats_and_every_email() -> None:
+    out = notes_for_research(
+        "apt 4b, 300 w 57th st new york\n"
+        "office at 1 market st, suite 300\n"
+        "her work email is dana@harborlight.example\n"
+        "Leads seed in devtools; expects 3 deals to close by Q4, did 2 rounds in a row"
+    )
+    assert out is not None
+    assert "57th" not in out and "market st" not in out and "suite" not in out
+    assert "dana@" not in out and "harborlight.example" not in out
+    assert "expects 3 deals to close by Q4, did 2 rounds in a row" in out  # no false drop
+
+
+async def test_a_dossier_and_a_refresh_never_run_at_once(
+    db: AsyncSession, key_client: Any, openrouter_mock: Any, frozen_now: Any
+) -> None:
+    w = await research_world(db, linkedin_url=LINKEDIN, website_url=SITE)
+    Script().install(openrouter_mock)
+    c = key_client(w.key)
+    first = await start(c, w.inv.id)
+    assert first.status_code == 202
+    r = await start(c, w.inv.id, "refresh")
+    assert r.status_code == 200 and r.json()["created"] is False
+    assert r.json()["reason"] == "active" and r.json()["run"]["id"] == first.json()["run"]["id"]
+    assert await run_jobs(db) == ["succeeded"]
+    # And the other way round: a refresh going, then "Research" (force) returns it.
+    clock.freeze(frozen_now + timedelta(days=40))
+    ref = await start(c, w.inv.id, "refresh")
+    assert ref.status_code == 202
+    r = await start(c, w.inv.id, force=True)
+    assert r.status_code == 200 and r.json()["reason"] == "active"
+    assert r.json()["run"]["id"] == ref.json()["run"]["id"]
+    est = (
+        await c.post(
+            "/v1/research/estimate", json={"kind": "dossier", "investor_ids": [str(w.inv.id)]}
+        )
+    ).json()
+    assert est["count"] == 0 and est["skipped"]["active"] == 1
+
+
+async def test_force_pays_for_new_research_instead_of_reusing(
+    db: AsyncSession, session_client: Any, openrouter_mock: Any, frozen_now: Any
+) -> None:
+    a = await research_world(db, linkedin_url=LINKEDIN)
+    script = Script().install(openrouter_mock)
+    await researched(db, await session_client(a.owner, a.ws), a, script)
+    b = await second_workspace(db, a, linkedin_url=LINKEDIN)
+    cb = await session_client(a.owner, b.ws)
+    r = await start(cb, b.inv.id, force=True)
+    assert r.status_code == 202
+    steps = [s["key"] for s in r.json()["run"]["progress"]["steps"]]
+    assert "reuse" not in steps and steps[0] == "search:activity"
+    assert "reuse" not in (r.json()["run"]["result"] or {})
+
+
+async def test_facts_worded_with_notes_never_reach_another_workspace(
+    db: AsyncSession, session_client: Any, openrouter_mock: Any, frozen_now: Any
+) -> None:
+    a = await research_world(db, linkedin_url=LINKEDIN, notes=NOTES)
+    row = await db.get(WorkspaceAiSettings, a.ws.id)
+    assert row is not None
+    row.use_notes_in_research = True
+    await db.flush()
+    script = Script().install(openrouter_mock)
+    script.extra_facts = [
+        {
+            "key": "n2",
+            "section": "profile",
+            "kind": "other",
+            "text": "Asked about our pilots at the Oakland robotics dinner.",
+            "source_ids": ["notes", "s1"],
+        }
+    ]
+    ca = await session_client(a.owner, a.ws)
+    view_a = await researched(db, ca, a, script)
+    # Home: a source backs it, so it is a fact here, with no internal marker in the API.
+    mine = [f for f in view_a["facts"] if "Oakland robotics dinner" in f["text"]]
+    assert mine and "notes" not in mine[0]
+
+    script.extra_facts = []
+    b = await second_workspace(db, a, linkedin_url=LINKEDIN)
+    cb = await session_client(a.owner, b.ws)
+    script.requests.clear()
+    assert (await start(cb, b.inv.id)).status_code == 202
+    assert await run_jobs(db) == ["succeeded"]
+    prompt = script.requests[-1]["messages"][1]["content"]
+    assert "KNOWN FACTS" in prompt and "Oakland robotics dinner" not in prompt
+
+
+async def test_mcp_dry_run_prices_a_refresh_of_a_fresh_dossier(
+    db: AsyncSession, mcp_call: Any, openrouter_mock: Any, frozen_now: Any
+) -> None:
+    w = await research_world(db, linkedin_url=LINKEDIN, website_url=SITE)
+    Script().install(openrouter_mock)
+    await mcp_call(w.key, "research_investor", {"investor": NAME})
+    await run_jobs(db)
+    plain = await mcp_call(w.key, "research_investor", {"investor": NAME, "dry_run": True})
+    assert plain.ok and plain.data.get("count", 0) == 0
+    ref = await mcp_call(
+        w.key, "research_investor", {"investor": NAME, "kind": "refresh", "dry_run": True}
+    )
+    assert ref.ok and ref.data["count"] == 1 and ref.data["total_usd"] > 0

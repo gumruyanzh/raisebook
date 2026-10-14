@@ -649,16 +649,19 @@ def finalize(
                 unverified.append({"section": fact.section, "text": text})
                 moved += 1
             continue
-        facts.append(
-            {
-                "key": fact.key,
-                "section": fact.section,
-                "kind": fact.kind,
-                "text": text,
-                "date": fact.date.isoformat() if fact.date else None,
-                "source_ids": cited,
-            }
-        )
+        row: dict[str, Any] = {
+            "key": fact.key,
+            "section": fact.section,
+            "kind": fact.kind,
+            "text": text,
+            "date": fact.date.isoformat() if fact.date else None,
+            "source_ids": cited,
+        }
+        if notes_id is not None and notes_id in fact.source_ids:
+            # A source backs it, but its wording may carry the founder's notes: internal
+            # marker so it never leaves this workspace (``research_reuse.donor_facts``).
+            row["notes"] = True
+        facts.append(row)
 
     # Caps: the newest activity first, then the total.
     activity = [f for f in facts if f["section"] == "activity"]
