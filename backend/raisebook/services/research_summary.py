@@ -38,6 +38,7 @@ async def summaries(
             "stale": False,
             "pending_suggestions": 0,
             "active_run": None,
+            "stopped_run": None,
             "refresh_offer": False,
         }
         for i in ids
@@ -101,4 +102,41 @@ async def summaries(
     ).tuples():
         if run_inv is not None:
             out[run_inv]["active_run"] = {"id": run_id, "kind": kind, "status": status}
+    # The latest identity/dossier/refresh run, when it stopped without a result and nothing
+    # newer replaced it: shown with its reason and Resume after a reload (verify-ux finding:
+    # failed, partial and capped runs used to vanish).
+    last = (
+        select(
+            ResearchRun.id,
+            ResearchRun.investor_id,
+            ResearchRun.kind,
+            ResearchRun.status,
+            ResearchRun.error_code,
+            ResearchRun.created_at,
+        )
+        .where(
+            ResearchRun.workspace_id == ws.workspace_id,
+            ResearchRun.investor_id.in_(ids),
+            ResearchRun.kind.in_(("identity", "dossier", "refresh")),
+        )
+        .distinct(ResearchRun.investor_id)
+        .order_by(ResearchRun.investor_id, ResearchRun.created_at.desc())
+    )
+    for run_id, run_inv, kind, status, code, created in (await db.execute(last)).tuples():
+        stopped_row = out.get(run_inv) if run_inv is not None else None
+        if stopped_row is None or status not in STOPPED or stopped_row["active_run"] is not None:
+            continue
+        if status == "cancelled" and code in (None, "cancelled"):
+            continue  # someone pressed Cancel: nothing to explain
+        if stopped_row["dossier_at"] is not None and stopped_row["dossier_at"] >= created:
+            continue
+        stopped_row["stopped_run"] = {
+            "id": run_id,
+            "kind": kind,
+            "status": status,
+            "error_code": code,
+        }
     return out
+
+
+STOPPED = ("failed", "partial", "capped", "cancelled")

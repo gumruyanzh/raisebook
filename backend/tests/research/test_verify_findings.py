@@ -558,6 +558,9 @@ async def test_a_rejected_key_stops_the_rest_of_the_batch_and_shows_in_settings(
     assert b["errors"] == {"openrouter_key_rejected": 3} and b["active"] == 0
     s = (await c.get("/v1/workspace/ai-settings")).json()
     assert s["key_error"] == "openrouter_key_rejected" and s["key_error_at"]
+    # After a reload every investor still says why research stopped (it used to vanish).
+    rows = (await c.get("/v1/rounds/seed/research")).json()["data"]
+    assert {r["stopped_run"]["error_code"] for r in rows} == {"openrouter_key_rejected"}
 
 
 def _401() -> Any:

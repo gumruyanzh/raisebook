@@ -375,6 +375,13 @@ class ActiveRunBrief(BaseModel):
     status: str
 
 
+class StoppedRunBrief(BaseModel):
+    id: UUID
+    kind: str
+    status: str
+    error_code: str | None = None
+
+
 class ResearchSummaryOut(BaseModel):
     identity_status: str
     verdict: str | None = None
@@ -383,6 +390,11 @@ class ResearchSummaryOut(BaseModel):
     stale: bool = False
     pending_suggestions: int = 0
     active_run: ActiveRunBrief | None = None
+    stopped_run: StoppedRunBrief | None = Field(
+        None,
+        description="The latest run, when it stopped without a result (failed, partial, capped, "
+        "cancelled) and nothing newer replaced it: show why, and Resume.",
+    )
     refresh_offer: bool = False
     from_research: list[str] = Field(
         [], description="Fields whose value research filled in (show a 'from research' mark)."
