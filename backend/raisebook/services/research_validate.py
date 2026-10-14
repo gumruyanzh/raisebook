@@ -5,11 +5,14 @@ Pure functions, in the order they run:
 1. **Schema**: Pydantic (``schemas/dossier.py``); the caller turns errors into
    ``invalid_dossier`` (agents) or one writer retry (model).
 2. **Suppression** lives in ``services/research_removal.py`` (it needs the database).
-3. **Anchor match** per source (:func:`check_source`): a source is kept only when it is about
-   the confirmed identity: the anchor LinkedIn profile (``linkedin``), the firm's own domain
-   (``firm_domain``), the full name together with the firm (``name_firm``), or the full name
-   together with the title and no other firm (``name_title``). Personal social sites are
-   discarded (``personal_domain``), and so are other people's LinkedIn pages.
+3. **Anchor match** per source (:func:`check_sources`): a source is kept only when it is about
+   the confirmed identity: the anchor LinkedIn profile (``linkedin``) or X account
+   (``profile``), the firm's own domain (``firm_domain``), the name with the firm
+   (``name_firm``) or with a known past firm (``name_past_firm``), the full name with the title
+   (``name_title``), or a distinctive full name alone (``name``). The name tied to another
+   firm is a ``conflict``; a first name alone, or a common name without a firm or title, is an
+   ``anchor_mismatch``. Personal social sites are discarded (``personal_domain``), and so are
+   other LinkedIn profiles. Name forms and organizations are read by ``research_anchor``.
 4. **Privacy** (``services/privacy_filter.py``) on every text.
 5. **Citations** (R2): each fact keeps only source ids that were accepted; a fact left with
    none moves to ``unverified`` (model) or is dropped (agent). Analysis keeps only fact keys
@@ -26,12 +29,14 @@ import datetime as dt
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from raisebook.models.enums import AnchorMatch
 from raisebook.schemas.dossier import DossierDoc, WriterDoc
 from raisebook.services import privacy_filter
+from raisebook.services import research_anchor as anchor_text
 from raisebook.services.normalize import linkedin_key, norm, norm_firm
 
 MAX_FACTS = 40
@@ -185,6 +190,19 @@ class Anchor:
             title=title or None,
         )
 
+    @cached_property
+    def person(self) -> anchor_text.PersonName:
+        return anchor_text.PersonName.of(self.name)
+
+    @property
+    def firm_domain_label(self) -> str | None:
+        """The firm domain's name part (``harborlight`` for harborlight.example), when it can
+        stand for the firm."""
+        if not self.firm_domain:
+            return None
+        label = self.firm_domain.split(".")[0]
+        return label if len(label) >= 4 else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -199,60 +217,204 @@ class Anchor:
 class SourceCheck:
     accepted: bool
     matched: str | None = None  # AnchorMatch
-    reason: str | None = None  # anchor_mismatch | personal_domain | privacy | duplicate
+    # anchor_mismatch | conflict | personal_domain | privacy | duplicate
+    reason: str | None = None
 
 
-def _contains(haystack: str, needle: str) -> bool:
-    return bool(needle) and f" {needle} " in f" {haystack} "
+_X_HOSTS = ("x.com", "twitter.com")
+_X_RESERVED = frozenset({"i", "search", "hashtag", "intent", "share", "home", "explore"})
 
 
 def _linkedin_page(path: str, anchor: Anchor) -> str:
-    """``anchor`` (the anchor's own profile or posts), ``company``, or ``other``."""
+    """``anchor`` (the anchor's own profile or posts), ``profile`` (another person's profile),
+    ``company``, or ``other`` (someone else's post, an article…)."""
     parts = [p for p in path.lower().split("/") if p]
     if len(parts) >= 2 and parts[0] == "in":
-        return "anchor" if anchor.linkedin_key == f"in/{parts[1]}" else "other"
+        return "anchor" if anchor.linkedin_key == f"in/{parts[1]}" else "profile"
     if len(parts) >= 2 and parts[0] == "posts" and anchor.linkedin_key:
         slug = anchor.linkedin_key.removeprefix("in/")
-        return "anchor" if parts[1].startswith(slug + "_") or parts[1] == slug else "other"
+        if parts[1].startswith(slug + "_") or parts[1] == slug:
+            return "anchor"
     if parts and parts[0] in ("company", "school", "showcase"):
         return "company"
     return "other"
 
 
-def check_source(url: str, title: str | None, snippet: str | None, anchor: Anchor) -> SourceCheck:
-    """Is this page about the anchor? (RESEARCH-PLAN §4.6 step 3.)"""
+def _slug_text(url: str) -> str:
+    """The URL path as words (``/people/niko-wrenfield`` → ``people niko wrenfield``)."""
+    try:
+        path = unquote(urlsplit(url.strip()).path)
+    except ValueError:
+        return ""
+    return norm(re.sub(r"[-_/.+~]", " ", path))
+
+
+@dataclass
+class _Signals:
+    """What one page says about the anchor, before past firms are known."""
+
+    level: str | None  # full | surname | first | None
+    texts: tuple[str, ...]  # normalized title+snippet (two spellings) and the URL path
+    orgs: anchor_text.OrgMentions
+    firm_named: bool  # the anchor's firm (or its domain) is named
+    firm_named_strong: bool  # …by its full name or domain (enough next to a surname alone)
+    title_named: bool
+    other_firm: bool  # "at/of/with … Capital" for a firm that is not the anchor's
+
+
+def _signals(url: str, title: str | None, snippet: str | None, anchor: Anchor) -> _Signals:
+    name = anchor.person
+    raw = f"{title or ''} \n {snippet or ''}"
+    body, body_split = anchor_text.norm_texts(raw)
+    slug = _slug_text(url)
+    texts = (body, body_split, slug)
+    orgs = anchor_text.OrgMentions()
+    for part in (title, snippet):
+        got = anchor_text.org_mentions(part, name)
+        orgs.affiliations += [o for o in got.affiliations if o not in orgs.affiliations]
+        orgs.history += [o for o in got.history if o not in orgs.history]
+    firm_full = norm(anchor_text.fold(anchor.firm)) if anchor.firm else ""
+    firm_core = norm_firm(anchor_text.fold(anchor.firm)) if anchor.firm else ""
+    lowered = raw.lower()
+    domain_named = bool(anchor.firm_domain) and (anchor.firm_domain or "") in lowered
+    full_named = bool(firm_full) and any(anchor_text.phrase_in(t, firm_full) for t in texts)
+    core_named = bool(firm_core) and any(anchor_text.phrase_in(t, firm_core) for t in texts)
+    strong = domain_named or (full_named and (len(firm_full.split()) >= 2 or len(firm_full) >= 5))
+    if not strong and firm_core and len(firm_core.split()) >= 2:
+        strong = core_named
+    title_n = norm(anchor.title)
+    others = [
+        m.group(1)
+        for m in _OTHER_FIRM.finditer(anchor_text.fold(raw))
+        if not anchor.firm or not anchor_text.same_org(m.group(1), anchor.firm)
+    ]
+    return _Signals(
+        level=name.level(body, body_split, slug),
+        texts=texts,
+        orgs=orgs,
+        firm_named=domain_named or full_named or core_named,
+        firm_named_strong=strong,
+        title_named=bool(title_n) and anchor_text.phrase_in(body, title_n),
+        other_firm=bool(others),
+    )
+
+
+def _url_check(url: str, anchor: Anchor) -> SourceCheck | None:
+    """Rules that read only the URL: a decision, or None to read the text."""
     host = domain_of(url)
     if host is None:
         return SourceCheck(False, reason="anchor_mismatch")
     if any(_is_subdomain(host, d) for d in PERSONAL_DOMAINS):
         return SourceCheck(False, reason="personal_domain")
+    path = urlsplit(url.strip()).path
     if _is_subdomain(host, "linkedin.com"):
-        kind = _linkedin_page(urlsplit(url.strip()).path, anchor)
+        kind = _linkedin_page(path, anchor)
         if kind == "anchor":
             return SourceCheck(True, matched=AnchorMatch.LINKEDIN.value)
-        if kind == "other":
+        if kind == "profile" and anchor.linkedin_key:
+            # Another profile than the confirmed one: someone else, even with the same name.
             return SourceCheck(False, reason="anchor_mismatch")
-    elif anchor.firm_domain and _is_subdomain(host, anchor.firm_domain):
+        return None
+    if anchor.firm_domain and _is_subdomain(host, anchor.firm_domain):
         return SourceCheck(True, matched=AnchorMatch.FIRM_DOMAIN.value)
-    text = norm(f"{title or ''} {snippet or ''}")
-    name = norm(anchor.name)
-    if not _contains(text, name):
+    if any(_is_subdomain(host, h) for h in _X_HOSTS):
+        parts = [p for p in path.lower().split("/") if p]
+        if parts and parts[0] not in _X_RESERVED and parts[0] in _handles(anchor):
+            return SourceCheck(True, matched=AnchorMatch.PROFILE.value)
+    return None
+
+
+def _handles(anchor: Anchor) -> set[str]:
+    out = anchor.person.handles()
+    if anchor.linkedin_key:
+        out.add(anchor.linkedin_key.removeprefix("in/").lower())
+    return out
+
+
+def _decide(sig: _Signals, anchor: Anchor, past_firms: Sequence[str]) -> SourceCheck:
+    """Rules that read the text (``_url_check`` found no answer)."""
+    name = anchor.person
+    if sig.level not in ("full", "surname"):
         return SourceCheck(False, reason="anchor_mismatch")
-    firm = norm_firm(anchor.firm)
-    if firm and _contains(text, firm):
+    known = [k for k in (anchor.firm, anchor.firm_domain_label) if k]
+    past_named = any(anchor_text.org_in_text(p, *sig.texts) for p in past_firms) or any(
+        anchor_text.matches_any(o, past_firms) for o in sig.orgs.all()
+    )
+    elsewhere = [
+        o
+        for o in sig.orgs.affiliations
+        if not anchor_text.matches_any(o, known) and not anchor_text.matches_any(o, past_firms)
+    ]
+    full = sig.level == "full"
+    if sig.firm_named if full else sig.firm_named_strong:
         return SourceCheck(True, matched=AnchorMatch.NAME_FIRM.value)
-    if anchor.firm_domain and anchor.firm_domain in f"{title or ''} {snippet or ''}".lower():
-        return SourceCheck(True, matched=AnchorMatch.NAME_FIRM.value)
-    title_n = norm(anchor.title)
-    if title_n and _contains(text, title_n):
-        others = [
-            m.group(1)
-            for m in _OTHER_FIRM.finditer(f"{title or ''} {snippet or ''}")
-            if not firm or norm_firm(m.group(1)) != firm
-        ]
-        if not others:
-            return SourceCheck(True, matched=AnchorMatch.NAME_TITLE.value)
+    if past_named:
+        return SourceCheck(True, matched=AnchorMatch.NAME_PAST_FIRM.value)
+    if elsewhere:
+        # The name next to a firm that is neither the anchor's nor a known past one.
+        return SourceCheck(False, reason="conflict")
+    if not full:
+        return SourceCheck(False, reason="anchor_mismatch")
+    if sig.title_named:
+        if name.common and sig.other_firm:
+            return SourceCheck(False, reason="conflict")
+        return SourceCheck(True, matched=AnchorMatch.NAME_TITLE.value)
+    if not name.common:
+        return SourceCheck(True, matched=AnchorMatch.NAME.value)
     return SourceCheck(False, reason="anchor_mismatch")
+
+
+def check_source(
+    url: str,
+    title: str | None,
+    snippet: str | None,
+    anchor: Anchor,
+    *,
+    past_firms: Sequence[str] = (),
+) -> SourceCheck:
+    """Is this page about the anchor? (RESEARCH-PLAN §4.6 step 3.) ``past_firms`` are firms
+    the person is known to have worked at (``check_sources`` learns them from the run)."""
+    decided = _url_check(url, anchor)
+    if decided is not None:
+        return decided
+    return _decide(_signals(url, title, snippet, anchor), anchor, past_firms)
+
+
+def learn_past_firms(
+    pages: Sequence[tuple[SourceCheck, anchor_text.OrgMentions]], anchor: Anchor
+) -> list[str]:
+    """Firms the person worked at, read from pages already tied to them.
+
+    Pages tied by something besides the name (the anchor's LinkedIn or X profile, the firm's
+    domain, the name with the firm) teach every firm they put next to the name. Pages tied by
+    a distinctive name alone teach only history ("ex-Org", "Name leaves Org"), and only an
+    organization at least two pages tie to the name, so one namesake's page cannot teach its
+    firm."""
+    strong = {
+        AnchorMatch.LINKEDIN.value,
+        AnchorMatch.PROFILE.value,
+        AnchorMatch.FIRM_DOMAIN.value,
+        AnchorMatch.NAME_FIRM.value,
+    }
+    weak = {AnchorMatch.NAME.value, AnchorMatch.NAME_TITLE.value}
+    known = [k for k in (anchor.firm, anchor.firm_domain_label) if k]
+    out: list[str] = []
+
+    def add(org: str) -> None:
+        if not anchor_text.matches_any(org, known) and not anchor_text.matches_any(org, out):
+            out.append(org)
+
+    for check, orgs in pages:
+        if check.matched in strong:
+            for org in orgs.all():
+                add(org)
+    for check, orgs in pages:
+        if check.matched in weak:
+            for org in orgs.history:
+                seen = sum(1 for _, o in pages if anchor_text.matches_any(org, o.all()))
+                if seen >= 2:
+                    add(org)
+    return out
 
 
 @dataclass
@@ -280,10 +442,15 @@ class CheckedSource:
 
 def check_sources(raw: Iterable[RawSource], anchor: Anchor) -> tuple[list[CheckedSource], int]:
     """Anchor-check, privacy-scrub and dedupe sources. Returns ``(sources, privacy_removed)``.
-    Rejected sources are returned too (kept for the run's counts, never cited)."""
+    Rejected sources are returned too (kept for the run's counts, never cited).
+
+    Two passes: the first checks every page against the anchor alone, the second again with
+    the past firms those results vouch for (:func:`learn_past_firms`), so "Ex-Harbor Light
+    partner Whitfield" counts once the person's own profile says they worked there."""
     out: list[CheckedSource] = []
     seen: set[str] = set()
     removed = 0
+    pending: list[tuple[int, RawSource]] = []
     for src in raw:
         key = url_key(src.url)
         host = domain_of(src.url)
@@ -296,8 +463,8 @@ def check_sources(raw: Iterable[RawSource], anchor: Anchor) -> tuple[list[Checke
             check = SourceCheck(False, reason="duplicate")
         else:
             seen.add(key)
-            # The anchor check reads the original text; only scrubbed text is stored.
-            check = check_source(src.url, src.title, src.snippet, anchor)
+            check = SourceCheck(False, reason="anchor_mismatch")  # decided below
+            pending.append((len(out), src))
         out.append(
             CheckedSource(
                 src.local_id,
@@ -310,6 +477,19 @@ def check_sources(raw: Iterable[RawSource], anchor: Anchor) -> tuple[list[Checke
                 check,
             )
         )
+    # The anchor check reads the original text; only scrubbed text is stored.
+    first: list[tuple[int, SourceCheck | None, _Signals]] = []
+    pages: list[tuple[SourceCheck, anchor_text.OrgMentions]] = []
+    for i, src in pending:
+        decided = _url_check(src.url, anchor)
+        sig = _signals(src.url, src.title, src.snippet, anchor)
+        check = decided if decided is not None else _decide(sig, anchor, ())
+        first.append((i, decided, sig))
+        if sig.level in ("full", "surname"):
+            pages.append((check, sig.orgs))
+    past = learn_past_firms(pages, anchor)
+    for i, decided, sig in first:
+        out[i].check = decided if decided is not None else _decide(sig, anchor, past)
     return out, removed
 
 

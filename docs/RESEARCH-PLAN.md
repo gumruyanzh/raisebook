@@ -78,7 +78,8 @@ pending, matched, confirmed, needs_pick, not_found, rejected), `IdentitySource` 
 agent, existing), `Verdict` (strong, possible, poor), `SuggestionStatus` (pending, accepted,
 ignored, auto_applied, superseded), `JobStatus` (queued, running, succeeded, failed,
 cancelled), `RemovalStatus` (unverified, verified, applied, rejected), `AnchorMatch`
-(linkedin, firm_domain, name_firm, name_title). `ActivityKind` gains **`research`** (a system
+(linkedin, firm_domain, name_firm, name_title, profile, name_past_firm, name; the last three
+from migration 0006). `ActivityKind` gains **`research`** (a system
 kind, not deletable): the CHECK on `activities.kind` is dropped and re-created.
 
 ### 1.1 `workspace_ai_settings` (one row per workspace, created lazily)
@@ -172,7 +173,7 @@ never start two runs of one kind for one investor (the second call returns the f
 (normalized: lowercase host, no fragment/utm/trailing slash), domain, title (≤300), snippet
 (≤1200, privacy-filtered), published_at date NULL, fetched_at timestamptz, matched_anchor text
 CHECK AnchorMatch NULL, accepted bool, rejected_reason text NULL (`anchor_mismatch`,
-`personal_domain`, `privacy`, `duplicate`)`. Unique `(run_id, url_key)`. Rejected sources are
+`conflict`, `personal_domain`, `privacy`, `duplicate`)`. Unique `(run_id, url_key)`. Rejected sources are
 kept (RE: partial runs keep gathered sources) but are never cited or shown except in a run's
 debug count.
 
@@ -516,14 +517,36 @@ Order matters; each step is a pure function with unit tests:
    (agent: 422 with per-field details; model: one automatic writer retry with the error list
    appended, then `partial`).
 2. **Suppression** (§1.12): anchor or investor matches → refuse (`research_suppressed`).
-3. **Anchor match** (R3) per source: accepted when one holds, recorded in `matched_anchor`:
-   `linkedin` (the source URL is the anchor LinkedIn profile or its `recent-activity`
-   pages), `firm_domain` (source domain = firm domain or a subdomain), `name_firm` (normalized
-   full name **and** firm name or domain appear in title+snippet), `name_title` (full name and
-   title appear, and no other firm is named). Otherwise `anchor_mismatch` (discarded).
-   Personal-social domains (`facebook.com, instagram.com, tiktok.com, threads.net,
-   snapchat.com, pinterest.com, vk.com, ok.ru` …) → `personal_domain` (discarded). LinkedIn
-   pages that are not `/in/<anchor>`, `/company/…` or `/posts/…` by the anchor are discarded.
+3. **Anchor match** (R3) per source (`check_source(s)`; text helpers in
+   `services/research_anchor.py`): accepted when one holds, recorded in `matched_anchor`:
+   `linkedin` (the source URL is the anchor LinkedIn profile, its `recent-activity` pages or
+   its posts), `profile` (the person's own X/Twitter account: handle = the LinkedIn slug or
+   the compact full name), `firm_domain` (source domain = firm domain or a subdomain: always
+   counts), `name_firm` (the name **and** the firm name or domain in title, snippet or URL
+   path), `name_past_firm` (the name and a firm the person is known to have left),
+   `name_title` (full name and title, and no other firm next to the name), `name` (a
+   **distinctive** full name alone, with nothing pointing at someone else).
+   - *Name forms*: the full name is matched in the title, the snippet or the URL slug, with
+     case, accents, a middle name and common nicknames tolerated (Nikolaos ~ Niko ~ Nikos).
+     A distinctive surname (≥5 letters, not on the common-surname list) alone counts only
+     with the firm by its full name or domain, or with a past firm. A first name alone never
+     counts.
+   - *Common names* (surname ≤3 letters, given as an initial, or on the frequent-surname list)
+     never pass on the name alone: they need the firm, a past firm or the title.
+   - *Conflict*: the name tied to another organization (`Name (Org)`, `Org's Name`,
+     `Name, Partner at Org`) that is neither the anchor's firm nor a known past firm →
+     `conflict` (probably someone else with the same name; discarded). History (`ex-Org`,
+     `former Org`, `Name leaves Org`, `Org appoints Name`) is never a conflict.
+   - *Past firms* are learned per run (`learn_past_firms`, two passes over the run's
+     sources): pages tied by more than the name (anchor LinkedIn/X, firm domain, name+firm)
+     teach every firm they put next to the name; pages tied by a distinctive name alone teach
+     only history, and only for an organization at least two pages tie to the name.
+   - Third-party pages about the firm with no person evidence (directories, fund profiles)
+     are `anchor_mismatch`: sources carry no trust level, so they are not kept.
+   Otherwise `anchor_mismatch` (discarded). Personal-social domains (`facebook.com,
+   instagram.com, tiktok.com, threads.net, snapchat.com, pinterest.com, vk.com, ok.ru` …) →
+   `personal_domain` (discarded). Another LinkedIn `/in/` profile than the anchor's is
+   discarded when the anchor has one; other people's posts are read like any page.
    For agent dossiers: identity must equal the confirmed anchor when one exists (same
    `linkedin_key` or same firm domain + name) → else 409 `identity_mismatch`; with no anchor,
    the agent's identity becomes `confirmed, source=agent`.
@@ -929,7 +952,8 @@ spend, RE).
   call); pick/none/manual endpoints; write-back fills empty fields and suggests on conflict.
 - `test_research_validate.py` (pure): schema errors; anchor rules per kind (linkedin,
   firm_domain + subdomain, name_firm, name_title, mismatch, personal domains, other people's
-  LinkedIn pages); uncited facts → unverified (model) / dropped (agent); analysis fact_keys
+  LinkedIn pages; `test_source_anchor.py`: nicknames, accents, slugs, title-only sources,
+  common names, conflicts, past firms learned per run, X profiles); uncited facts → unverified (model) / dropped (agent); analysis fact_keys
   pruning; `ways_in` without evidence dropped; workspace-basis limited to given facts; caps.
 - `test_privacy_filter.py` (pure, table-driven): phones (US, UK, intl, with/without cue words),
   addresses (street suffixes, Apt/Suite, PO Box, ZIP), consumer emails stripped and work email

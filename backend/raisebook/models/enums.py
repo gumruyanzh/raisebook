@@ -186,6 +186,9 @@ class AnchorMatch(StrEnum):
     FIRM_DOMAIN = "firm_domain"
     NAME_FIRM = "name_firm"
     NAME_TITLE = "name_title"
+    PROFILE = "profile"  # the person's own X account (handle = LinkedIn slug or full name)
+    NAME_PAST_FIRM = "name_past_firm"  # the name with a firm the person is known to have left
+    NAME = "name"  # a distinctive full name, with nothing pointing at someone else
 
 
 class CompanyStage(StrEnum):

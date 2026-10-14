@@ -85,7 +85,7 @@ def test_url_key_normalizes() -> None:
             "Q&A",
             "Dana Whitfield, Partner at Stonepine Capital",
             None,
-            "anchor_mismatch",
+            "conflict",
         ),
         (
             "https://news.example/d",
