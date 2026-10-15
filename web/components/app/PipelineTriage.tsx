@@ -2542,9 +2542,10 @@ function TriagePhone({
                 type="button"
                 disabled={!canWrite || !p}
                 onClick={() => onDecide(t.stage)}
-                className="flex h-48 min-w-0 items-center justify-center gap-6 rounded-sm border border-line bg-surface px-8 font-medium disabled:opacity-55 short:h-44"
+                className="flex h-48 min-w-0 items-center justify-center gap-6 rounded-sm border border-line bg-surface px-8 font-medium disabled:opacity-55 short:h-44 max-[379px]:gap-4 max-[379px]:px-4 max-[379px]:text-[15px]"
               >
-                <StageDot color={t.stage.color} />
+                {/* At 360px "Researching" needs the dot's room, or it reads "Research…". */}
+                <StageDot color={t.stage.color} className="max-[379px]:hidden" />
                 <span className="truncate">{t.stage.label}</span>
               </button>
             ))}

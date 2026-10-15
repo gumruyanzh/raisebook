@@ -668,8 +668,30 @@ dialog::backdrop {
     min-width: 36px;
     min-height: 44px;
   }
+  /* ...and the pip inside grows with it: a 6x12 tick in a 36px slot read as five loose
+     specks, not one meter. Wide bars with even gaps read as a five-step scale. */
+  .rb-fit-pip > i {
+    width: 28px;
+    height: 10px;
+    border-radius: 3px;
+  }
+  /* Long-press targets (board cards, phone list rows): no text selection or iOS callout
+     racing the "Move to…" sheet. */
+  .rb-press {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
   .rb-fit-clear {
     opacity: 1;
+  }
+}
+
+/* A phone with the keyboard up: the sheet's Log / Follow-up / Move bar would sit on top of
+   the keyboard and take a third of what is left. It steps aside while a field has focus. */
+@media (max-width: 639px), (max-height: 499px) {
+  .rb-sheet:has(:is(textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), [contenteditable="true"]):focus) .rb-sheet-foot {
+    display: none;
   }
 }
 

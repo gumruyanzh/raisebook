@@ -213,3 +213,23 @@ export const COMPACT_QUERY = "(max-width: 639px), (max-height: 499px)";
 export function useCompact(): boolean {
   return useMediaQuery(COMPACT_QUERY) === true;
 }
+
+/**
+ * After a long press has opened something (a "Move to…" sheet), the finger's release still
+ * makes a click at the same spot, and that click lands on the sheet's backdrop and closes it
+ * at once. Swallow the one click that follows the release.
+ */
+export function swallowNextClick(ms = 500): void {
+  if (typeof window === "undefined") return;
+  const stop = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+    done();
+  };
+  const done = () => {
+    window.removeEventListener("click", stop, true);
+    clearTimeout(t);
+  };
+  const t = setTimeout(done, ms);
+  window.addEventListener("click", stop, true);
+}

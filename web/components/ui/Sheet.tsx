@@ -92,7 +92,7 @@ export function Sheet({
         aria-label={label}
         tabIndex={-1}
         className={cn(
-          "anim-sheet fixed inset-y-0 right-0 z-50 flex flex-col border-l border-line bg-surface",
+          "rb-sheet anim-sheet fixed inset-y-0 right-0 z-50 flex flex-col border-l border-line bg-surface",
           "pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]",
           bottomOnPhone &&
             "phone:anim-sheet-up phone:top-auto! phone:max-h-[88dvh] phone:w-full! phone:rounded-t-[14px] phone:border-t phone:border-l-0 phone:pt-0 phone:shadow-dialog",
@@ -116,7 +116,7 @@ export function Sheet({
           {children}
         </div>
         {footer ? (
-          <div className="flex shrink-0 gap-8 border-t border-line bg-surface px-18 py-12 phone:px-16 phone:[&>*]:flex-1">{footer}</div>
+          <div className="rb-sheet-foot flex shrink-0 gap-8 border-t border-line bg-surface px-18 py-12 phone:px-16 phone:[&>*]:flex-1">{footer}</div>
         ) : null}
       </div>
     </>,

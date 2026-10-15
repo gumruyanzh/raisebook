@@ -26,7 +26,7 @@ import { formatDateTime, moneyCompact, num } from "@/lib/format";
 import { boardTrack, cardSlot, defaultColumnSort, triageTargets } from "@/lib/pipeline";
 
 import { useViewerTimeZone } from "./meetings/useViewerTimeZone";
-import { byFit, useMediaQuery } from "./util";
+import { byFit, swallowNextClick, useMediaQuery } from "./util";
 
 export interface AgentMark {
   label: string;
@@ -592,7 +592,8 @@ export function PipelineBoard({
                     }}
                     className="absolute! inset-x-0 top-full h-0"
                     items={[
-                      { type: "label", label: many ? `Move ${num(sel.size)} to` : "Move to" },
+                      // A phone's sheet already says "Move … to" in its title.
+                      ...(compact ? [] : [{ type: "label" as const, label: many ? `Move ${num(sel.size)} to` : "Move to" }]),
                       ...stages.map((st) => ({
                         label: st.label,
                         icon: <StageDot color={st.color} />,
@@ -867,7 +868,7 @@ function StageColumn({
         return (
           <div
             key={id}
-            className="group/card relative min-w-0 shrink-0"
+            className={cn("group/card relative min-w-0 shrink-0", onLongPress && "rb-press")}
             style={{ height: dealCardHeight(view.rows) + CARD_GAP, paddingBottom: CARD_GAP }}
           >
             {selectable ? (
@@ -923,7 +924,14 @@ function StageColumn({
                   onLongPress(id);
                 }, 450);
               }}
-              onPointerUp={endPress}
+              onPointerUp={() => {
+                endPress();
+                // The release after a long press clicks the sheet's backdrop: not this time.
+                if (press.current.fired) {
+                  press.current.fired = false;
+                  swallowNextClick();
+                }
+              }}
               onPointerCancel={endPress}
               onPointerLeave={endPress}
               onContextMenu={(e) => {

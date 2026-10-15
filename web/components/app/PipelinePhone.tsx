@@ -272,7 +272,9 @@ export function PhoneViewBar({
               aria-pressed={on}
               onClick={() => !on && onView(o.value)}
               className={cn(
-                "inline-flex h-40 min-w-0 flex-1 items-center justify-center gap-6 rounded-sm border-0 px-6 font-medium whitespace-nowrap",
+                // Basis auto: "Triage 27" is wider than "List", so it gets the room it needs when Filter
+                // joins the row (board view) instead of spilling into its neighbour.
+                "inline-flex h-40 min-w-0 flex-auto items-center justify-center gap-6 rounded-sm border-0 px-6 font-medium whitespace-nowrap",
                 slotRef && "short:flex-none short:px-12",
                 on ? "bg-fg text-canvas" : "bg-transparent text-muted",
               )}
@@ -538,7 +540,16 @@ export function PipelinePhone({
           </button>
         ) : null}
         {list.rows.length === 0 ? (
-          <p className="t-body-s p-14 text-muted">{pick === "due" ? "Nothing due." : `Nobody in ${pickStage?.label ?? "this stage"} yet.`}</p>
+          <p className="t-body-s p-14 text-muted">
+            {search.trim() || activeFilters
+              ? // Searching or filtering: say so, and where the matches are, not "Nothing due".
+                `No match${pick === "due" ? " due now" : ` in ${pickStage?.label ?? "this stage"}`}${
+                  rows.length ? ` · ${num(rows.length)} in other stages` : ""
+                }.`
+              : pick === "due"
+                ? "Nothing due."
+                : `Nobody in ${pickStage?.label ?? "this stage"} yet.`}
+          </p>
         ) : null}
         <div ref={listRef} role="list" style={{ height: tops[tops.length - 1], position: "relative" }}>
           {stuck && stuck.shift > -GROUP_H ? (
@@ -576,7 +587,7 @@ export function PipelinePhone({
                 ) : null}
                 <button
                   type="button"
-                  className="flex h-full min-w-0 flex-1 flex-col justify-center gap-2 border-0 bg-transparent px-14 text-left"
+                  className={cn("flex h-full min-w-0 flex-1 flex-col justify-center gap-2 border-0 bg-transparent px-14 text-left", canWrite && selected && "rb-press")}
                   onPointerDown={() => {
                     pressed.current = false;
                     if (!canWrite || !selected) return;
@@ -587,6 +598,8 @@ export function PipelinePhone({
                   }}
                   onPointerUp={() => press.current && clearTimeout(press.current)}
                   onPointerLeave={() => press.current && clearTimeout(press.current)}
+                  // A scroll that starts on a row cancels the pointer: no select mid-scroll.
+                  onPointerCancel={() => press.current && clearTimeout(press.current)}
                   onContextMenu={(e) => canWrite && e.preventDefault()}
                   onClick={() => {
                     if (pressed.current) return;
