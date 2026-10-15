@@ -4,15 +4,18 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  Button,
   Chip,
   DefList,
   FitMeter,
   Kbd,
   Loading,
+  Menu,
   SaveState,
   SectionLabel,
   Sheet,
   Skeleton,
+  StageDot,
   StagePill,
   StageSelector,
   Tabs,
@@ -39,6 +42,7 @@ import { DossierPanel } from "./research/DossierPanel";
 import { FromResearch } from "./research/FromResearch";
 import { takeDossierTab } from "./research/hooks";
 import { ParticipantFields, useParticipantSave } from "./ParticipantFields";
+import { useCompact } from "./util";
 import { draftHref, ReachOut } from "./ReachOut";
 
 export { FromResearch };
@@ -245,6 +249,7 @@ export function InvestorSheet({
   const go = (id: string | undefined) => {
     if (id && onNavigate) onNavigate(id);
   };
+  const compact = useCompact();
   const logId = investorId ? `log-${investorId}` : undefined;
   const fuId = investorId ? `fu-${investorId}` : undefined;
   const focusLog = () => {
@@ -315,7 +320,7 @@ export function InvestorSheet({
   const otherRounds = (investor?.rounds ?? []).filter((r) => r.round_id !== round.id);
   const base = `/w/${encodeURIComponent(wsSlug)}`;
   const navBtn =
-    "inline-flex size-28 items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg disabled:opacity-40 disabled:hover:text-muted";
+    "inline-flex size-28 items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg disabled:opacity-40 disabled:hover:text-muted touch:size-44";
 
   // Not contacted yet (an open-kind stage): Contact and Facts move up, Money folds away.
   const fresh = p?.stage.kind === "open";
@@ -474,6 +479,36 @@ export function InvestorSheet({
       modal={modal}
       width={width}
       top={modal ? undefined : top}
+      // Phones: the actions stay under the thumb while the file scrolls.
+      footer={
+        compact && p && canWrite && tab === "pipeline" ? (
+          <>
+            <Button size="lg" onClick={focusLog}>
+              Log
+            </Button>
+            <Button size="lg" onClick={openFollowUp}>
+              Follow-up
+            </Button>
+            <Menu
+              label={`Move ${name} to`}
+              align="end"
+              className="flex-1"
+              trigger={
+                <>
+                  Move <span aria-hidden className="text-muted">▾</span>
+                </>
+              }
+              triggerClassName="inline-flex h-40 min-h-44 w-full items-center justify-center gap-6 rounded-sm border border-line bg-surface px-12 font-medium"
+              items={stages.map((st) => ({
+                label: st.label,
+                icon: <StageDot color={st.color} />,
+                selected: st.key === p.stage.key,
+                onSelect: () => void onStageMove(p.investor.id, st.key),
+              }))}
+            />
+          </>
+        ) : undefined
+      }
       subline={who || undefined}
       // Fit and type under the name, as in Triage (critique 3): industries live in Facts only,
       // so the header has one chip style and no repeats.
@@ -498,12 +533,14 @@ export function InvestorSheet({
       headerAside={
         investorId ? (
           <span className="flex flex-col items-end gap-8">
-            <Link href={`${base}/investors/${investorId}`} prefetch={false} className="link t-body-s whitespace-nowrap">
+            {/* Phones: the arrows only (the name keeps the width); the full page link is at
+                the end of the file. */}
+            <Link href={`${base}/investors/${investorId}`} prefetch={false} className="link t-body-s whitespace-nowrap phone:hidden">
               Open full page ↗
             </Link>
             {order && pos >= 0 && order.length > 1 ? (
-              <span className="flex items-center gap-4 max-sm:hidden">
-                <span className="t-micro mr-2 text-muted" aria-live="polite">
+              <span className="flex items-center gap-4 phone:-mt-6">
+                <span className="t-micro mr-2 text-muted phone:sr-only" aria-live="polite">
                   {pos + 1} of {order.length}
                 </span>
                 <button type="button" className={navBtn} disabled={!prevId} onClick={() => go(prevId)} aria-label="Previous investor" title="Previous investor (K)">
@@ -576,6 +613,8 @@ export function InvestorSheet({
               value={p.stage.key}
               disabled={!canWrite}
               onSelect={(key) => void onStageMove(p.investor.id, key)}
+              // Phones: one row that scrolls sideways, not three rows of chips.
+              className="phone:-mx-16 phone:flex-nowrap phone:overflow-x-auto phone:px-16 phone:pb-2 phone:[scrollbar-width:none]"
             />
           </section>
           <ParticipantFields
@@ -700,6 +739,12 @@ export function InvestorSheet({
       </section>
 
       {fresh ? null : contactAndFacts}
+
+      {investorId && compact ? (
+        <Link href={`${base}/investors/${investorId}`} prefetch={false} className="link inline-flex min-h-44 items-center self-start">
+          Open full page ↗
+        </Link>
+      ) : null}
 
       {investor ? (
         <NotesEditor

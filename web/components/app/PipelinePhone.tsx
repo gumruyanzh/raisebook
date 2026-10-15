@@ -1,30 +1,299 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { Button, Chip, FitMeter, SearchInput, StageDot } from "@/components/ui";
+import { Button, Chip, SearchInput, StageDot, useToastLift } from "@/components/ui";
 import type { Participant, Priority, Round, Stage } from "@/lib/api/types";
-import { INSTRUMENT_LABEL } from "@/lib/api/types";
+import { INSTRUMENT_LABEL, PRIORITY_LABEL } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { money, moneyCompact, num, priorityFromFit } from "@/lib/format";
-import { cardSlot, GROUP_LABEL, hiddenPipFit, nextUpBuckets, PRIORITY_ORDER, type NextUpBucket } from "@/lib/pipeline";
+import { cardPriority } from "@/lib/boardCard";
+import { cardSlot, GROUP_LABEL, nextUpBuckets, PRIORITY_ORDER, type NextUpBucket } from "@/lib/pipeline";
 
 import { useWorkspace } from "@/lib/session";
 
 import { useViewerTimeZone } from "./meetings/useViewerTimeZone";
 import { bucketCopy, dueRows, dueText, stripMessage, type LedgerFacts } from "./PipelineLedger";
 
-/** Two lines in 48px: about nine investors above the fold once the list is scrolled. */
-const ROW_H = 48;
+/** Three lines in 76px: name and fit, stage or firm and the follow-up, the next step. */
+const ROW_H = 76;
 const GROUP_H = 40;
 
 type Row = { kind: "group"; priority: Priority; ids: string[] } | { kind: "row"; p: Participant };
 
 /**
- * The phone pipeline (DECISION §7.1): no board. A Sorted card with Start triage before money
- * exists (else a compact ledger), Follow up now, stage pills, search, and one stage as a ruled
- * list (grouped by priority when New is long), windowed against the page scroll.
+ * The summary strip on a phone (design/mobile-audit): one tappable line ("$825k of $2M ·
+ * 24 due", or "Sorted 73 of 100" before money exists) that opens the money card, Follow up
+ * now and Next up. Before money exists, Start triage stays on the line itself.
+ */
+export function PhoneSummary({
+  round,
+  stages,
+  all,
+  openKey,
+  facts,
+  moneyOn,
+  today,
+  canWrite,
+  triageOk,
+  onDue,
+  onBucket,
+  onOpen,
+  onStartTriage,
+  extra,
+}: {
+  /** More for the round, at the end of the open summary (AI research). */
+  extra?: ReactNode;
+  round: Round;
+  stages: Stage[];
+  all: Participant[];
+  openKey: string | null;
+  facts: LedgerFacts;
+  moneyOn: boolean;
+  today: string;
+  canWrite: boolean;
+  triageOk: boolean;
+  onDue: () => void;
+  onBucket: (b: NextUpBucket) => void;
+  onOpen: (id: string) => void;
+  onStartTriage: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const openLabel = stages.find((s) => s.key === openKey)?.label ?? "New";
+  const msg = stripMessage(facts, openLabel);
+  const sorted = facts.total - facts.openCount;
+  const due = dueRows(all);
+  const buckets = nextUpBuckets(all, openKey, today, Date.now()).filter((b) => canWrite || b.id !== "new");
+  const sub = moneyOn
+    ? [INSTRUMENT_LABEL[round.instrument], facts.daysToClose !== null && facts.daysToClose >= 0 ? `${num(facts.daysToClose)} days left` : null]
+    : [INSTRUMENT_LABEL[round.instrument], `${moneyCompact(round.target_amount, round.currency)} target`];
+  const pctC = round.target_amount ? Math.min(100, (facts.committed / round.target_amount) * 100) : 0;
+  const pctS = round.target_amount ? Math.min(100 - pctC, (facts.soft / round.target_amount) * 100) : 0;
+  const bar = moneyOn ? (
+    <span aria-hidden className="flex h-6 w-56 shrink-0 overflow-hidden rounded-pill bg-sunk">
+      <i className="block h-full bg-good not-italic" style={{ width: `${pctC}%` }} />
+      <i className="block h-full not-italic" style={{ width: `${pctS}%`, background: "color-mix(in oklab, var(--good) 30%, var(--sunk))" }} />
+    </span>
+  ) : (
+    <span aria-hidden className="h-6 w-56 shrink-0 overflow-hidden rounded-pill bg-sunk">
+      <i className="block h-full bg-good not-italic" style={{ width: `${facts.total ? (sorted / facts.total) * 100 : 0}%` }} />
+    </span>
+  );
+  return (
+    <section aria-label={`${round.name} summary`} className="rounded-md border border-line bg-surface">
+      <div className="flex min-h-48 items-center">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-h-48 min-w-0 flex-1 items-center gap-10 border-0 bg-transparent pr-6 pl-14 text-left"
+        >
+          {moneyOn ? (
+            <span className="min-w-0 truncate tnum">
+              <b className="font-display text-[17px] font-bold text-good-ink">{moneyCompact(facts.committed, round.currency)}</b>{" "}
+              <span className="text-muted">of {moneyCompact(round.target_amount, round.currency)}</span>
+            </span>
+          ) : (
+            <span className="min-w-0 truncate">
+              <span className="t-label">Sorted</span> <b className="tnum">{num(sorted)}</b>
+              <span className="text-muted"> of {num(facts.total)}</span>
+            </span>
+          )}
+          {bar}
+          {moneyOn && due.length ? (
+            <span className="shrink-0 font-mono text-[12.5px] text-bad">{num(due.length)} due</span>
+          ) : null}
+          <span aria-hidden className={cn("ml-auto shrink-0 text-muted transition-transform duration-[120ms]", open && "rotate-180")}>
+            ▾
+          </span>
+          <span className="sr-only">{open ? "Hide the round summary" : "Show the round summary"}</span>
+        </button>
+        {!moneyOn && msg.triage && triageOk ? (
+          <Button variant="primary" size="sm" className="mr-8 min-h-36" onClick={onStartTriage}>
+            Start triage
+          </Button>
+        ) : null}
+      </div>
+      {open ? (
+        <div className="flex flex-col gap-12 border-t border-line px-14 pt-10 pb-14">
+          <p className="t-micro text-muted uppercase">{sub.filter(Boolean).join(" · ")}</p>
+          {moneyOn ? (
+            <div>
+              <p className="font-display text-[22px] font-bold tnum">
+                <span className="text-good-ink">{money(facts.committed, round.currency)}</span>{" "}
+                <span className="text-[15px] font-medium text-muted">of {moneyCompact(round.target_amount, round.currency)}</span>
+              </p>
+              <p className="t-body-s mt-4 text-muted">
+                <b className="text-fg">{num(facts.committedCount)}</b> committed · <b className="text-fg">{moneyCompact(facts.soft, round.currency)}</b> soft ·{" "}
+                <b className="text-fg">{num(facts.talking)}</b> talking
+              </p>
+            </div>
+          ) : (
+            <p className="text-muted">{msg.text}</p>
+          )}
+          {due.length ? (
+            <div>
+              <p className="t-label mb-2 flex items-center">
+                Follow up now
+                <button type="button" onClick={onDue} className="link t-body-s ml-auto inline-flex h-44 items-center border-0 bg-transparent p-0 normal-case tracking-normal">
+                  All {num(due.length)} →
+                </button>
+              </p>
+              {due.slice(0, 3).map((p) => (
+                <button
+                  key={p.investor.id}
+                  type="button"
+                  onClick={() => onOpen(p.investor.id)}
+                  className="flex min-h-48 w-full min-w-0 items-center gap-8 border-0 border-t border-line bg-transparent px-0 text-left"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{p.investor.name}</span>
+                    <span className="t-body-s inline-flex items-center gap-6 text-muted">
+                      <StageDot color={p.stage.color} />
+                      {p.stage.label}
+                    </span>
+                  </span>
+                  <Chip tone="due">{dueText(p, today)}</Chip>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {moneyOn && buckets.length ? (
+            <div>
+              <p className="t-label mb-2">Next up</p>
+              {buckets.slice(0, 3).map((b) => {
+                const c = bucketCopy(b, openLabel);
+                return (
+                  <div key={b.id} className="grid min-h-44 grid-cols-[minmax(28px,auto)_minmax(0,1fr)_auto] items-center gap-x-10 border-t border-line">
+                    <b className="font-mono text-[12.5px] tnum">{num(b.count)}</b>
+                    <span className="t-body-s min-w-0">
+                      {c.text}
+                      {b.id === "ready" && b.next ? (
+                        <>
+                          {" · next "}
+                          <button type="button" className="border-0 bg-transparent p-0 font-semibold text-fg" onClick={() => onOpen(b.next!.id)}>
+                            {b.next.name}
+                          </button>
+                        </>
+                      ) : null}
+                    </span>
+                    <button type="button" className="link t-body-s inline-flex h-44 items-center border-0 bg-transparent p-0" onClick={() => onBucket(b)}>
+                      {c.link}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+          {extra ? <div className="flex flex-wrap items-center gap-8 border-t border-line pt-12">{extra}</div> : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * The phone's "+": a 56px circle above the tab bar (or the page bottom on a sideways phone),
+ * clear of the list's last row (the list leaves room under itself). Toasts rise above it.
+ */
+export function PhoneFab({ onAdd, label = "Add investor" }: { onAdd: () => void; label?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useToastLift(ref, true);
+  return (
+    <div
+      ref={ref}
+      className="fixed right-16 z-30"
+      style={{ bottom: "calc(16px + max(env(safe-area-inset-bottom), var(--rb-tabbar)))" }}
+    >
+      <button
+        type="button"
+        onClick={onAdd}
+        aria-label={label}
+        title={label}
+        className="inline-flex size-56 items-center justify-center rounded-pill border-0 bg-accent text-accent-ink shadow-menu"
+      >
+        <svg aria-hidden viewBox="0 0 24 24" className="size-24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+/** The view switch on a phone: List, Board and Triage, full width, with a ⋯ for the rest. */
+export function PhoneViewBar({
+  view,
+  onView,
+  triageCount,
+  filters,
+  more,
+  slotRef,
+}: {
+  /** A sideways phone: the board's stage tabs move up into this row (the board keeps the height). */
+  slotRef?: (el: HTMLElement | null) => void;
+  view: "table" | "board" | "triage";
+  onView: (v: "table" | "board" | "triage") => void;
+  /** Triage's count; null when Triage is not offered (viewers, nothing New). */
+  triageCount: number | null;
+  /** The Filter button (board view). */
+  filters?: ReactNode;
+  /** The ⋯ menu (Import, Edit round, AI research). */
+  more?: ReactNode;
+}) {
+  const opts: { value: "table" | "board" | "triage"; label: ReactNode }[] = [
+    { value: "table", label: "List" },
+    { value: "board", label: "Board" },
+    ...(triageCount !== null
+      ? [
+          {
+            value: "triage" as const,
+            label: (
+              <>
+                Triage <span className={cn("font-mono text-[12px]", view === "triage" ? "text-canvas" : "text-muted")}>{num(triageCount)}</span>
+              </>
+            ),
+          },
+        ]
+      : []),
+  ];
+  return (
+    <div className="flex items-center gap-8">
+      <div
+        role="group"
+        aria-label="View"
+        className={cn("flex min-w-0 flex-1 rounded-md border border-line bg-surface p-2", slotRef && "short:flex-none")}
+      >
+        {opts.map((o) => {
+          const on = o.value === view;
+          return (
+            <button
+              key={o.value}
+              type="button"
+              aria-pressed={on}
+              onClick={() => !on && onView(o.value)}
+              className={cn(
+                "inline-flex h-40 min-w-0 flex-1 items-center justify-center gap-6 rounded-sm border-0 px-6 font-medium whitespace-nowrap",
+                slotRef && "short:flex-none short:px-12",
+                on ? "bg-fg text-canvas" : "bg-transparent text-muted",
+              )}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+      {slotRef ? <span ref={slotRef} className="hidden min-w-0 flex-1 short:block" /> : null}
+      {filters}
+      {more}
+    </div>
+  );
+}
+
+/**
+ * The phone list (DECISION §7.1, design/mobile-audit): stage pills that scroll sideways (with
+ * a fade at the edge that says so), search and Filter, and one stage as a list of 76px rows
+ * (grouped by priority when New is long), windowed against the page scroll. The board and
+ * Triage are the other two views; the summary sits above, in one line.
  */
 export function PipelinePhone({
   round,
@@ -32,8 +301,6 @@ export function PipelinePhone({
   rows,
   all,
   openKey,
-  facts,
-  moneyOn,
   today,
   canWrite,
   triageOk,
@@ -44,17 +311,15 @@ export function PipelinePhone({
   onSelectedChange,
   onStage,
   onDue,
-  onBucket,
   onOpen,
   onStartTriage,
   onFilters,
   activeFilters,
   search,
   onSearch,
-  base,
   onListChange,
   stickyTop = 0,
-  onAdd,
+  roomForFab,
 }: {
   round: Round;
   stages: Stage[];
@@ -62,8 +327,6 @@ export function PipelinePhone({
   rows: Participant[];
   all: Participant[];
   openKey: string | null;
-  facts: LedgerFacts;
-  moneyOn: boolean;
   today: string;
   canWrite: boolean;
   triageOk: boolean;
@@ -74,20 +337,18 @@ export function PipelinePhone({
   onSelectedChange: (s: Set<string>) => void;
   onStage: (key: string) => void;
   onDue: () => void;
-  onBucket: (b: NextUpBucket) => void;
   onOpen: (id: string) => void;
   onStartTriage: () => void;
   onFilters: () => void;
   activeFilters: number;
   search: string;
   onSearch: (v: string) => void;
-  base: string;
   /** The ids in the list on screen (the sheet's ↑/↓ walk this list, not the whole round). */
   onListChange?: (ids: string[]) => void;
   /** Height of the sticky top bar: a long list's group header sticks under it. */
   stickyTop?: number;
-  /** Opens Add investor (writers only): the phone's way to add after the first investor. */
-  onAdd?: () => void;
+  /** The + button floats over the page: leave room under the last row. */
+  roomForFab?: boolean;
 }) {
   const viewerTz = useViewerTimeZone(useWorkspace().workspace.timezone);
   const counts = useMemo(() => {
@@ -99,13 +360,10 @@ export function PipelinePhone({
   const pick = dueOnly ? "due" : stage || (dueTotal > 0 ? "due" : firstWithInvestors);
   const pickStage = stages.find((s) => s.key === pick);
   const list = useMemo(() => {
-    const inPick =
-      pick === "due" ? dueRows(rows) : rows.filter((p) => p.stage.key === pick);
-    // Fit groups for a not-contacted stage of 12+, as on the board (no rows of identical pips).
+    const inPick = pick === "due" ? dueRows(rows) : rows.filter((p) => p.stage.key === pick);
+    // Fit groups for a not-contacted stage of 12+, as on the board.
     const grouped = pickStage?.kind === "open" && inPick.length >= 12;
-    // Pips as on the board: none past the open stages, and not on the fit most cards share.
-    const pipHidden = grouped ? null : hiddenPipFit(pickStage ?? { kind: "active" }, inPick.map((p) => p.fit));
-    if (!grouped) return { grouped, pipHidden, rows: inPick.map((p) => ({ kind: "row", p }) as Row) };
+    if (!grouped) return { grouped, rows: inPick.map((p) => ({ kind: "row", p }) as Row) };
     const by: Record<Priority, Participant[]> = { hot: [], warm: [], maybe: [], low: [] };
     for (const p of inPick) by[priorityFromFit(p.fit)].push(p);
     const out: Row[] = [];
@@ -114,7 +372,7 @@ export function PipelinePhone({
       out.push({ kind: "group", priority: pr, ids: by[pr].map((p) => p.investor.id) });
       for (const p of by[pr]) out.push({ kind: "row", p });
     }
-    return { grouped, pipHidden: null, rows: out };
+    return { grouped, rows: out };
   }, [rows, pick, pickStage]);
   useEffect(() => {
     onListChange?.(list.rows.flatMap((r) => (r.kind === "row" ? [r.p.investor.id] : [])));
@@ -179,15 +437,22 @@ export function PipelinePhone({
   };
   useEffect(() => () => void (press.current && clearTimeout(press.current)), []);
 
-  const msg = stripMessage(facts, stages.find((s) => s.key === openKey)?.label ?? "New");
-  const sorted = facts.total - facts.openCount;
-  const due = dueRows(all);
-  const buckets = nextUpBuckets(all, openKey, today, Date.now()).filter((b) => canWrite || b.id !== "new");
-  const sub = moneyOn
-    ? [INSTRUMENT_LABEL[round.instrument], facts.daysToClose !== null && facts.daysToClose >= 0 ? `${num(facts.daysToClose)} days left` : null]
-    : [INSTRUMENT_LABEL[round.instrument], `${moneyCompact(round.target_amount, round.currency)} target`];
-  const pctC = round.target_amount ? Math.min(100, (facts.committed / round.target_amount) * 100) : 0;
-  const pctS = round.target_amount ? Math.min(100 - pctC, (facts.soft / round.target_amount) * 100) : 0;
+  // The pill strip fades at an edge it can still scroll past (the cut-off pill said nothing).
+  const pillsRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const onPills = () => {
+    const el = pillsRef.current;
+    if (!el) return;
+    const left = el.scrollLeft > 4;
+    const right = el.scrollWidth - el.clientWidth - el.scrollLeft > 4;
+    setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
+  };
+  useLayoutEffect(onPills);
+  // The picked pill scrolls into view (a link straight to "Passed" lands on its pill).
+  useEffect(() => {
+    pillsRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [pick]);
+
   const pill = (key: string, label: string, n: number, dot?: Stage["color"], bad = false) => {
     const on = pick === key;
     return (
@@ -197,7 +462,7 @@ export function PipelinePhone({
         aria-pressed={on}
         onClick={() => (key === "due" ? onDue() : onStage(key))}
         className={cn(
-          "inline-flex h-40 shrink-0 items-center gap-8 rounded-pill border px-14 whitespace-nowrap",
+          "inline-flex h-44 shrink-0 items-center gap-8 rounded-pill border px-14 whitespace-nowrap",
           on ? "border-fg bg-fg text-canvas" : "border-line bg-surface text-fg",
         )}
       >
@@ -217,7 +482,7 @@ export function PipelinePhone({
         {canWrite && selected ? (
           <button
             type="button"
-            className="link border-0 bg-transparent p-0"
+            className="link inline-flex h-40 items-center border-0 bg-transparent p-0"
             onClick={() => {
               const n = new Set(selected);
               for (const id of r.ids) {
@@ -238,120 +503,36 @@ export function PipelinePhone({
   const showPills = dueTotal > 0 || pillStages.length > 1;
 
   return (
-    <div className={cn("flex flex-col gap-12", canWrite && onAdd && "pb-64")}>
-      {canWrite && onAdd && !anySel ? (
-        // Always in reach on a phone, whatever the list's length (the title-row button is
-        // desktop-only). Above the page bottom inset on notched phones.
-        <div className="fixed right-16 z-30" style={{ bottom: "calc(16px + env(safe-area-inset-bottom))" }}>
-          <Button
-            variant="primary"
-            onClick={onAdd}
-            aria-label="Add investor"
-            className="h-48 rounded-pill px-18 text-[16px] shadow-menu"
-          >
-            + Investor
-          </Button>
-        </div>
-      ) : null}
-      {/* The round picker above already says "Seed": the terms only (critique 3: Seed twice). */}
-      <div className="-mt-4 flex h-20 items-center gap-10">
-        <h1 className="sr-only">{round.name}</h1>
-        <span className="t-micro min-w-0 truncate text-muted uppercase">{sub.filter(Boolean).join(" · ")}</span>
-        {canWrite ? (
-          <span className="ml-auto flex shrink-0 items-center gap-14">
-            <Link href={`${base}/import?round=${encodeURIComponent(round.slug)}`} className="link t-body-s">
-              Import
-            </Link>
-            <Link href={`${base}/r/${encodeURIComponent(round.slug)}/settings`} className="link t-body-s">
-              Edit round
-            </Link>
-          </span>
-        ) : null}
-      </div>
-
-      {moneyOn ? (
-        <section aria-label={`${round.name} summary`} className="rounded-md border border-line bg-surface p-14">
-          <p className="font-display text-[24px] font-bold tnum">
-            <span className="text-good-ink">{money(facts.committed, round.currency)}</span>{" "}
-            <span className="text-[15px] font-medium text-muted">of {moneyCompact(round.target_amount, round.currency)}</span>
-          </p>
-          <div className="mt-8 flex h-8 overflow-hidden rounded-pill bg-sunk" aria-hidden>
-            <i className="block h-full bg-good not-italic" style={{ width: `${pctC}%` }} />
-            <i className="block h-full not-italic" style={{ width: `${pctS}%`, background: "color-mix(in oklab, var(--good) 30%, var(--sunk))" }} />
-          </div>
-          <p className="t-body-s mt-8 text-muted">
-            <b className="text-fg">{num(facts.committedCount)}</b> committed · <b className="text-fg">{moneyCompact(facts.soft, round.currency)}</b> soft ·{" "}
-            <b className="text-fg">{num(facts.talking)}</b> talking
-          </p>
-        </section>
-      ) : (
-        <section aria-label="Sorted" className="flex flex-col gap-10 rounded-md border border-line bg-surface p-14">
-          <div className="flex items-center gap-10">
-            <span className="t-label">Sorted</span>
-            <span className="h-6 flex-1 overflow-hidden rounded-pill bg-sunk" aria-hidden>
-              <i className="block h-full bg-good not-italic" style={{ width: `${facts.total ? (sorted / facts.total) * 100 : 0}%` }} />
-            </span>
-            <span className="text-muted">
-              <b className="text-fg tnum">{num(sorted)}</b> of {num(facts.total)}
-            </span>
-          </div>
-          <p className="text-muted">{msg.text}</p>
-          {msg.triage && triageOk ? (
-            <Button variant="primary" className="h-48 w-full text-[16px]" onClick={onStartTriage}>
-              Start triage
-            </Button>
-          ) : null}
-        </section>
-      )}
-
-      {moneyOn && due.length && pick !== "due" ? (
-        <section aria-label="Follow up now" className="rounded-md border border-line bg-surface px-14 py-10">
-          <p className="t-label mb-4 flex">
-            Follow up now
-            <button type="button" onClick={onDue} className="link t-body-s ml-auto border-0 bg-transparent p-0 normal-case tracking-normal">
-              All {num(due.length)} →
-            </button>
-          </p>
-          {due.slice(0, 3).map((p) => (
-            <button
-              key={p.investor.id}
-              type="button"
-              onClick={() => onOpen(p.investor.id)}
-              className="flex h-44 w-full min-w-0 items-center gap-8 border-0 border-t border-line bg-transparent px-0 text-left first-of-type:border-t-0"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{p.investor.name}</span>
-                <span className="t-body-s inline-flex items-center gap-6 text-muted">
-                  <StageDot color={p.stage.color} />
-                  {p.stage.label}
-                </span>
-              </span>
-              <Chip tone="due">{dueText(p, today)}</Chip>
-            </button>
-          ))}
-        </section>
-      ) : null}
-
+    <div className={cn("flex flex-col gap-12", roomForFab && "pb-72")}>
       {showPills ? (
-        <div className="-mx-16 flex gap-8 overflow-x-auto px-16 scrollbar-none" role="group" aria-label="Stage">
-          {dueTotal > 0 ? pill("due", "Due now", dueTotal, undefined, true) : null}
-          {pillStages.map((s) => pill(s.key, s.label, counts[s.key] ?? 0, s.color))}
+        <div className="relative -mx-16">
+          <div
+            ref={pillsRef}
+            onScroll={onPills}
+            className="flex gap-8 overflow-x-auto px-16 scrollbar-none"
+            role="group"
+            aria-label="Stage"
+          >
+            {dueTotal > 0 ? pill("due", "Due now", dueTotal, undefined, true) : null}
+            {pillStages.map((s) => pill(s.key, s.label, counts[s.key] ?? 0, s.color))}
+          </div>
+          {edges.left ? <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-28 bg-linear-to-r from-canvas to-transparent" /> : null}
+          {edges.right ? <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-40 bg-linear-to-l from-canvas to-transparent" /> : null}
         </div>
       ) : null}
 
       <div className="flex gap-8">
-        <SearchInput placeholder="Search investors…" aria-label="Search investors" value={search} onChange={(e) => onSearch(e.target.value)} />
-        <Button onClick={onFilters}>
+        <SearchInput placeholder="Search investors…" aria-label="Search investors" value={search} onChange={(e) => onSearch(e.target.value)} className="min-h-44" />
+        <Button onClick={onFilters} className="min-h-44">
           Filter{activeFilters ? <span className="font-mono text-[12px] text-accent">{activeFilters}</span> : null}
         </Button>
       </div>
 
       {/* overflow-clip (not hidden): the sticky group header follows the page scroll. */}
       <section aria-label={pick === "due" ? "Due now" : (pickStage?.label ?? "")} className="overflow-clip rounded-md border border-line bg-surface">
-        {/* One way into Triage per screen (critique 3): the Sorted card's button before money
-            exists; afterwards one line here, without repeating the pill's name and count. */}
-        {moneyOn && pickStage && pick === openKey && triageOk && list.rows.length ? (
-          <button type="button" onClick={onStartTriage} className="flex h-40 w-full items-center gap-8 border-0 border-b border-line bg-transparent px-14 text-left">
+        {/* One way into Triage per screen: one line here, without repeating the pill's count. */}
+        {pickStage && pick === openKey && triageOk && list.rows.length ? (
+          <button type="button" onClick={onStartTriage} className="flex h-44 w-full items-center gap-8 border-0 border-b border-line bg-transparent px-14 text-left">
             <span className="t-body-s text-muted">Go through them one at a time</span>
             <span className="link ml-auto">Triage →</span>
           </button>
@@ -359,7 +540,7 @@ export function PipelinePhone({
         {list.rows.length === 0 ? (
           <p className="t-body-s p-14 text-muted">{pick === "due" ? "Nothing due." : `Nobody in ${pickStage?.label ?? "this stage"} yet.`}</p>
         ) : null}
-        <div ref={listRef} style={{ height: tops[tops.length - 1], position: "relative" }}>
+        <div ref={listRef} role="list" style={{ height: tops[tops.length - 1], position: "relative" }}>
           {stuck && stuck.shift > -GROUP_H ? (
             <div className="sticky z-[2] h-0 overflow-visible" style={{ top: stickyTop }}>
               <div style={{ transform: `translateY(${stuck.shift}px)` }}>{groupHead(stuck.row)}</div>
@@ -373,15 +554,24 @@ export function PipelinePhone({
             const id = p.investor.id;
             const slot = cardSlot(p, today, round.currency, { timeZone: viewerTz });
             const isSel = selected?.has(id) ?? false;
+            // Inside a priority group every row has the same priority: the header says it.
+            const prio = list.grouped ? null : p.stage.kind === "won" || p.stage.kind === "lost" ? null : cardPriority(p.fit);
+            const who = p.investor.firm || p.investor.title || "";
+            const showStage = pick === "due";
             return (
-              <div key={id} style={{ ...style, height: ROW_H }} className={cn("flex items-center border-b border-line", isSel && "bg-accent-soft")}>
+              <div
+                key={id}
+                role="listitem"
+                style={{ ...style, height: ROW_H }}
+                className={cn("flex items-center border-b border-line", isSel && "bg-accent-soft")}
+              >
                 {anySel ? (
                   <input
                     type="checkbox"
                     checked={isSel}
                     onChange={() => toggle(id)}
                     aria-label={`Select ${p.investor.name}`}
-                    className="ml-14 size-18 shrink-0 accent-[var(--accent)]"
+                    className="ml-14 size-20 shrink-0 accent-[var(--accent)]"
                   />
                 ) : null}
                 <button
@@ -405,25 +595,40 @@ export function PipelinePhone({
                   }}
                 >
                   <span className="flex min-w-0 items-center gap-8">
-                    <span className="min-w-0 flex-1 truncate font-semibold">{p.investor.name}</span>
-                    {/* Inside Hot, Warm or Maybe every row has the same fit: the header says it. */}
-                    {list.pipHidden === "all" || list.pipHidden === p.fit || (list.grouped && priorityFromFit(p.fit) !== "low") ? null : (
-                      <FitMeter value={p.fit} />
-                    )}
+                    <span className="min-w-0 flex-1 truncate text-[15.5px] font-semibold">{p.investor.name}</span>
+                    {prio ? (
+                      <Chip tone={prio} className="shrink-0">
+                        {PRIORITY_LABEL[prio]}
+                      </Chip>
+                    ) : null}
                   </span>
                   <span className="flex min-w-0 items-center gap-8">
-                    <span className="t-body-s min-w-0 flex-1 truncate text-muted">{p.investor.firm || p.investor.title || ""}</span>
+                    <span className="t-body-s inline-flex min-w-0 flex-1 items-center gap-6 text-muted">
+                      {showStage ? (
+                        <>
+                          <StageDot color={p.stage.color} />
+                          <span className="shrink-0">{p.stage.label}</span>
+                          {who ? <span aria-hidden>·</span> : null}
+                        </>
+                      ) : null}
+                      <span className="min-w-0 truncate">{who}</span>
+                    </span>
                     {slot ? (
                       slot.kind === "meeting" ? (
-                        <Chip tone={slot.today ? "soon" : "type"} title={slot.title}>
+                        <Chip tone={slot.today ? "soon" : "type"} title={slot.title} className="shrink-0">
                           {slot.text}
                         </Chip>
                       ) : slot.kind === "due" || slot.kind === "money" || slot.kind === "soon" ? (
-                        <Chip tone={slot.kind === "due" ? "due" : slot.kind === "money" ? "money" : "soon"}>{slot.text}</Chip>
+                        <Chip tone={slot.kind === "due" ? "due" : slot.kind === "money" ? "money" : "soon"} className="shrink-0">
+                          {slot.text}
+                        </Chip>
                       ) : (
-                        <span className="font-mono text-[12px] text-muted">{slot.text}</span>
+                        <span className="shrink-0 font-mono text-[12px] text-muted">{slot.text}</span>
                       )
                     ) : null}
+                  </span>
+                  <span className={cn("t-body-s block truncate", p.next_step ? "text-fg/80" : "text-faint")}>
+                    {p.next_step ? `→ ${p.next_step}` : "No next step"}
                   </span>
                 </button>
               </div>
@@ -431,35 +636,6 @@ export function PipelinePhone({
           })}
         </div>
       </section>
-
-      {moneyOn && buckets.length ? (
-        <section aria-label="Next up" className="rounded-md border border-line bg-surface px-14 py-10">
-          <p className="t-label mb-4">Next up</p>
-          {buckets.slice(0, 3).map((b) => {
-            const c = bucketCopy(b, stages.find((s) => s.key === openKey)?.label ?? "New");
-            return (
-              // Counts sit on the card's left edge, under the label, on the sentence's first line.
-              <div key={b.id} className="grid min-h-40 grid-cols-[minmax(28px,auto)_minmax(0,1fr)_auto] items-baseline gap-x-10 py-6">
-                <b className="font-mono text-[12.5px] tnum">{num(b.count)}</b>
-                <span className="t-body-s min-w-0">
-                  {c.text}
-                  {b.id === "ready" && b.next ? (
-                    <>
-                      {" · next "}
-                      <button type="button" className="border-0 bg-transparent p-0 font-semibold text-fg" onClick={() => onOpen(b.next!.id)}>
-                        {b.next.name}
-                      </button>
-                    </>
-                  ) : null}
-                </span>
-                <button type="button" className="link t-body-s border-0 bg-transparent p-0" onClick={() => onBucket(b)}>
-                  {c.link}
-                </button>
-              </div>
-            );
-          })}
-        </section>
-      ) : null}
       <div className={anySel ? "h-120" : "h-8"} aria-hidden />
     </div>
   );

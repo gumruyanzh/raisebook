@@ -39,11 +39,11 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-30 border-b border-line bg-canvas md:static">
-        <div className="gutter mx-auto flex h-64 max-w-site items-center gap-24">
+        <div className="gutter mx-auto flex h-64 max-w-site items-center gap-12 sm:gap-24">
           <Wordmark size={22} href="/" />
           <SiteNav className="hidden md:flex" />
-          <div className="ml-auto flex items-center gap-6">
-            <Link href="/docs" className="px-8 py-6 font-medium text-muted hover:text-fg md:hidden">
+          <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-6">
+            <Link href="/docs" className="inline-flex min-h-44 items-center px-8 font-medium text-muted hover:text-fg md:hidden">
               Docs
             </Link>
             <ButtonLink href="/signin" variant="ghost" className="hidden sm:inline-flex">

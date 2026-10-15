@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { ButtonLink, Chip, Menu, useToast, type MenuEntry } from "@/components/ui";
+import { Button, ButtonLink, buttonClasses, Chip, Menu, useToast, type MenuEntry } from "@/components/ui";
 import { errorMessage, type ApiClient } from "@/lib/api/client";
 import { downloadMeetingIcs, updateMeeting, type Meeting, type MeetingWrite } from "@/lib/api/meetings";
 import { cn } from "@/lib/cn";
@@ -113,6 +113,49 @@ export function MeetingRow({
   const who = [m.investor.name, ...m.guests.map((g) => g.name)].join(", ");
   const place = m.location || (m.video_url ? "Video call" : null);
 
+  const actions = (phone: boolean) => (
+    <>
+      {m.status === "scheduled" && m.video_url && !m.needs_outcome ? (
+        <ButtonLink href={m.video_url} external size={phone ? "md" : "sm"} variant={live ? "primary" : "secondary"} className={phone ? "min-h-44 flex-1" : undefined}>
+          {joinLabel(m.video_url)}
+        </ButtonLink>
+      ) : null}
+      {m.needs_outcome && canWrite ? (
+        phone ? (
+          <Button variant="primary" className="min-h-44 flex-1" onClick={() => setCompleting(true)}>
+            Add outcome
+          </Button>
+        ) : (
+          <button type="button" className="link t-body-s" onClick={() => setCompleting(true)}>
+            Add outcome
+          </button>
+        )
+      ) : null}
+      <Link
+        href={`${investorHref}#dossier`}
+        className={phone ? buttonClasses("secondary", "md", "min-h-44 flex-1") : "link t-body-s whitespace-nowrap"}
+        prefetch={false}
+      >
+        {phone ? "Brief" : "Open brief"}
+      </Link>
+      <Menu
+        label={`Meeting with ${m.investor.name}`}
+        align="end"
+        trigger={
+          <>
+            <span aria-hidden>⋯</span>
+            <span className="sr-only">More for the meeting with {m.investor.name}</span>
+          </>
+        }
+        triggerClassName={cn(
+          "inline-flex items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg",
+          phone ? "size-44 shrink-0" : "size-28",
+        )}
+        items={meetingMenu(m, { canWrite, onEdit: () => setEditing(true), onDone: () => setCompleting(true), onStatus: (s) => void setStatus(s), onIcs: () => void ics() })}
+      />
+    </>
+  );
+
   return (
     <li className={cn("flex flex-col gap-4 border-b border-line py-10 last:border-b-0", compact ? "px-0" : "px-14")} data-meeting={m.id}>
       <div className="flex min-w-0 flex-wrap items-center gap-x-10 gap-y-6">
@@ -120,28 +163,7 @@ export function MeetingRow({
         {live ? <Chip tone="soon">Now</Chip> : null}
         {m.needs_outcome ? <Chip tone="due">Needs outcome</Chip> : null}
         {STATUS_WORD[m.status] ? <Chip tone="type">{STATUS_WORD[m.status]}</Chip> : null}
-        <span className="ml-auto flex shrink-0 items-center gap-6">
-          {m.status === "scheduled" && m.video_url && !m.needs_outcome ? (
-            <ButtonLink href={m.video_url} external size="sm" variant={live ? "primary" : "secondary"}>
-              {joinLabel(m.video_url)}
-            </ButtonLink>
-          ) : null}
-          {m.needs_outcome && canWrite ? (
-            <button type="button" className="link t-body-s" onClick={() => setCompleting(true)}>
-              Add outcome
-            </button>
-          ) : null}
-          <Link href={`${investorHref}#dossier`} className="link t-body-s whitespace-nowrap" prefetch={false}>
-            Open brief
-          </Link>
-          <Menu
-            label={`Meeting with ${m.investor.name}`}
-            align="end"
-            trigger={<span aria-hidden>⋯</span>}
-            triggerClassName="inline-flex size-28 items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg"
-            items={meetingMenu(m, { canWrite, onEdit: () => setEditing(true), onDone: () => setCompleting(true), onStatus: (s) => void setStatus(s), onIcs: () => void ics() })}
-          />
-        </span>
+        <span className="ml-auto flex shrink-0 items-center gap-6 phone:hidden">{actions(false)}</span>
       </div>
       <div className="flex min-w-0 flex-col gap-2">
         {showInvestor ? (
@@ -164,6 +186,9 @@ export function MeetingRow({
         {m.agenda && m.status === "scheduled" && !compact ? <p className="t-body-s line-clamp-2 text-muted">{m.agenda}</p> : null}
         {extra}
       </div>
+      {/* Phones: time, then who, then where, then the actions in one full-width row (they
+          wrapped above the name and read out of order). */}
+      <div className="mt-6 hidden min-w-0 items-center gap-8 phone:flex">{actions(true)}</div>
       <ScheduleMeetingDialog
         open={editing}
         onClose={() => setEditing(false)}

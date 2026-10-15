@@ -99,6 +99,8 @@ export const DEFAULT_DIR: Record<TableCol, SortDir> = {
 const ROW_H: Record<Density, number> = { compact: 32, comfortable: 44 };
 const PHONE_ROW_H = 62;
 const SELECT_W = 36;
+/** Column widths on a tablet-wide table (the Investor column takes what is left). */
+const TIGHT_W: Partial<Record<TableCol, number>> = { investor: 220, stage: 116, fit: 64, follow_up: 116, next_step: 180, firm: 150, type: 96, owner: 112 };
 
 function sortValue(p: Participant, col: TableCol): string | number | null {
   switch (col) {
@@ -196,8 +198,8 @@ export function PipelineTable({
   /** `null` hides the selection column (viewers). */
   selected: Set<string> | null;
   onSelectedChange: (next: Set<string>) => void;
-  /** Fill height in px (the page stops; rows scroll). */
-  height: number | null;
+  /** Fill height in px, or a CSS length (the page stops; rows scroll). */
+  height: number | string | null;
   /** Focus this investor's row (after the sheet closes). */
   focusReq: { id: string; n: number } | null;
   today: string;
@@ -205,7 +207,7 @@ export function PipelineTable({
   /** The columns actually on screen (the Display menu marks the ones left out and why). */
   onShown?: (shown: Set<TableCol>) => void;
 }) {
-  const isPhone = useMediaQuery("(max-width: 639px)");
+  const isPhone = useMediaQuery("(max-width: 639px), (max-height: 499px)");
   const scroll = useRef<HTMLDivElement>(null);
   const [availW, setAvailW] = useState(1392);
   useLayoutEffect(() => {
@@ -240,11 +242,18 @@ export function PipelineTable({
     [rows, industriesOf],
   );
   const selectableW = selected !== null ? SELECT_W : 0;
+  // Tablets (under 900px of table): tighter Stage, Fit and Follow-up columns, so the name
+  // gets the room (it was "Sofia Bren…" beside half-empty columns) and Next step fits.
+  // (Tablet screens only: a desktop squeezed by the split sheet keeps its layout.)
+  const tabletScreen = useMediaQuery("(max-width: 1023px)") === true;
+  const tight = availW < 900 && tabletScreen;
   const cols = useMemo(() => {
-    const wanted = TABLE_COLS.filter((c) => c.required || (visible.has(c.key) && !quiet.has(c.key)));
+    const wanted = TABLE_COLS.filter((c) => c.required || (visible.has(c.key) && !quiet.has(c.key))).map((c) =>
+      tight && TIGHT_W[c.key] ? { ...c, width: TIGHT_W[c.key]! } : c,
+    );
     const keep = new Set(fitColumns(wanted, DROP_ORDER, availW - selectableW));
     return wanted.filter((c) => keep.has(c.key));
-  }, [visible, quiet, availW, selectableW]);
+  }, [visible, quiet, availW, selectableW, tight]);
   const shownKey = cols.map((c) => c.key).join();
   useEffect(() => {
     onShown?.(new Set(cols.map((c) => c.key)));
@@ -428,7 +437,8 @@ export function PipelineTable({
       case "investor":
         return (
           <span className="flex min-w-0 items-center gap-6">
-            <span className={cn(one, "font-semibold")} title={p.investor.name}>
+            {/* The name gives way last: the firm beside it truncates first. */}
+            <span className={cn(one, "font-semibold", tight && "min-w-48 shrink-[0.1]")} title={p.investor.name}>
               {p.investor.name}
             </span>
             {!firmCol && p.investor.firm ? (
@@ -563,7 +573,7 @@ export function PipelineTable({
         <colgroup>
           {selectable ? <col style={{ width: SELECT_W }} /> : null}
           {cols.map((c) => (
-            <col key={c.key} style={{ width: c.width }} />
+            <col key={c.key} style={{ width: tight && c.key === "investor" ? undefined : c.width }} />
           ))}
         </colgroup>
         <THead ref={thead}>
@@ -689,7 +699,7 @@ function PhoneList({
   openId?: string | null;
   onOpen: (id: string) => void;
   today: string;
-  height: number | null;
+  height: number | string | null;
   focusReq: { id: string; n: number } | null;
 }) {
   const scroll = useRef<HTMLUListElement>(null);

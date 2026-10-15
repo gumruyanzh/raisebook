@@ -26,7 +26,7 @@ import { formatDateTime, moneyCompact, num } from "@/lib/format";
 import { boardTrack, cardSlot, defaultColumnSort, triageTargets } from "@/lib/pipeline";
 
 import { useViewerTimeZone } from "./meetings/useViewerTimeZone";
-import { byFit } from "./util";
+import { byFit, useMediaQuery } from "./util";
 
 export interface AgentMark {
   label: string;
@@ -112,7 +112,16 @@ export function PipelineBoard({
   extras,
   timeZone,
   endSlot,
+  compact = false,
+  tabSlot,
 }: {
+  /** A sideways phone: the stage tabs render here (beside the view switch). */
+  tabSlot?: HTMLElement | null;
+  /**
+   * The phone layout: one full-width column at a time on a snap scroller, under sticky stage
+   * tabs; a card is moved by holding it ("Move to…" opens as a bottom sheet), not dragged.
+   */
+  compact?: boolean;
   round: Round;
   stages: Stage[];
   /** Filtered cards per stage, already sorted. */
@@ -125,8 +134,8 @@ export function PipelineBoard({
   showNextStep: boolean;
   /** Filters or search are applied (the empty-column copy changes). */
   filtered: boolean;
-  /** Fill height in px. */
-  height: number | null;
+  /** Fill height: px, or a CSS length (dvh-based under 1024px). */
+  height: number | string | null;
   openId?: string | null;
   focusReq: { id: string; n: number } | null;
   /** The open stage `O` (New). */
@@ -193,11 +202,30 @@ export function PipelineBoard({
   // board's end).
   const [colW, setColW] = useState<string | null>(null);
   const n = columns.length;
+  // Phones and tablets: stage tabs over the board (a swipe hint, and a way to the end stages).
+  const narrowScreen = useMediaQuery("(max-width: 1023px)") === true;
+  const withTabs = compact || narrowScreen;
+  const shortScreen = useMediaQuery("(max-height: 499px)") === true;
+  const tabsUp = Boolean(tabSlot && shortScreen);
+  const [activeCol, setActiveCol] = useState(0);
+  const tabsRef = useRef<HTMLDivElement>(null);
   const updateEdge = useCallback(() => {
     const el = boardRef.current;
     if (!el) return;
     const w = el.clientWidth;
-    const next = boardTrack(w, n);
+    const next = compact ? "100%" : boardTrack(w, n, narrowScreen);
+    // The column most in view drives the stage tabs.
+    const kids = Array.from(el.children) as HTMLElement[];
+    let best = 0;
+    let bestD = Infinity;
+    kids.forEach((k, i) => {
+      const d = Math.abs(k.offsetLeft - el.scrollLeft);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    setActiveCol((a) => (a === best ? a : best));
     setColW((prev) => (prev === next ? prev : next));
     const right = el.scrollLeft + el.clientWidth;
     setFade(el.scrollWidth - right > 4);
@@ -208,7 +236,24 @@ export function PipelineBoard({
       if (col && col.offsetLeft + 40 > right) off.push(key);
     }
     setOffEnds((prev) => (prev.join() === off.join() ? prev : off));
-  }, [endKeys, colByKey, n]);
+  }, [endKeys, colByKey, n, compact, narrowScreen]);
+  // The active tab stays in view in its own strip (sideways only: never scrolls the page).
+  useEffect(() => {
+    const strip = tabsRef.current;
+    const tab = strip?.querySelector<HTMLElement>(`[data-tab="${activeCol}"]`);
+    if (!strip || !tab) return;
+    const left = tab.offsetLeft - strip.offsetLeft;
+    if (left < strip.scrollLeft || left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth)
+      strip.scrollTo({ left: Math.max(0, left - 16), behavior: "smooth" });
+  }, [activeCol]);
+  const goToColumn = (i: number) => {
+    const el = boardRef.current;
+    const col = el?.children[i] as HTMLElement | undefined;
+    if (!el || !col) return;
+    // The board is the columns' offset parent (it is `relative`).
+    el.scrollTo({ left: col.offsetLeft, behavior: "smooth" });
+    setActiveCol(i);
+  };
   useEffect(() => {
     updateEdge();
     window.addEventListener("resize", updateEdge);
@@ -424,18 +469,54 @@ export function PipelineBoard({
   // Only end stages with someone in them: "Committed 0 · Passed 0" says nothing.
   const endCols = columns.filter((c) => offEnds.includes(c.stage.key) && c.cards.length > 0);
 
+  const tabs = withTabs ? (
+    <div className={cn("relative shrink-0", !tabsUp && "mb-8")}>
+      <div ref={tabsRef} className="flex gap-6 overflow-x-auto scrollbar-none" role="group" aria-label="Stages">
+        {columns.map(({ stage: s, cards }, i) => {
+          const on = i === activeCol;
+          return (
+            <button
+              key={s.key}
+              type="button"
+              data-tab={i}
+              aria-current={on ? "true" : undefined}
+              onClick={() => goToColumn(i)}
+              className={cn(
+                "inline-flex h-36 shrink-0 items-center gap-6 rounded-pill border px-12 text-[14px] whitespace-nowrap touch:h-44",
+                on ? "border-fg bg-fg text-canvas" : "border-line bg-surface text-fg",
+              )}
+            >
+              <StageDot color={s.color} />
+              {s.label}
+              <span className={cn("font-mono text-[12px]", on ? "text-canvas" : "text-muted")}>{num(cards.length)}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  ) : null;
+
   return (
-    <div className="relative">
+    <div
+      className={cn("relative", withTabs && "flex flex-col")}
+      style={withTabs ? { height: height ?? "70vh" } : undefined}
+    >
+      {tabsUp ? createPortal(tabs, tabSlot!) : tabs}
       <Board
         ref={boardRef}
         role="group"
         aria-label={`${round.name} board`}
         aria-keyshortcuts={canWrite ? "ArrowUp ArrowDown ArrowLeft ArrowRight Enter Alt+ArrowRight Alt+ArrowLeft M X" : undefined}
         onScroll={updateEdge}
-        className="min-h-0! grid-rows-[100%] pb-6!"
+        className={cn(
+          "min-h-0! grid-rows-[100%] pb-6!",
+          // Swipe one column at a time on a phone; tablets snap to a column's edge.
+          withTabs && "flex-1 [scroll-snap-type:x_mandatory]! [&>section]:snap-start",
+          compact && "pb-0! [&>section>div:last-child]:pb-80",
+        )}
         // No hit-testing (so no :hover) until the pointer moves again.
         style={{
-          height: height ?? "70vh",
+          height: withTabs ? undefined : (height ?? "70vh"),
           ...(colW ? { gridAutoColumns: colW } : null),
           ...(hoverOff ? { pointerEvents: "none" } : null),
         }}
@@ -539,6 +620,8 @@ export function PipelineBoard({
                 } else onOpen(id);
               }}
               onToggle={toggle}
+              onLongPress={canWrite ? (id) => setMenuFor(id) : undefined}
+              draggable={canWrite && !compact}
               onDragStart={(id) => setDragIds(sel.has(id) && sel.size > 1 ? [...sel] : [id])}
               onDragEnd={() => {
                 setDragIds(null);
@@ -548,10 +631,10 @@ export function PipelineBoard({
           );
         })}
       </Board>
-      {fade ? (
+      {fade && !compact ? (
         <div aria-hidden className="pointer-events-none absolute top-0 right-0 bottom-8 w-48 bg-linear-to-l from-canvas to-transparent" />
       ) : null}
-      {endCols.length && endSlot
+      {endCols.length && endSlot && !withTabs
         ? createPortal(
             <button
               type="button"
@@ -676,7 +759,12 @@ function StageColumn({
   onToggle,
   onDragStart,
   onDragEnd,
+  onLongPress,
+  draggable,
 }: {
+  /** Touch: holding a card opens "Move to…" (a bottom sheet on a phone). */
+  onLongPress?: (id: string) => void;
+  draggable: boolean;
   stage: Stage;
   cards: Participant[];
   sort: BoardSort;
@@ -711,6 +799,12 @@ function StageColumn({
   onDragEnd: () => void;
 }) {
   const body = useRef<HTMLDivElement>(null);
+  const press = useRef<{ t: ReturnType<typeof setTimeout> | null; fired: boolean }>({ t: null, fired: false });
+  const endPress = () => {
+    if (press.current.t) clearTimeout(press.current.t);
+    press.current.t = null;
+  };
+  useEffect(() => endPress, []);
   const won = s.kind === "won";
   // Each card's rows (and so its height) are known up front, so the column stays windowed.
   const viewerTz = useViewerTimeZone(timeZone ?? "UTC");
@@ -756,7 +850,7 @@ function StageColumn({
             align="end"
             minWidth={180}
             trigger={<span aria-hidden>⋯</span>}
-            triggerClassName="inline-flex size-24 items-center justify-center rounded-sm border-0 bg-transparent font-normal text-muted hover:bg-line/50 hover:text-fg"
+            triggerClassName="inline-flex size-24 items-center justify-center rounded-sm border-0 bg-transparent font-normal text-muted hover:bg-line/50 hover:text-fg touch:size-40"
             items={[
               { type: "label", label: "Sort by" },
               ...BOARD_SORTS.map((o) => ({ label: o.label, selected: sort === o.value, onSelect: () => onSortChange(o.value) })),
@@ -808,12 +902,33 @@ function StageColumn({
               tabIndex={tabStop === id ? 0 : -1}
               agentMark={agentMarks[id] ? { tip: agentMarks[id].tip } : null}
               dragging={dragIds?.includes(id)}
-              draggable={canWrite}
+              draggable={draggable}
               hint={canWrite ? undefined : "View only"}
               aria-current={openId === id || undefined}
               aria-label={`${p.investor.name}${p.investor.firm ? `, ${p.investor.firm}` : ""}. ${s.label}. ${(() => { const pr = cardPriority(p.fit); return pr ? PRIORITY_LABEL[pr] : "Not rated"; })()}.${view.odds ? ` Likelihood ${view.odds.value}%.` : ""}${isSel ? " Selected." : ""}`}
               onFocus={() => onCardFocus(id)}
-              onClick={(e) => onCardClick(e, id)}
+              onClick={(e) => {
+                if (press.current.fired) {
+                  press.current.fired = false;
+                  return;
+                }
+                onCardClick(e, id);
+              }}
+              onPointerDown={(e) => {
+                press.current.fired = false;
+                if (!onLongPress || e.pointerType !== "touch") return;
+                endPress();
+                press.current.t = setTimeout(() => {
+                  press.current.fired = true;
+                  onLongPress(id);
+                }, 450);
+              }}
+              onPointerUp={endPress}
+              onPointerCancel={endPress}
+              onPointerLeave={endPress}
+              onContextMenu={(e) => {
+                if (onLongPress && press.current.fired) e.preventDefault();
+              }}
               onKeyDown={(e) => onCardKey(e, p)}
               onDragStart={(e) => {
                 e.dataTransfer.setData("text/plain", id);

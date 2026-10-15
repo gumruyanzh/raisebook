@@ -173,7 +173,30 @@
   --r-pill: 999px;
 
   --ease-sheet: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Height of the phone's bottom tab bar (0 where there is none). Fixed things that sit at
+     the bottom (the + button, toasts, the name banner) stand on it. */
+  --rb-tabbar: 0px;
 }
+@media (max-width: 639px) and (min-height: 500px) {
+  :root {
+    --rb-tabbar: calc(56px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ---------- layout variants (design/mobile-audit) ----------
+   phone: the compact layout. Under 640px wide, or under 500px tall (a phone on its side gets
+   the phone layout too, not the desktop one). short: under 500px tall only. tab: the phone
+   tab bar shows (portrait phones; a sideways phone keeps its height for the content). */
+@custom-variant phone {
+  @media (max-width: 639px), (max-height: 499px) {
+    @slot;
+  }
+}
+@custom-variant desk (@media (min-width: 640px) and (min-height: 500px));
+@custom-variant short (@media (max-height: 499px));
+@custom-variant tab (@media (max-width: 639px) and (min-height: 500px));
+@custom-variant touch (@media (pointer: coarse));
 
 /* ---------- Tailwind theme: only Raisebook tokens exist ---------- */
 @theme {
@@ -517,6 +540,14 @@
     transform: translateX(0);
   }
 }
+@keyframes rb-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
 @keyframes rb-fade-in {
   from {
     opacity: 0;
@@ -527,6 +558,9 @@
 }
 @utility anim-sheet {
   animation: rb-sheet-in 180ms var(--ease-sheet);
+}
+@utility anim-sheet-up {
+  animation: rb-sheet-up 200ms var(--ease-sheet);
 }
 @utility anim-fade {
   animation: rb-fade-in 150ms ease-out;
@@ -620,16 +654,73 @@ dialog::backdrop {
   }
 }
 @media (pointer: coarse) {
-  /* Form fields (Input/Select with the default tone and size) are 40px tall to the finger. */
+  /* Every text field and select, small ones included, is 44px to the finger. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]),
+  select {
+    min-height: 44px;
+  }
+  /* Form fields (Input/Select with the default tone and size) are 44px tall to the finger. */
   .rb-field {
-    min-height: 40px;
+    min-height: 44px;
   }
   /* Editable fit pips: a 7x14 pip is too small for a finger. */
   .rb-fit-pip {
-    min-width: 28px;
-    min-height: 32px;
+    min-width: 36px;
+    min-height: 44px;
   }
   .rb-fit-clear {
     opacity: 1;
+  }
+}
+
+/* Tables that become cards on a phone (<Table stack>): no sideways scroll inside a 356px box.
+   The first cell runs across the top; the rest sit in two columns under their column's name. */
+@media (max-width: 639px) {
+  table.rb-stack {
+    display: block;
+    min-width: 0 !important;
+  }
+  table.rb-stack > thead {
+    display: none;
+  }
+  table.rb-stack > tbody {
+    display: block;
+  }
+  table.rb-stack > tbody > tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  table.rb-stack > tbody > tr:last-child {
+    border-bottom: 0;
+  }
+  table.rb-stack > tbody > tr > td {
+    display: block;
+    min-width: 0;
+    border: 0 !important;
+    padding: 0 !important;
+    text-align: left !important;
+    white-space: normal;
+    box-shadow: none !important;
+  }
+  table.rb-stack > tbody > tr > td:first-child,
+  table.rb-stack > tbody > tr > td[colspan] {
+    grid-column: 1 / -1;
+  }
+  table.rb-stack > tbody > tr > td:not(:first-child)[data-label]:not([data-label=""])::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.3;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  table.rb-stack > tbody > tr > td:empty {
+    display: none;
   }
 }

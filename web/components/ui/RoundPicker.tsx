@@ -15,14 +15,14 @@ export interface RoundPickerItem {
 }
 
 const PILL =
-  "inline-flex h-26 shrink-0 items-center rounded-pill px-12 font-medium whitespace-nowrap transition-colors duration-[120ms]";
+  "inline-flex h-26 shrink-0 items-center rounded-pill px-12 font-medium whitespace-nowrap transition-colors duration-[120ms] touch:h-38";
 
 /** "closed" in mono after a closed round's name: full-strength muted, never faded (≥ 4.5:1). */
 function ClosedSuffix() {
   return <span className="t-micro ml-6 font-normal text-muted">closed</span>;
 }
 
-function roundMenuItems(
+export function roundMenuItems(
   ordered: RoundPickerItem[],
   active: string | null | undefined,
   hrefFor: (slug: string) => string,

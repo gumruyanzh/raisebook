@@ -362,6 +362,11 @@ test("introFitLine: the email claims only the fit the founder gave", () => {
 
 test("boardTrack: equal columns; whole ones plus a peek when they do not fit", () => {
   assert.equal(boardTrack(390, 8), null);
+  // A tablet (768px viewport): fixed 280px columns that snap, under stage tabs.
+  assert.equal(boardTrack(736, 8, true), "280px");
+  assert.equal(boardTrack(736, 2, true), "minmax(0, 1fr)");
+  // A desktop board squeezed by the split sheet keeps the desktop rule.
+  assert.notEqual(boardTrack(736, 8), "280px");
   assert.equal(boardTrack(2200, 8), "minmax(0, 1fr)");
   // 1440 page: 5 whole columns of 254px and 60px of the sixth.
   assert.equal(boardTrack(1392, 8), "254px");

@@ -77,7 +77,7 @@ import { FromResearch } from "./research/FromResearch";
 import { forgetInvestorResearch } from "./research/hooks";
 import { TriageResearch } from "./research/TriageResearch";
 import { draftHref, ReachOut, type ReachPerson } from "./ReachOut";
-import { useMediaQuery } from "./util";
+import { useCompact, useMediaQuery } from "./util";
 
 /** The store hooks the round page lends to Triage (optimistic writes, newer `updated_at` wins). */
 export interface TriageStore {
@@ -247,7 +247,8 @@ export function PipelineTriage({
   const { workspace } = useWorkspace();
   const workspaceName = workspace.name;
   const me = useOptionalSession()?.user;
-  const phone = useMediaQuery("(max-width: 639px)") === true;
+  // A phone, portrait or on its side (under 500px tall): the takeover.
+  const phone = useCompact();
   const wide = useMediaQuery("(min-width: 1024px)") !== false;
   const viewportWide = useMediaQuery("(min-width: 1280px)") !== false;
   const roomy = viewportWide && !squeezed;
@@ -2199,7 +2200,7 @@ function DecisionPanel({
               ) : null}
             </span>
           ) : (
-            <span className={cn("t-micro min-w-0 truncate", drafted ? "text-accent" : "text-muted")}>{sub}</span>
+            <span className={cn("t-micro min-w-0 truncate", drafted ? "text-accent" : "text-muted", !bulk && !(drafted && contacted) && "touch:hidden")}>{sub}</span>
           )}
         </div>
       )}
@@ -2254,7 +2255,8 @@ function DecisionPanel({
           className="w-auto shrink-0"
         />
       </div>
-      <p className="t-micro flex flex-wrap items-center gap-x-12 gap-y-4 text-muted">
+      {/* The key legend means nothing without a keyboard. */}
+      <p className="t-micro flex flex-wrap items-center gap-x-12 gap-y-4 text-muted touch:hidden">
         {(
           (bulk
             ? [
@@ -2384,8 +2386,8 @@ function TriagePhone({
   })();
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-canvas" role="region" aria-label="Triage">
-      <header className="flex h-56 shrink-0 items-center gap-8 border-b border-line bg-surface px-8 pt-[env(safe-area-inset-top)]">
-        <button type="button" onClick={onExit} aria-label="Back to the list" className="inline-flex size-40 items-center justify-center rounded-sm border-0 bg-transparent text-lg">
+      <header className="flex h-56 shrink-0 items-center gap-8 border-b border-line bg-surface px-8 pt-[env(safe-area-inset-top)] short:h-48">
+        <button type="button" onClick={onExit} aria-label="Back to the list" className="inline-flex size-44 items-center justify-center rounded-sm border-0 bg-transparent text-lg">
           ✕
         </button>
         <span className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -2412,7 +2414,7 @@ function TriagePhone({
       >
         {sorted > 0 ? <i className="block h-full min-w-4 bg-good not-italic" style={{ width: `${total ? (sorted / total) * 100 : 0}%` }} /> : null}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-16 pt-14 pb-[calc(170px+env(safe-area-inset-bottom))]">
+      <div className="min-h-0 flex-1 overflow-y-auto px-16 pt-14 pb-[calc(170px+env(safe-area-inset-bottom))] short:px-[max(16px,env(safe-area-inset-left))] short:pb-[calc(72px+env(safe-area-inset-bottom))]">
         {doneState ??
           (p ? (
             <>
@@ -2478,7 +2480,7 @@ function TriagePhone({
                   <ul className="m-0 flex list-none flex-col p-0">
                     {sameFirm.slice(0, 3).map((x) => (
                       <li key={x.investor.id}>
-                        <button type="button" onClick={() => onGo(x.investor.id)} className="flex h-40 w-full min-w-0 items-center gap-8 border-0 bg-transparent px-0 text-left">
+                        <button type="button" onClick={() => onGo(x.investor.id)} className="flex h-44 w-full min-w-0 items-center gap-8 border-0 bg-transparent px-0 text-left">
                           <span className="min-w-0 flex-1 truncate font-medium">{x.investor.name}</span>
                           <span className="t-body-s inline-flex shrink-0 items-center gap-6 text-muted">
                             <StageDot color={x.stage.color} />
@@ -2496,7 +2498,7 @@ function TriagePhone({
                   <ul className="m-0 flex list-none flex-col p-0">
                     {upNext.map((x) => (
                       <li key={x.investor.id}>
-                        <button type="button" onClick={() => onGo(x.investor.id)} className="flex h-40 w-full min-w-0 items-center gap-8 border-0 border-b border-line bg-transparent px-0 text-left">
+                        <button type="button" onClick={() => onGo(x.investor.id)} className="flex h-44 w-full min-w-0 items-center gap-8 border-0 border-b border-line bg-transparent px-0 text-left">
                           <span className="shrink-0 font-medium">{x.investor.name}</span>
                           <span className="t-body-s min-w-0 flex-1 truncate text-muted">{x.investor.firm}</span>
                           {new Set([p.fit, ...upNext.map((y) => y.fit)]).size > 1 ? <FitMeter value={x.fit} /> : null}
@@ -2512,7 +2514,7 @@ function TriagePhone({
       {doneState ? null : (
         <div
           ref={bar}
-          className="fixed inset-x-0 bottom-0 z-[41] flex flex-col gap-8 border-t border-line bg-surface px-12 pt-10 pb-[calc(10px+env(safe-area-inset-bottom))]"
+          className="fixed inset-x-0 bottom-0 z-[41] flex flex-col gap-8 border-t border-line bg-surface px-12 pt-10 pb-[calc(10px+env(safe-area-inset-bottom))] short:pt-6 short:pb-[calc(6px+env(safe-area-inset-bottom))] short:pl-[max(12px,env(safe-area-inset-left))] short:pr-[max(12px,env(safe-area-inset-right))]"
         >
           {confirm && p ? (
             <div role="alert" className="flex flex-col gap-8 rounded-sm border border-warm bg-warm-soft p-10">
@@ -2531,40 +2533,40 @@ function TriagePhone({
               </button>
             </div>
           ) : null}
-          <div className="grid grid-cols-3 gap-8">
+          {/* Portrait: the three stages over Skip, Follow up and Other stage. On its side
+              (under 500px tall) the six sit in one row, so the investor keeps the screen. */}
+          <div className="grid grid-cols-3 gap-8 short:grid-cols-6 short:gap-6">
             {primary.map((t) => (
               <button
                 key={t.stage.key}
                 type="button"
                 disabled={!canWrite || !p}
                 onClick={() => onDecide(t.stage)}
-                className="flex h-48 min-w-0 items-center justify-center gap-6 rounded-sm border border-line bg-surface px-8 font-medium disabled:opacity-55"
+                className="flex h-48 min-w-0 items-center justify-center gap-6 rounded-sm border border-line bg-surface px-8 font-medium disabled:opacity-55 short:h-44"
               >
                 <StageDot color={t.stage.color} />
                 <span className="truncate">{t.stage.label}</span>
               </button>
             ))}
-          </div>
-          <div className="grid grid-cols-3 gap-8">
-            <button type="button" onClick={onSkip} disabled={!p} className="h-40 rounded-sm border-0 bg-transparent text-muted hover:bg-sunk">
+            <button type="button" onClick={onSkip} disabled={!p} className="h-44 rounded-sm border-0 bg-transparent text-muted hover:bg-sunk">
               Skip
             </button>
-            <button type="button" onClick={() => setFollowOpen(true)} disabled={!p || !canWrite} className="h-40 rounded-sm border-0 bg-transparent text-muted hover:bg-sunk">
+            <button type="button" onClick={() => setFollowOpen(true)} disabled={!p || !canWrite} className="h-44 rounded-sm border-0 bg-transparent text-muted hover:bg-sunk">
               Follow up
             </button>
             <Menu
               label="Other stage"
               align="end"
               trigger="Other stage"
-              triggerClassName="h-40 w-full rounded-sm border-0 bg-transparent text-muted hover:bg-sunk"
+              triggerClassName="h-44 w-full rounded-sm border-0 bg-transparent whitespace-nowrap text-muted hover:bg-sunk"
               className="w-full"
               items={otherItems}
             />
           </div>
-          <p className="t-body-s text-center text-muted">Each tap saves, opens the next investor and offers Undo.</p>
+          <p className="t-body-s text-center text-muted short:hidden">Each tap saves, opens the next investor and offers Undo.</p>
         </div>
       )}
-      <Sheet open={followOpen} onClose={() => setFollowOpen(false)} title={p ? `Follow up with ${firstName(p.investor.name)}` : "Follow up"}>
+      <Sheet open={followOpen} onClose={() => setFollowOpen(false)} bottomOnPhone title={p ? `Follow up with ${firstName(p.investor.name)}` : "Follow up"}>
         <div className="flex flex-col gap-8">
           {p?.follow_up_on ? (
             <p className="t-body-s text-muted">Now: {formatDate(p.follow_up_on, today)}.</p>

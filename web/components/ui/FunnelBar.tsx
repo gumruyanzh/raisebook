@@ -29,7 +29,10 @@ export function FunnelBar({
   className,
   legendClassName,
   label = "Pipeline by stage",
+  phoneList,
 }: {
+  /** Phones: a list of stages with counts (44px rows) instead of a bar of thin segments. */
+  phoneList?: boolean;
   segments: FunnelSegment[];
   onSelect?: (key: string) => void;
   /** Stage key currently filtered, if any. */
@@ -46,7 +49,7 @@ export function FunnelBar({
       <div
         role="group"
         aria-label={label}
-        className="flex h-26 overflow-hidden rounded-sm bg-sunk"
+        className={cn("flex h-26 overflow-hidden rounded-sm bg-sunk", phoneList && "phone:hidden")}
       >
         {segments
           .filter((s) => s.count > 0)
@@ -79,7 +82,7 @@ export function FunnelBar({
             );
           })}
       </div>
-      <div className={cn("flex flex-wrap gap-x-12 gap-y-4", legendClassName)}>
+      <div className={cn("flex flex-wrap gap-x-12 gap-y-4", phoneList && "phone:flex-col phone:flex-nowrap phone:gap-0", legendClassName)}>
         {segments.map((s) => (
           <button
             key={s.key}
@@ -91,10 +94,19 @@ export function FunnelBar({
               "t-body-s inline-flex items-center gap-6 border-0 bg-transparent p-0 text-muted disabled:cursor-default",
               interactive && "hover:text-fg",
               active === s.key && "text-fg underline underline-offset-3",
+              phoneList && "phone:min-h-44 phone:w-full phone:gap-10 phone:border-b phone:border-line phone:text-[14px] phone:text-fg phone:last:border-b-0",
             )}
           >
             <StageDot color={s.color} />
-            {s.label} <b className="tnum font-semibold text-fg">{num(s.count)}</b>
+            {s.label} <b className={cn("tnum font-semibold text-fg", phoneList && "phone:hidden")}>{num(s.count)}</b>
+            {phoneList ? (
+              <span className="ml-auto hidden w-[45%] items-center gap-8 phone:flex">
+                <span aria-hidden className="h-6 min-w-0 flex-1 overflow-hidden rounded-pill bg-sunk">
+                  <i className="block h-full rounded-pill not-italic" style={{ width: `${(s.count / total) * 100}%`, background: stageVar(s.color) }} />
+                </span>
+                <b className="w-32 text-right font-mono text-[13px] font-semibold tnum">{num(s.count)}</b>
+              </span>
+            ) : null}
           </button>
         ))}
       </div>

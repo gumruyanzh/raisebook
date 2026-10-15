@@ -37,6 +37,8 @@ export function buttonClasses(
     "inline-flex shrink-0 items-center justify-center rounded-sm font-body font-medium whitespace-nowrap",
     "transition-[background-color,border-color,color,filter] duration-[120ms] ease-out",
     "disabled:opacity-55 disabled:hover:brightness-100 aria-disabled:opacity-55",
+    // A finger needs 44px (touch screens only; the desktop sizes stay).
+    "touch:min-h-44",
     VARIANT[variant],
     SIZE[size],
     className,

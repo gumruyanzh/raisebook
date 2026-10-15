@@ -194,7 +194,7 @@ export function StagesEditor({
         passed stage is left out of the pipeline totals.
       </p>
       <TableScroll>
-        <Table minWidth={720}>
+        <Table minWidth={720} stack>
           <THead>
             <Tr>
               <Th className="w-[72px]">Order</Th>
@@ -231,7 +231,7 @@ export function StagesEditor({
                       aria-label={`Move ${r.label || "stage"} up`}
                       disabled={ro || i === 0}
                       onClick={() => moveBy(r.uid, -1)}
-                      className="inline-flex size-24 items-center justify-center rounded-sm border-0 bg-transparent text-muted hover:bg-sunk hover:text-fg disabled:opacity-30"
+                      className="inline-flex size-24 items-center justify-center rounded-sm border-0 bg-transparent text-muted hover:bg-sunk hover:text-fg disabled:opacity-30 touch:size-44 touch:border touch:border-line"
                     >
                       ↑
                     </button>
@@ -240,7 +240,7 @@ export function StagesEditor({
                       aria-label={`Move ${r.label || "stage"} down`}
                       disabled={ro || i === rows.length - 1}
                       onClick={() => moveBy(r.uid, 1)}
-                      className="inline-flex size-24 items-center justify-center rounded-sm border-0 bg-transparent text-muted hover:bg-sunk hover:text-fg disabled:opacity-30"
+                      className="inline-flex size-24 items-center justify-center rounded-sm border-0 bg-transparent text-muted hover:bg-sunk hover:text-fg disabled:opacity-30 touch:size-44 touch:border touch:border-line"
                     >
                       ↓
                     </button>

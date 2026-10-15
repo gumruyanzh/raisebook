@@ -337,7 +337,7 @@ export function ConnectAgent() {
           ))}
         </ul>
         <TableScroll className="max-sm:hidden">
-          <Table minWidth={620}>
+          <Table minWidth={620} stack>
             <THead>
               <Tr>
                 <Th>Tool</Th>

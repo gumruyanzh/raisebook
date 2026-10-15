@@ -75,7 +75,7 @@ import { InvestorSheet } from "./InvestorSheet";
 import { quickPicks } from "@/lib/dates";
 import { PipelineBoard, sortCards, type AgentMark, type BoardSort } from "./PipelineBoard";
 import { ledgerFacts, LedgerDesk, LedgerStrip, shownBuckets } from "./PipelineLedger";
-import { PipelinePhone } from "./PipelinePhone";
+import { PhoneFab, PhoneSummary, PhoneViewBar, PipelinePhone } from "./PipelinePhone";
 import { PipelineTriage, type TriageStore } from "./PipelineTriage";
 import { RoundHeader } from "./RoundHeader";
 import { BatchProgress } from "./research/BatchProgress";
@@ -100,6 +100,7 @@ import {
   readJson,
   readStore,
   toCsv,
+  useCompact,
   useMediaQuery,
   writeStore,
 } from "./util";
@@ -362,7 +363,8 @@ export function Pipeline(props: PipelineProps) {
   }, []);
 
   /* ---------- view (DECISION §3) and per-viewer preferences ---------- */
-  const phone = useMediaQuery("(max-width: 639px)") === true;
+  // The phone layout: a portrait phone, and a phone on its side (under 500px tall).
+  const phone = useCompact();
   const oStage = useMemo(() => findOpenStage(stages), [stages]);
   const stageN = useMemo(() => countByStage(participants), [participants]);
   const openCount = oStage ? (stageN[oStage.key] ?? 0) : 0;
@@ -384,8 +386,20 @@ export function Pipeline(props: PipelineProps) {
     openCount,
     total: participants.length,
   });
-  // Phones have no board: the list, or the Triage takeover when asked for.
-  const view: View = phone ? (resolved.view === "triage" && urlView === "triage" ? "triage" : "table") : resolved.view;
+  // Phones: the list unless the board (or the Triage takeover) is asked for. The phone's own
+  // choice is kept apart from the desktop's.
+  const PHONE_VIEW_KEY = `rb-view-phone:${workspace.slug}:${round.id}`;
+  const [phoneStored, setPhoneStored] = useState<string | null>(null);
+  useLayoutEffect(() => setPhoneStored(readStore(PHONE_VIEW_KEY)), [PHONE_VIEW_KEY]);
+  const view: View = phone
+    ? resolved.view === "triage" && urlView === "triage"
+      ? "triage"
+      : urlView === "board" || urlView === "table"
+        ? urlView
+        : phoneStored === "board"
+          ? "board"
+          : "table"
+    : resolved.view;
   const autoTriage = !phone && resolved.auto && view === "triage";
   // "All 411 are New, so the round opens in Triage." explains the auto pick once per round
   // and browser, then gives the title row back.
@@ -401,8 +415,12 @@ export function Pipeline(props: PipelineProps) {
     if (!phone) {
       setStoredView(v);
       writeStore(VIEW_KEY(workspace.slug, round.id), v);
+    } else if (v !== "triage") {
+      setPhoneStored(v);
+      writeStore(PHONE_VIEW_KEY, v);
     }
-    setParams({ view: v, ...(v !== "triage" ? { tq: null, at: null } : {}) });
+    // The phone list's stage pills filter by stage: the board shows every stage.
+    setParams({ view: v, ...(v !== "triage" ? { tq: null, at: null } : {}), ...(phone && v === "board" ? { stage: null, follow: null } : {}) });
   };
   const startTriage = (tq?: TriageSlice) => setParams({ view: "triage", tq: tq && tq !== "all" ? tq : null, at: null });
 
@@ -1348,24 +1366,35 @@ export function Pipeline(props: PipelineProps) {
   const headRef = useRef<HTMLDivElement>(null);
   const workRef = useRef<HTMLDivElement>(null);
   const [stickyTop, setStickyTop] = useState(0);
-  const [fill, setFill] = useState<number | null>(null);
+  // A number on a desktop; under 1024px (tablets, phones) a CSS height from the dynamic
+  // viewport (dvh), so the iOS address bar showing and hiding never re-lays the page out.
+  const [fill, setFill] = useState<number | string | null>(null);
   // The width the page has (not the viewport: the split sheet takes 512px of it). The title
   // row, ledger and table adapt to this, so nothing truncates when the sheet opens.
   const [headW, setHeadW] = useState(1392);
   const [endSlot, setEndSlot] = useState<HTMLElement | null>(null);
+  const [tabSlot, setTabSlot] = useState<HTMLElement | null>(null);
   const [eatBottom, setEatBottom] = useState(0);
   useLayoutEffect(() => {
     const measure = () => {
-      const bar = document.querySelector<HTMLElement>("body header.sticky");
+      // The app bar on screen (the desktop one or the phone one).
+      const bar = Array.from(document.querySelectorAll<HTMLElement>("body [data-app-bar]")).find((el) => el.offsetHeight > 0);
       const top = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
       const main = surfaceRef.current?.closest("main");
       const pb = main ? parseFloat(getComputedStyle(main).paddingBottom) || 0 : 0;
+      // The phone's tab bar (0 where there is none).
+      const tabs = document.querySelector<HTMLElement>('body nav[aria-label="Sections"]');
+      const tabH = tabs ? tabs.offsetHeight : 0;
       // Keep a 12px gap under the board: the shell's bottom padding is taken back.
       const gap = Math.min(pb, 12);
-      setEatBottom(Math.max(0, pb - gap));
+      setEatBottom(Math.max(0, pb - gap - tabH));
       setStickyTop(top);
       const workTop = workRef.current ? workRef.current.getBoundingClientRect().top + window.scrollY : top + 200;
-      setFill(Math.max(420, Math.floor(window.innerHeight - workTop - gap)));
+      if (phone || window.innerWidth < 1024) {
+        setFill(`max(${phone ? 260 : 360}px, calc(100dvh - ${Math.round(workTop + gap + tabH)}px))`);
+      } else {
+        setFill(Math.max(420, Math.floor(window.innerHeight - workTop - gap)));
+      }
       if (headRef.current) setHeadW(Math.round(headRef.current.clientWidth));
     };
     measure();
@@ -1542,48 +1571,117 @@ export function Pipeline(props: PipelineProps) {
       ref={surfaceRef}
       className="flex flex-col gap-14"
       style={{
-        ...(eatBottom && !phone ? { marginBottom: -eatBottom } : null),
+        ...(eatBottom && (!phone || view === "board") ? { marginBottom: -eatBottom } : null),
         ...(splitOpen ? { paddingRight: sheetW - 8 } : null),
       }}
     >
-      {phone && researchNode ? <div className="flex min-w-0 justify-end">{researchNode}</div> : null}
       {phone ? (
         empty ? null : (
           <>
-          {showSetup ? (
-            <SetupChecklist steps={setupSteps} base={base} roundSlug={round.slug} onDismiss={dismissSetup} />
-          ) : null}
-          <PipelinePhone
-            round={round}
-            stages={stages}
-            rows={filtered}
-            all={participants}
-            openKey={oStage?.key ?? null}
-            facts={facts}
-            moneyOn={money}
-            today={today}
-            canWrite={canWrite}
-            triageOk={triageOk && openCount > 0}
-            stage={stageFilter}
-            dueOnly={follow === "due"}
-            dueTotal={counts.due}
-            selected={canWrite ? selected : null}
-            onSelectedChange={setSelected}
-            onStage={(k) => setParams({ stage: k, follow: null })}
-            onDue={() => setParams({ follow: "due", stage: null })}
-            onBucket={onBucket}
-            onOpen={openInvestor}
-            onStartTriage={() => startTriage()}
-            onFilters={() => setFiltersOpen(true)}
-            // The stage pills are not filters to count (critique 3: "Filter 1" after a pill).
-            activeFilters={activeFilters - (stageFilter ? 1 : 0)}
-            search={qText}
-            onSearch={onSearch}
-            base={base}
-            onListChange={onPhoneList}
-            stickyTop={stickyTop}
-            onAdd={canWrite ? () => setAdding(true) : undefined}
-          />
+            {showSetup ? (
+              <SetupChecklist steps={setupSteps} base={base} roundSlug={round.slug} onDismiss={dismissSetup} />
+            ) : null}
+            <h1 className="sr-only">{round.name}</h1>
+            <PhoneViewBar
+              view={view === "triage" ? "triage" : view === "board" ? "board" : "table"}
+              onView={setView}
+              triageCount={triageOk && openCount > 0 ? openCount : null}
+              slotRef={view === "board" ? setTabSlot : undefined}
+              filters={
+                view === "board" ? (
+                  <Button onClick={() => setFiltersOpen(true)} className="min-h-44 shrink-0" aria-label={`Filter${activeFilters ? `, ${activeFilters} on` : ""}`}>
+                    Filter{activeFilters ? <span className="font-mono text-[12px] text-accent">{activeFilters}</span> : null}
+                  </Button>
+                ) : null
+              }
+              more={
+                <Menu
+                  label={round.name}
+                  align="end"
+                  trigger={
+                    <>
+                      <span aria-hidden>⋯</span>
+                      <span className="sr-only">More for {round.name}</span>
+                    </>
+                  }
+                  triggerClassName="inline-flex size-44 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-lg"
+                  items={[
+                    { label: "Overview", href: `${base}/r/${encodeURIComponent(round.slug)}/overview` },
+                    ...(canWrite
+                      ? [
+                          { label: "Import CSV", href: `${base}/import?round=${encodeURIComponent(round.slug)}` } as MenuEntry,
+                          { label: "Edit round", href: `${base}/r/${encodeURIComponent(round.slug)}/settings` } as MenuEntry,
+                        ]
+                      : []),
+                    ...(view === "board" && anyNextStep
+                      ? [{ type: "separator" } as MenuEntry, { label: "Show next step on cards", selected: showStep, onSelect: toggleStep } as MenuEntry]
+                      : []),
+                  ]}
+                />
+              }
+            />
+            {/* A research run in progress shows over the list; the menu itself is in the summary. */}
+            {researchNode && batch && view !== "triage" ? <div className="flex min-w-0 justify-end">{researchNode}</div> : null}
+            {view === "triage" ? null : (
+              <div className={cn(view === "board" && "short:hidden")}>
+              <PhoneSummary
+                round={round}
+                stages={stages}
+                all={participants}
+                openKey={oStage?.key ?? null}
+                facts={facts}
+                moneyOn={money}
+                today={today}
+                canWrite={canWrite}
+                triageOk={triageOk && openCount > 0}
+                onDue={() => setParams({ follow: "due", stage: null, view: "table" })}
+                onBucket={onBucket}
+                onOpen={openInvestor}
+                onStartTriage={() => startTriage()}
+                extra={batch ? null : researchNode}
+              />
+              </div>
+            )}
+            {view === "board" && (activeFilters > 0 || q) ? (
+              <FilterChips
+                fields={filterFields}
+                active={active}
+                onRemove={(k) => setParams({ [k]: null })}
+                onClear={clearFilters}
+                focusAfterRemove={filterBtnFocus}
+                extra={q ? [{ key: "q", label: `Matches “${q}”`, onRemove: () => { setQText(""); setParams({ q: null }); } }] : undefined}
+              />
+            ) : null}
+            {view === "table" ? (
+              <PipelinePhone
+                round={round}
+                stages={stages}
+                rows={filtered}
+                all={participants}
+                openKey={oStage?.key ?? null}
+                today={today}
+                canWrite={canWrite}
+                triageOk={triageOk && openCount > 0}
+                stage={stageFilter}
+                dueOnly={follow === "due"}
+                dueTotal={counts.due}
+                selected={canWrite ? selected : null}
+                onSelectedChange={setSelected}
+                onStage={(k) => setParams({ stage: k, follow: null })}
+                onDue={() => setParams({ follow: "due", stage: null })}
+                onOpen={openInvestor}
+                onStartTriage={() => startTriage()}
+                onFilters={() => setFiltersOpen(true)}
+                // The stage pills are not filters to count (critique 3: "Filter 1" after a pill).
+                activeFilters={activeFilters - (stageFilter ? 1 : 0)}
+                search={qText}
+                onSearch={onSearch}
+                onListChange={onPhoneList}
+                stickyTop={stickyTop}
+                roomForFab={canWrite}
+              />
+            ) : null}
+            {canWrite && view !== "triage" && n === 0 ? <PhoneFab onAdd={() => setAdding(true)} /> : null}
           </>
         )
       ) : (
@@ -1707,7 +1805,7 @@ export function Pipeline(props: PipelineProps) {
                     label="Display options"
                     align="end"
                     trigger="Display"
-                    triggerClassName="inline-flex h-32 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-fg hover:border-muted"
+                    triggerClassName="inline-flex h-32 items-center gap-6 rounded-sm border border-line bg-surface px-10 text-fg hover:border-muted touch:h-44"
                     items={viewOptions}
                   />
                 ) : anyNextStep ? (
@@ -1717,7 +1815,7 @@ export function Pipeline(props: PipelineProps) {
                     aria-pressed={showStep}
                     onClick={toggleStep}
                     className={cn(
-                      "inline-flex h-32 items-center gap-6 rounded-sm border px-10 whitespace-nowrap",
+                      "inline-flex h-32 items-center gap-6 rounded-sm border px-10 whitespace-nowrap touch:h-44",
                       showStep ? "border-accent bg-accent-soft text-accent" : "border-line bg-surface text-fg hover:border-muted",
                     )}
                   >
@@ -1831,7 +1929,7 @@ export function Pipeline(props: PipelineProps) {
             }}
           />
         </div>
-      ) : phone ? null : (
+      ) : phone && view !== "board" ? null : (
         <div ref={workRef}>
           {view === "board" ? (
             <PipelineBoard
@@ -1852,7 +1950,7 @@ export function Pipeline(props: PipelineProps) {
               // One way in per screen (critique 3): the strip's Start triage when it shows, else
               // the New column's "Triage →".
               onTriage={triageOk && openCount > 0 && !startTriageOnScreen && !deskTriageOnScreen ? () => setView("triage") : undefined}
-              selected={canWrite ? selected : null}
+              selected={canWrite && !phone ? selected : null}
               onSelectedChange={setSelected}
               onOpen={openInvestor}
               onFocusMove={splitOpen ? openInvestor : undefined}
@@ -1861,6 +1959,8 @@ export function Pipeline(props: PipelineProps) {
               extras={extras}
               timeZone={tz}
               endSlot={endSlot}
+              compact={phone}
+              tabSlot={phone ? tabSlot : null}
             />
           ) : (
             <PipelineTable
@@ -1981,18 +2081,25 @@ export function Pipeline(props: PipelineProps) {
         }}
       />
 
-      <Sheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Filters">
-        <div className="flex flex-col gap-10">{mobileFilters}</div>
-        <div className="flex gap-8">
-          <Button variant="primary" onClick={() => setFiltersOpen(false)}>
-            Show {num(filtered.length)} investors
-          </Button>
-          {activeFilters ? (
-            <Button variant="ghost" onClick={clearFilters}>
-              Clear
+      <Sheet
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        title="Filters"
+        bottomOnPhone
+        footer={
+          <>
+            {activeFilters ? (
+              <Button variant="ghost" size="lg" onClick={clearFilters} className="flex-none!">
+                Clear
+              </Button>
+            ) : null}
+            <Button variant="primary" size="lg" onClick={() => setFiltersOpen(false)}>
+              Show {num(filtered.length)} investors
             </Button>
-          ) : null}
-        </div>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-10">{mobileFilters}</div>
       </Sheet>
 
       <ConfirmDialog
@@ -2073,7 +2180,7 @@ function ViewTabs({
               onClick={() => onSelect(v)}
               title={i < 9 ? `${v.name} (${mod}${i + 1})` : v.name}
               className={cn(
-                "h-26 shrink-0 rounded-pill border-0 px-10 text-sm whitespace-nowrap transition-colors duration-[120ms]",
+                "h-26 shrink-0 rounded-pill border-0 px-10 text-sm whitespace-nowrap transition-colors duration-[120ms] touch:h-38",
                 on ? "bg-surface font-medium text-fg shadow-pill" : "bg-transparent text-muted hover:text-fg",
               )}
             >
@@ -2260,7 +2367,7 @@ function SetupMenu({
             Set up {done}/{steps.length}
           </span>
         }
-        triggerClassName="inline-flex h-28 items-center rounded-sm border-0 bg-transparent px-4 hover:bg-sunk"
+        triggerClassName="inline-flex h-28 items-center rounded-sm border-0 bg-transparent px-4 hover:bg-sunk touch:h-44 touch:px-10"
         items={[
           { type: "label", label: `Get set up · ${done}/${steps.length}` },
           ...steps.map((x) => ({

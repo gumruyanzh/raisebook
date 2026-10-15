@@ -24,6 +24,8 @@ const HEAD_H = 30;
 const ROW_H = 58;
 /** A row with no note or next step is one line. */
 const ROW_H_1 = 42;
+/** Touch screens: two lines beside 44px Done and Snooze buttons. */
+const ROW_H_TOUCH = 64;
 const WINDOW_DAYS = 7;
 
 function groupOf(i: FollowUpItem, today: string): GroupKey | null {
@@ -136,9 +138,9 @@ export function TodayQueue({
     (i: number) => {
       const r = rows[i];
       if (!r || r.type === "head") return HEAD_H;
-      return twoLines(r.item) ? ROW_H : ROW_H_1;
+      return coarse && canWrite ? ROW_H_TOUCH : twoLines(r.item) ? ROW_H : ROW_H_1;
     },
-    [rows, twoLines],
+    [rows, twoLines, coarse, canWrite],
   );
   const v = useVirtualRows({ scrollRef: scroll, count: rows.length, height, initial: 40 });
 
@@ -447,8 +449,32 @@ export function TodayQueue({
                   "focus-visible:bg-accent-soft focus-visible:shadow-[inset_2px_0_0_var(--accent)]",
                   on && prompt?.item.investor.id === it.investor.id && "bg-accent-soft shadow-[inset_2px_0_0_var(--accent)]",
                 )}
-                style={{ height: twoLines(it) ? ROW_H : ROW_H_1 }}
+                style={{ height: coarse && canWrite ? ROW_H_TOUCH : twoLines(it) ? ROW_H : ROW_H_1 }}
               >
+                {coarse && canWrite ? (
+                  // Touch: who and when stacked on the left, Done and Snooze as 44px buttons on
+                  // the right (the firm and the buttons fought for one line).
+                  <div className="flex min-w-0 items-center gap-8">
+                    <div className="flex min-w-0 flex-1 flex-col gap-2">
+                      <span className="flex min-w-0 items-center gap-8">
+                        <StageDot color={it.stage.color} />
+                        <span className="min-w-0 truncate font-semibold">{it.investor.name}</span>
+                      </span>
+                      <span className="t-body-s min-w-0 truncate pl-17 text-muted">
+                        <span className={cn("font-mono", g === "soon" ? "text-muted" : "text-bad")}>{dueText(it, today)}</span>
+                        {it.investor.firm ? ` · ${it.investor.firm}` : ""}
+                        {line ? ` · ${line}` : ""}
+                      </span>
+                    </div>
+                    <Button size="sm" tabIndex={on ? 0 : -1} onClick={() => startPrompt("done", it)}>
+                      Done
+                    </Button>
+                    <Button size="sm" tabIndex={on ? 0 : -1} onClick={() => startPrompt("snooze", it)}>
+                      Snooze
+                    </Button>
+                  </div>
+                ) : (
+                <>
                 <div className="flex min-w-0 items-center gap-8">
                   <StageDot color={it.stage.color} />
                   <span className="max-w-[60%] shrink-0 truncate font-semibold sm:max-w-[45%]">{it.investor.name}</span>
@@ -491,6 +517,8 @@ export function TodayQueue({
                     {line}
                   </p>
                 ) : null}
+                </>
+                )}
               </div>
             );
           })}

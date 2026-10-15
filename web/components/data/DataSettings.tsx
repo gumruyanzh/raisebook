@@ -100,7 +100,7 @@ export function DataSettings({
         </p>
         {runs.length ? (
           <TableScroll>
-            <Table minWidth={640}>
+            <Table minWidth={640} stack>
               <THead>
                 <Tr>
                   <Th>When</Th>

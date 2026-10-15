@@ -97,7 +97,9 @@ export function NextMeeting({
       {items === null ? (
         <p className="t-body-s text-muted">Loading meetings…</p>
       ) : items.length === 0 ? (
-        <p className="t-body-s text-muted">Nothing scheduled.{canWrite ? " Press B to schedule a meeting." : ""}</p>
+        <p className="t-body-s text-muted">
+          Nothing scheduled.{canWrite ? <span className="touch:hidden"> Press B to schedule a meeting.</span> : ""}
+        </p>
       ) : (
         <ul className="m-0 list-none p-0">
           {items.map((m) => (

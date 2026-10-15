@@ -1,16 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useId,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/cn";
 
@@ -101,7 +94,10 @@ export function Menu({
   };
 
   // Fixed positioning from the wrapper's rect, so scroll containers never clip the menu.
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  // On a phone (the compact layout) the menu is a bottom sheet instead: full width, within
+  // thumb reach, with 44px+ rows.
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | "sheet" | null>(null);
+  const sheet = pos === "sheet";
   const placed = pos !== null;
 
   // Focus the selected (or first) item once the menu is placed (an invisible list cannot
@@ -118,6 +114,10 @@ export function Menu({
       return;
     }
     const place = () => {
+      if (window.matchMedia("(max-width: 639px), (max-height: 499px)").matches) {
+        setPos("sheet");
+        return;
+      }
       const r = wrap.current?.getBoundingClientRect();
       if (!r) return;
       const vw = document.documentElement.clientWidth;
@@ -138,7 +138,15 @@ export function Menu({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      // The phone's bottom sheet is portaled to <body>: a tap inside it is not "outside".
+      if (
+        wrap.current &&
+        !wrap.current.contains(t) &&
+        !list.current?.contains(t) &&
+        !(t instanceof Element && t.closest("[data-menu-scrim]"))
+      )
+        setOpen(false);
     };
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
@@ -196,6 +204,103 @@ export function Menu({
     }
   };
 
+  const listEl = (
+    <div
+      ref={list}
+      id={menuId}
+      role="menu"
+      aria-label={label}
+      tabIndex={-1}
+      onKeyDown={onKey}
+      className={cn(
+        sheet
+          ? "anim-sheet-up fixed inset-x-0 bottom-0 z-[81] max-h-[min(560px,80dvh)] overflow-y-auto overscroll-contain rounded-t-[14px] border-t border-line bg-surface pt-6 pb-[calc(10px+env(safe-area-inset-bottom))] shadow-dialog"
+          : "anim-fade fixed z-[45] max-h-[min(420px,70vh)] overflow-y-auto rounded-md border border-line bg-surface py-4 shadow-menu",
+        !pos && "invisible",
+      )}
+      style={sheet ? undefined : { minWidth, ...(typeof pos === "object" ? pos : null) }}
+    >
+      {sheet ? (
+        <div className="sticky top-0 z-[1] -mt-6 flex flex-col items-center bg-surface pt-6 pb-4" role="presentation">
+          <span aria-hidden className="mb-6 h-4 w-36 rounded-pill bg-line" />
+          <span className="t-label w-full truncate px-16 py-4 text-center">{label}</span>
+        </div>
+      ) : null}
+      {items.map((entry, idx) => {
+        if (entry.type === "separator") {
+          return <div key={idx} role="separator" className="my-4 border-t border-line" />;
+        }
+        if (entry.type === "label") {
+          return (
+            <div key={idx} className={cn("t-label px-12 pt-6 pb-4", sheet && "px-16 pt-10")} role="presentation">
+              {entry.label}
+            </div>
+          );
+        }
+        if (!isItem(entry)) return null;
+        const role = entry.selected !== undefined ? "menuitemradio" : "menuitem";
+        const cls = cn(
+          "flex w-full items-center gap-8 border-0 bg-transparent px-12 py-6 text-left text-base whitespace-nowrap outline-none touch:min-h-44",
+          sheet && "min-h-48 px-16 text-[16px]",
+          "focus-visible:bg-accent-soft hover:bg-accent-soft focus:bg-accent-soft",
+          entry.danger ? "text-bad" : "text-fg",
+          entry.disabled && "cursor-not-allowed opacity-50",
+        );
+        const text = entry.textValue ?? (typeof entry.label === "string" ? entry.label : undefined);
+        const inner = (
+          <>
+            {entry.icon}
+            <span className={cn("min-w-0 flex-1 truncate", entry.selected && "font-semibold")}>{entry.label}</span>
+            {entry.hint ? <span className="t-micro text-muted">{entry.hint}</span> : null}
+            {entry.accel && !entry.hint ? (
+              <kbd className="inline-flex h-18 min-w-18 items-center justify-center rounded-kbd border border-line px-4 font-mono text-xs text-muted touch:hidden">
+                {entry.accel}
+              </kbd>
+            ) : null}
+          </>
+        );
+        const common = {
+          role,
+          tabIndex: -1,
+          "aria-checked": entry.selected,
+          "aria-disabled": entry.disabled || undefined,
+          "data-text": text,
+          "data-accel": entry.accel?.toLowerCase(),
+          className: cls,
+        } as const;
+        if (entry.href && !entry.disabled) {
+          return (
+            <Link
+              key={idx}
+              href={entry.href}
+              {...common}
+              onClick={() => {
+                entry.onSelect?.();
+                close(false);
+              }}
+            >
+              {inner}
+            </Link>
+          );
+        }
+        return (
+          <button
+            key={idx}
+            type="button"
+            {...common}
+            onClick={() => {
+              if (entry.disabled) return;
+              close(true);
+              entry.onSelect?.();
+            }}
+          >
+            {inner}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div ref={wrap} className={cn("relative inline-flex", className)}>
       {trigger !== undefined ? (
@@ -217,93 +322,19 @@ export function Menu({
           {trigger}
         </button>
       ) : null}
-      {open ? (
-        <div
-          ref={list}
-          id={menuId}
-          role="menu"
-          aria-label={label}
-          tabIndex={-1}
-          onKeyDown={onKey}
-          className={cn(
-            "anim-fade fixed z-[45] max-h-[min(420px,70vh)] overflow-y-auto rounded-md border border-line bg-surface py-4 shadow-menu",
-            !pos && "invisible",
-          )}
-          style={{ minWidth, ...pos }}
-        >
-          {items.map((entry, idx) => {
-            if (entry.type === "separator") {
-              return <div key={idx} role="separator" className="my-4 border-t border-line" />;
-            }
-            if (entry.type === "label") {
-              return (
-                <div key={idx} className="t-label px-12 pt-6 pb-4" role="presentation">
-                  {entry.label}
-                </div>
-              );
-            }
-            if (!isItem(entry)) return null;
-            const role = entry.selected !== undefined ? "menuitemradio" : "menuitem";
-            const cls = cn(
-              "flex w-full items-center gap-8 border-0 bg-transparent px-12 py-6 text-left text-base whitespace-nowrap outline-none",
-              "focus-visible:bg-accent-soft hover:bg-accent-soft focus:bg-accent-soft",
-              entry.danger ? "text-bad" : "text-fg",
-              entry.disabled && "cursor-not-allowed opacity-50",
-            );
-            const text = entry.textValue ?? (typeof entry.label === "string" ? entry.label : undefined);
-            const inner = (
+      {open
+        ? sheet && typeof document !== "undefined"
+          ? createPortal(
+              // On a phone the sheet leaves any stacking context (a fixed tab bar, a sheet).
               <>
-                {entry.icon}
-                <span className={cn("min-w-0 flex-1 truncate", entry.selected && "font-semibold")}>{entry.label}</span>
-                {entry.hint ? <span className="t-micro text-muted">{entry.hint}</span> : null}
-                {entry.accel && !entry.hint ? (
-                  <kbd className="inline-flex h-18 min-w-18 items-center justify-center rounded-kbd border border-line px-4 font-mono text-xs text-muted">
-                    {entry.accel}
-                  </kbd>
-                ) : null}
-              </>
-            );
-            const common = {
-              role,
-              tabIndex: -1,
-              "aria-checked": entry.selected,
-              "aria-disabled": entry.disabled || undefined,
-              "data-text": text,
-              "data-accel": entry.accel?.toLowerCase(),
-              className: cls,
-            } as const;
-            if (entry.href && !entry.disabled) {
-              return (
-                <Link
-                  key={idx}
-                  href={entry.href}
-                  {...common}
-                  onClick={() => {
-                    entry.onSelect?.();
-                    close(false);
-                  }}
-                >
-                  {inner}
-                </Link>
-              );
-            }
-            return (
-              <button
-                key={idx}
-                type="button"
-                {...common}
-                onClick={() => {
-                  if (entry.disabled) return;
-                  close(true);
-                  entry.onSelect?.();
-                }}
-              >
-                {inner}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+                <div aria-hidden data-menu-scrim className="anim-fade fixed inset-0 z-[80] bg-scrim" onClick={() => close(true)} />
+                {listEl}
+              </>,
+              // Inside a modal <dialog> the rest of the page is inert: stay in the dialog.
+              wrap.current?.closest("dialog") ?? document.body,
+            )
+          : listEl
+        : null}
     </div>
   );
 }

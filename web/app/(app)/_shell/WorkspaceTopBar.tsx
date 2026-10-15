@@ -149,6 +149,7 @@ export function WorkspaceTopBar() {
         onOpenPalette={() => setPaletteOpen(true)}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onEditName={needsName ? openName : undefined}
+        sampleNoticeHref={ws?.is_sandbox && !session.workspaces.some((w) => !w.is_sandbox) ? "/onboarding" : undefined}
       />
       <AppKeyboard
         onNewRound={onNewRound}

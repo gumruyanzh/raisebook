@@ -32,7 +32,8 @@ export function HeroDesk({ className }: { className?: string }) {
       <div
         aria-hidden
         inert
-        className="w-[760px] overflow-hidden rounded-l-md border-y border-l border-line bg-canvas lg:w-[1080px]"
+        // Phones: drawn at a little over half size, so most of the desk shows, not a corner of it.
+        className="w-[760px] overflow-hidden rounded-l-md border-y border-l border-line bg-canvas max-sm:[zoom:0.56] lg:w-[1080px]"
       >
         {/* A miniature of the app top bar. */}
         <div className="flex h-44 items-center gap-14 border-b border-line px-14 whitespace-nowrap [&>*]:shrink-0">

@@ -31,6 +31,7 @@ import { AddInvestorDialog } from "./AddInvestorDialog";
 import { MeetingRow } from "./meetings/MeetingRow";
 import { useNow, useViewerTimeZone } from "./meetings/useViewerTimeZone";
 import { TodayQueue } from "./TodayQueue";
+import { useCompact } from "./util";
 
 function Panel({ title, aside, children, className }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
@@ -77,7 +78,7 @@ function RoundMeetings({ round, summary, initial }: { round: Round; summary: Rou
       }
     >
       {items.length === 0 ? (
-        <p className="t-body-s text-muted">No meetings scheduled in {round.name}. Press B in an investor&apos;s file to schedule one.</p>
+        <p className="t-body-s text-muted">No meetings scheduled in {round.name}.<span className="touch:hidden"> Press B in an investor&apos;s file to schedule one.</span></p>
       ) : (
         <ul className="m-0 list-none p-0">
           {[...due, ...upcoming].slice(0, 6).map((m) => (
@@ -151,6 +152,8 @@ export function RoundOverview({
   const [summary, setSummary] = useState(initialSummary);
   const [feed, setFeed] = useState(activity);
   const [adding, setAdding] = useState(false);
+  const compact = useCompact();
+  const [allActivity, setAllActivity] = useState(false);
   const tz = workspace.timezone;
   const pipeline = `/w/${encodeURIComponent(workspace.slug)}/r/${encodeURIComponent(round.slug)}`;
   const cur = summary.money.currency;
@@ -263,7 +266,8 @@ export function RoundOverview({
             <SectionLabel>Recent activity</SectionLabel>
             <Timeline
               className="mt-8"
-              items={feed}
+              // Phones: the latest ten, then "Show all" (the page was 5,900px tall).
+              items={compact && !allActivity ? feed.slice(0, 10) : feed}
               timeZone={tz}
               currency={cur}
               withInvestor
@@ -283,6 +287,11 @@ export function RoundOverview({
               }}
               empty="Nothing has happened in this round yet."
             />
+            {compact && !allActivity && feed.length > 10 ? (
+              <Button className="mt-10 w-full" onClick={() => setAllActivity(true)}>
+                Show all {num(feed.length)}
+              </Button>
+            ) : null}
       </section>
       )}
 

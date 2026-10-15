@@ -195,7 +195,8 @@ export function Ledger(p: LedgerProps) {
             segments={p.funnel}
             onSelect={p.onStageSelect}
             active={p.activeStage}
-            legendClassName="max-sm:hidden"
+            legendClassName={variant === "full" ? undefined : "max-sm:hidden"}
+            phoneList={variant === "full"}
           />
         ) : (
           // An all-zero funnel says nothing; it appears with the first investor (P2-4).

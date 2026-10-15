@@ -156,7 +156,7 @@ export function Account({ me, workspaces, today }: { me: Me; workspaces: Workspa
       <section aria-label="Workspaces">
         <SectionLabel aside={<Link href="/onboarding" className="link t-body-s">New workspace</Link>}>Workspaces</SectionLabel>
         <TableScroll>
-          <Table minWidth={520}>
+          <Table minWidth={520} stack>
             <THead>
               <Tr>
                 <Th>Name</Th>

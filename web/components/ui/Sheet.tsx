@@ -28,7 +28,13 @@ export function Sheet({
   bodyRef,
   modal = true,
   top,
+  footer,
+  bottomOnPhone,
 }: {
+  /** Pinned under the scrolling body (e.g. "Show 100 investors"). */
+  footer?: ReactNode;
+  /** On a phone, slide up from the bottom (a bottom sheet) instead of in from the right. */
+  bottomOnPhone?: boolean;
   open: boolean;
   onClose: () => void;
   title: ReactNode;
@@ -88,10 +94,13 @@ export function Sheet({
         className={cn(
           "anim-sheet fixed inset-y-0 right-0 z-50 flex flex-col border-l border-line bg-surface",
           "pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]",
+          bottomOnPhone &&
+            "phone:anim-sheet-up phone:top-auto! phone:max-h-[88dvh] phone:w-full! phone:rounded-t-[14px] phone:border-t phone:border-l-0 phone:pt-0 phone:shadow-dialog",
           className,
         )}
         style={{ width: `min(${width}px, 100%)`, ...(top !== undefined ? { top } : null) }}
       >
+        {bottomOnPhone ? <span aria-hidden className="mx-auto mt-8 hidden h-4 w-36 shrink-0 rounded-pill bg-line phone:block" /> : null}
         <header className="flex items-start gap-10 border-b border-line px-18 pt-16 pb-12">
           <div className="min-w-0 flex-1">
             <h2 ref={titleRef} id={titleId} tabIndex={focusTitle ? -1 : undefined} className="t-display-s outline-none">
@@ -103,9 +112,12 @@ export function Sheet({
           {headerAside ? <div className="shrink-0 pt-4">{headerAside}</div> : null}
           <CloseButton ref={close} onClick={onClose} />
         </header>
-        <div ref={bodyRef} className="flex flex-col gap-16 overflow-y-auto overscroll-contain px-18 pt-14 pb-24">
+        <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col gap-16 overflow-y-auto overscroll-contain px-18 pt-14 pb-24 phone:px-16">
           {children}
         </div>
+        {footer ? (
+          <div className="flex shrink-0 gap-8 border-t border-line bg-surface px-18 py-12 phone:px-16 phone:[&>*]:flex-1">{footer}</div>
+        ) : null}
       </div>
     </>,
     document.body,
@@ -131,7 +143,7 @@ export function CloseButton({
       onClick={onClick}
       aria-label={label}
       className={cn(
-        "inline-flex size-32 shrink-0 items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg focus-visible:outline-offset-1",
+        "inline-flex size-32 shrink-0 items-center justify-center rounded-sm border border-line bg-surface text-muted hover:text-fg focus-visible:outline-offset-1 touch:size-44",
         className,
       )}
     >

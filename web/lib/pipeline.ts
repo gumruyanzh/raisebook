@@ -548,8 +548,10 @@ const PEEK = 60;
  * one peeking 60px out at the right edge (never a sliver that reads as the board's end).
  * Null under 640px (phones use the list).
  */
-export function boardTrack(w: number, n: number): string | null {
+export function boardTrack(w: number, n: number, tablet = false): string | null {
   if (w < 640 || n === 0) return null;
+  // Tablet screens: 280px columns that snap, under stage tabs (two and a good part of a third).
+  if (tablet && w < 900) return n * 280 + (n - 1) * COL_GAP <= w ? "minmax(0, 1fr)" : "280px";
   if (n * COL_MIN + (n - 1) * COL_GAP <= w) return "minmax(0, 1fr)";
   const whole = Math.max(1, Math.floor((w - PEEK + COL_GAP) / (COL_MIN + COL_GAP)));
   return `${Math.floor((w - PEEK - whole * COL_GAP) / whole)}px`;

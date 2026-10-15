@@ -187,7 +187,7 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
           </p>
         ) : null}
         <TableScroll>
-          <Table minWidth={640}>
+          <Table minWidth={640} stack>
             <THead>
               <Tr>
                 <Th>Name</Th>
@@ -261,7 +261,7 @@ export function MembersSettings({ members: m0, invites: i0, today }: { members: 
               <p className="t-body-s text-muted">No pending invites.</p>
             ) : (
               <TableScroll>
-                <Table minWidth={560}>
+                <Table minWidth={560} stack>
                   <THead>
                     <Tr>
                       <Th>Email</Th>

@@ -117,7 +117,7 @@ export function StageSelector({
             title={disabled ? "View only" : undefined}
             onClick={() => !active && onSelect?.(s.key)}
             className={cn(
-              "t-body-s inline-flex h-28 items-center gap-6 rounded-pill border px-10 transition-colors duration-[120ms]",
+              "t-body-s inline-flex h-28 shrink-0 items-center gap-6 rounded-pill border px-10 whitespace-nowrap transition-colors duration-[120ms] touch:h-44 touch:px-14",
               active
                 ? "border-fg bg-fg text-canvas"
                 : "border-line bg-surface text-fg hover:border-muted",

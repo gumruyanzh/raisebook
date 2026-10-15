@@ -855,16 +855,26 @@ export function InvestorsDirectory({
         </div>
       ) : null}
 
-      <Sheet open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Filters" subline={`${num(shown.length)} of ${num(rows.length)} contacts`}>
-        <div className="flex flex-col gap-12 px-18 py-16">
-          {filterControls(true)}
-          <div className="flex gap-8">
-            <Button variant="primary" onClick={() => setFiltersOpen(false)}>
+      <Sheet
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        title="Filters"
+        subline={`${num(shown.length)} of ${num(rows.length)} contacts`}
+        bottomOnPhone
+        footer={
+          <>
+            {filtered ? (
+              <Button size="lg" onClick={clearAll} className="flex-none!">
+                Clear
+              </Button>
+            ) : null}
+            <Button variant="primary" size="lg" onClick={() => setFiltersOpen(false)}>
               Show {num(shown.length)}
             </Button>
-            {filtered ? <Button onClick={clearAll}>Clear</Button> : null}
-          </div>
-        </div>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-12">{filterControls(true)}</div>
       </Sheet>
 
       {tagDraft ? (

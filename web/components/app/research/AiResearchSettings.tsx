@@ -473,7 +473,7 @@ export function AiResearchSettings({
           <p className="t-body-s text-muted">No research yet. Open an investor and press Research on the Dossier tab, or match identities in bulk from a round.</p>
         ) : (
           <TableScroll>
-            <Table className="min-w-[560px]">
+            <Table className="min-w-[560px]" stack>
               <THead>
                 <Tr>
                   <Th>Investor</Th>

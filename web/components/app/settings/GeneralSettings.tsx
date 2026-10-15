@@ -194,7 +194,7 @@ export function GeneralSettings({ detail, rounds: initialRounds }: { detail: Wor
           <p className="t-body-s text-muted">No rounds yet. Create one to start a pipeline.</p>
         ) : (
           <TableScroll>
-            <Table minWidth={620}>
+            <Table minWidth={620} stack>
               <THead>
                 <Tr>
                   <Th>Round</Th>

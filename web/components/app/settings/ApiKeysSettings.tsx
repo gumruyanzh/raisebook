@@ -136,7 +136,7 @@ export function ApiKeysSettings({ keys: k0, today }: { keys: ApiKey[] | null; to
           </EmptyState>
         ) : (
           <TableScroll>
-            <Table minWidth={900}>
+            <Table minWidth={900} stack>
               <THead>
                 <Tr>
                   <Th>Name</Th>

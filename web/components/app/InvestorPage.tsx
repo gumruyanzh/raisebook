@@ -162,9 +162,10 @@ function RoundRow({
             </Select>
           </span>
         </label>
-        <div className="flex min-w-0 flex-col gap-4">
+        {/* Touch: five 44px-tall pips need the row's full width. */}
+        <div className="flex min-w-0 flex-col gap-4 touch:col-span-full">
           <span className="text-[12px] text-muted">Fit</span>
-          <span className="flex h-32 items-center">
+          <span className="flex h-32 items-center touch:h-44">
             <FitMeter editable value={p.fit} disabled={ro} label={`Fit for ${round.name}`} onChange={(fit) => void save({ fit })} />
           </span>
         </div>
@@ -372,8 +373,10 @@ export function InvestorPage({
         aside={who || undefined}
       />
       <div className="grid grid-cols-1 gap-24 xl:grid-cols-12">
-        <div className="flex min-w-0 flex-col gap-24 xl:col-span-5">
-          <header className="flex flex-col gap-8">
+        {/* Phones: what you act on first (rounds, meeting, log), the profile after it
+            (it was a 20-row table before anything you could do). */}
+        <div className="flex min-w-0 flex-col gap-24 phone:contents xl:col-span-5">
+          <header className="flex flex-col gap-8 phone:order-1">
             <div className="flex flex-wrap gap-4">
               <Chip tone="type">{INVESTOR_TYPE_LABEL[inv.type]}</Chip>
               {inv.stage_focus.map((st) => (
@@ -406,16 +409,16 @@ export function InvestorPage({
               </a>
             ) : null}
           </header>
-          <div className="rounded-md border border-line bg-surface px-16 pt-16 pb-8">
+          <div className="rounded-md border border-line bg-surface px-16 pt-16 pb-8 phone:order-5">
             <InvestorProfile client={client} investor={inv} currency={currency} canWrite={canWrite} onSaved={setInv} />
           </div>
-          <div className="rounded-md border border-line bg-surface p-16">
+          <div className="rounded-md border border-line bg-surface p-16 phone:order-6">
             <NotesEditor client={client} investor={inv} canWrite={canWrite} onSaved={setInv} />
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-24 xl:col-span-7">
-          <section aria-label="Rounds" className="rounded-md border border-line bg-surface p-16">
+        <div className="flex min-w-0 flex-col gap-24 phone:contents xl:col-span-7">
+          <section aria-label="Rounds" className="rounded-md border border-line bg-surface p-16 phone:order-2">
             <SectionLabel
               aside={
                 canWrite && notIn.length ? (
@@ -461,7 +464,7 @@ export function InvestorPage({
             )}
           </section>
 
-          <div className="rounded-md border border-line bg-surface p-16">
+          <div className="rounded-md border border-line bg-surface p-16 phone:order-3">
             <NextMeeting
               client={client}
               wsSlug={workspace.slug}
@@ -477,7 +480,7 @@ export function InvestorPage({
             />
           </div>
 
-          <section id="dossier" aria-label="Dossier" className="scroll-mt-80 rounded-md border border-line bg-surface p-16">
+          <section id="dossier" aria-label="Dossier" className="scroll-mt-80 rounded-md border border-line bg-surface p-16 phone:order-7">
             <SectionLabel>Dossier</SectionLabel>
             <DossierPanel
               investorId={inv.id}
@@ -501,7 +504,7 @@ export function InvestorPage({
             />
           </section>
 
-          <section id="timeline" aria-label="Timeline" className="scroll-mt-80 rounded-md border border-line bg-surface p-16">
+          <section id="timeline" aria-label="Timeline" className="scroll-mt-80 rounded-md border border-line bg-surface p-16 phone:order-4">
             <SectionLabel>Log</SectionLabel>
             <LogComposer
               client={client}

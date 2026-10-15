@@ -1,4 +1,6 @@
-import type { ComponentProps, CSSProperties, KeyboardEvent, ReactNode, Ref } from "react";
+"use client";
+
+import { useLayoutEffect, useRef, type ComponentProps, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from "react";
 
 import { cn } from "@/lib/cn";
 
@@ -35,11 +37,45 @@ export function Table({
   className,
   minWidth,
   style,
+  stack,
   ...rest
-}: ComponentProps<"table"> & { minWidth?: number }) {
+}: ComponentProps<"table"> & {
+  minWidth?: number;
+  /**
+   * Under 640px each row becomes a card (no sideways scroll): the first cell across the top,
+   * the others in two columns, each under its column's name (read from the header).
+   */
+  stack?: boolean;
+}) {
+  const ref = useRef<HTMLTableElement>(null);
+  useLayoutEffect(() => {
+    const t = ref.current;
+    if (!stack || !t) return;
+    const label = () => {
+      // A header that is only screen-reader text ("Remove" over a Remove button) gives no label.
+      const visibleText = (el: Node): string =>
+        el instanceof HTMLElement && el.classList.contains("sr-only")
+          ? ""
+          : el.nodeType === Node.TEXT_NODE
+            ? (el.textContent ?? "")
+            : Array.from(el.childNodes).map(visibleText).join("");
+      const heads = Array.from(t.querySelectorAll<HTMLElement>("thead tr:first-child > th")).map((th) => visibleText(th).trim());
+      for (const tr of Array.from(t.querySelectorAll<HTMLTableRowElement>("tbody tr"))) {
+        Array.from(tr.cells).forEach((td, i) => {
+          const l = heads[i] ?? "";
+          if (td.dataset.label !== l) td.dataset.label = l;
+        });
+      }
+    };
+    label();
+    const mo = new MutationObserver(label);
+    mo.observe(t, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [stack]);
   return (
     <table
-      className={cn("w-full border-collapse text-base", className)}
+      ref={ref}
+      className={cn("w-full border-collapse text-base", stack && "rb-stack", className)}
       style={{ minWidth, ...style }}
       {...rest}
     />

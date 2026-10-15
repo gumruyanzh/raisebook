@@ -202,3 +202,14 @@ export function newIdempotencyKey(): string {
     return `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 }
+
+/**
+ * The compact (phone) layout: under 640px wide, or under 500px tall, so a phone on its side
+ * gets the phone layout too (design/mobile-audit). Mirrors the `phone:` CSS variant.
+ */
+export const COMPACT_QUERY = "(max-width: 639px), (max-height: 499px)";
+
+/** `true` in the compact (phone) layout; `false` before mount and on larger screens. */
+export function useCompact(): boolean {
+  return useMediaQuery(COMPACT_QUERY) === true;
+}
