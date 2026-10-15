@@ -15,12 +15,7 @@ import { ERROR_CODES, RATE_LIMITS, REST_GROUPS, SHAPES } from "@/components/mark
 import { PUBLIC_API_URL, pageMeta } from "@/components/marketing/site";
 import { CodeBlock } from "@/components/ui";
 
-export const metadata: Metadata = {
-  title: "REST API",
-  description:
-    "The Raisebook REST API under /v1: authentication with workspace API keys, conventions, errors, rate limits and every endpoint.",
-  ...pageMeta("/docs/api"),
-};
+export const metadata: Metadata = pageMeta("/docs/api");
 
 const EXAMPLE = [
   `curl ${PUBLIC_API_URL}/v1/rounds/seed/summary \\`,

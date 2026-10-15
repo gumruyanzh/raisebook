@@ -230,10 +230,24 @@ GIT_SHA=$(git rev-parse --short HEAD) docker compose -f deploy/docker-compose.ym
 docker compose -f deploy/docker-compose.yml up -d    # migrate runs before the new API starts
 curl -s https://api.raisebook.org/healthz            # "commit" is the new SHA
 docker image prune -f
+deploy/indexnow.sh                                   # tell Bing & co. the public pages changed
 ```
 
 Migrations run automatically through the `migrate` service. If a migration fails, the API
 keeps running the old image; read `docker compose logs migrate`.
+
+### Search engines and AI assistants
+
+The public pages, `/sitemap.xml`, `/robots.txt`, `/llms.txt` and `/llms-full.txt` are built
+from `web/lib/seo/` (the page registry, facts, comparisons and FAQ). Once, by the owner:
+
+1. **Google Search Console**: add the domain property `raisebook.org`, verify with the DNS
+   TXT record it gives you (GoDaddy → DNS → add TXT on `@`), then submit
+   `https://raisebook.org/sitemap.xml`.
+2. **Bing Webmaster Tools** (feeds ChatGPT search and Copilot): import the site from Search
+   Console, or verify with its DNS CNAME/TXT record, then submit the same sitemap.
+3. **IndexNow**: the key file is `web/public/<key>.txt`; `deploy/indexnow.sh` pings
+   api.indexnow.org with every sitemap URL. Run it after each deploy that changes public pages.
 
 ---
 
@@ -275,6 +289,6 @@ $dc up -d
 - [ ] An MCP client connects with a key (section 3).
 - [ ] Backups run, an off-site copy expires after 14 days, and a restore was tested.
 - [x] The GitHub repository is public (AGPL source offer).
-- [ ] `tools/list` on production returns 17 tools (22 with AI research on) (section 3).
+- [ ] `tools/list` on production returns 21 tools (26 with AI research on) (section 3).
 - [ ] External uptime checks on `https://raisebook.org/` and `https://api.raisebook.org/healthz/ready`
       alert the owner; droplet alerts for CPU, memory and disk are set.

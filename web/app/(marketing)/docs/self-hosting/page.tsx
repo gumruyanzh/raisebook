@@ -14,12 +14,7 @@ import {
 import { REPO_URL, pageMeta } from "@/components/marketing/site";
 import { CodeBlock } from "@/components/ui";
 
-export const metadata: Metadata = {
-  title: "Self-hosting",
-  description:
-    "Run Raisebook on your own server with Docker Compose: Postgres, the API and MCP server, the web app and Caddy for TLS.",
-  ...pageMeta("/docs/self-hosting"),
-};
+export const metadata: Metadata = pageMeta("/docs/self-hosting");
 
 const INSTALL = [
   `git clone ${REPO_URL}.git`,

@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 
-import { pageMeta } from "@/components/marketing/site";
-
 import {
   A,
   C,
@@ -13,14 +11,10 @@ import {
   P,
   Ul,
 } from "@/components/marketing/docs/Prose";
+import { pageMeta } from "@/components/marketing/site";
 import { CodeBlock } from "@/components/ui";
 
-export const metadata: Metadata = {
-  title: "Export and delete",
-  description:
-    "Take your data out of Raisebook as CSV or JSON at any time, and delete an investor, a round, a workspace or your account permanently.",
-  ...pageMeta("/docs/export"),
-};
+export const metadata: Metadata = pageMeta("/docs/export");
 
 const ROUND_COLUMNS =
   "investor_id, name, firm, title, type, email, linkedin_url, website_url, x_url, location, check_min, check_max, check_note, stage_focus, industries, tags, source, warm_intro_by, stage, stage_label, fit, priority, probability, amount_soft, amount_committed, committed_on, follow_up_on, follow_up_note, next_step, owner_email, last_activity_at, notes";

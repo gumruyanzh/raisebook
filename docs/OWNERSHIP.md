@@ -166,7 +166,7 @@ Owns:
 ### Landing+Docs (LD)
 Owns:
 - `web/app/(marketing)/**` (`layout.tsx`, `page.tsx`, `docs/**`, `privacy/page.tsx`,
-  `terms/page.tsx`, `sitemap.ts`, `opengraph-image.tsx`)
+  `terms/page.tsx`, `sitemap.ts`) and `app/og-image/[slug]/route.tsx`
 - `web/components/marketing/**` (landing vignettes built from `components/ui`, with fictional
   data in `web/components/marketing/sample.ts`)
 - Root `README.md` (with the free-forever promise, privacy promise, quick start, MCP snippet,

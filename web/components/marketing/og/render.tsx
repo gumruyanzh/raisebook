@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { ImageResponse } from "next/og";
 
 /**
- * Open Graph card renderer (1200×630), used by the marketing opengraph-image routes. Rendered
+ * Open Graph card renderer (1200×630), used by app/og-image/[slug]/route.tsx. Rendered
  * at build time. The image renderer cannot read CSS variables, so the light-theme token values
  * from design/SYSTEM.md §1 are repeated here; keep them in sync with app/globals.css.
  * Fonts are the OFL-licensed WOFF files next to this module (satori does not read WOFF2).
@@ -82,7 +82,7 @@ export async function renderOg({
           <div
             style={{
               fontFamily: "Bricolage",
-              fontSize: 76,
+              fontSize: title.length > 44 ? 60 : 76,
               lineHeight: 1.02,
               letterSpacing: "-0.03em",
               marginTop: 18,

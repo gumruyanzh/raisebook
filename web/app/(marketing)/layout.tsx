@@ -8,10 +8,24 @@ const FOOTER: { title: string; links: { href: string; label: string; external?: 
   {
     title: "Product",
     links: [
+      { href: "/investor-crm", label: "Investor CRM" },
+      { href: "/pricing", label: "Pricing" },
+      { href: "/compare", label: "Compare" },
+      { href: "/faq", label: "FAQ" },
       { href: "/docs", label: "Docs" },
       { href: "/docs/mcp", label: "MCP setup" },
       { href: "/docs/api", label: "REST API" },
-      { href: "/docs/csv", label: "CSV format" },
+    ],
+  },
+  {
+    title: "Guides",
+    links: [
+      { href: "/seed-round-tracker", label: "Track your seed round" },
+      { href: "/ai-investor-research", label: "Investor research with AI" },
+      { href: "/fundraising-crm-mcp", label: "Raisebook for AI agents" },
+      { href: "/free-investor-crm", label: "Free investor CRM" },
+      { href: "/compare/spreadsheet", label: "Spreadsheet vs CRM" },
+      { href: "/docs/meetings", label: "Meetings and calendar" },
     ],
   },
   {
@@ -56,15 +70,15 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
         </div>
       </header>
 
-      <main id="main" className="flex-1">
+      <main id="main" className="marketing flex-1">
         {children}
       </main>
 
       <footer className="border-t border-line">
-        <div className="gutter mx-auto grid max-w-site gap-x-32 gap-y-32 py-48 md:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
+        <div className="gutter mx-auto grid max-w-site gap-x-32 gap-y-32 py-48 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
           <div className="flex flex-col gap-10">
             <Wordmark size={22} />
-            <p className="max-w-[32ch] text-muted">Free, private, open source fundraising CRM.</p>
+            <p className="max-w-[32ch] text-muted">The free, private, open-source investor CRM for founders.</p>
             {SPONSOR_URL ? (
               <a
                 href={SPONSOR_URL}
@@ -78,7 +92,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
           </div>
           {FOOTER.map((col) => (
             <nav key={col.title} aria-label={col.title}>
-              <h2 className="t-label mb-10">{col.title}</h2>
+              <p className="t-label mb-10">{col.title}</p>
               <ul className="m-0 flex list-none flex-col gap-6 p-0">
                 {col.links.map((l) => (
                   <li key={l.label}>

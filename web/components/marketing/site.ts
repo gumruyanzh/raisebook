@@ -3,6 +3,10 @@
  * production defaults. Snippets on the landing page and in the docs use PUBLIC_API_URL.
  */
 
+import type { Metadata } from "next";
+
+import { ogPath, page } from "@/lib/seo/pages";
+
 const strip = (u: string) => u.replace(/\/+$/, "");
 
 export const SITE_URL = strip(process.env.NEXT_PUBLIC_SITE_URL ?? "https://raisebook.org");
@@ -27,22 +31,32 @@ export const SNIPPETS_CHECKED_ON = "2026-10-10";
 export const MCP_TOOL_COUNT = 21;
 
 /**
- * Canonical URL plus the share card (og:url, og:type, og:site_name, og:image) for a public
- * page. A page that sets `openGraph` replaces its parents' (including the generated
- * opengraph-image), so the image is named here: public/og/*.png are the renders of
- * app/(marketing)/opengraph-image.tsx and docs/opengraph-image.tsx (re-save them when those
- * change). "/" and "/docs" still get the generated image from their own segment.
+ * Metadata for a public page from the registry in lib/seo/pages.ts: title, description,
+ * canonical URL, and the share card (og:url, og:title, og:description, og:image, twitter).
+ * Each page has its own generated card at /og-image/<slug> (app/og-image/[slug]/route.tsx).
  */
-export function pageMeta(path: string) {
-  const image = path.startsWith("/docs") ? "/og/docs.png" : "/og/home.png";
+export function pageMeta(path: string): Metadata {
+  const p = page(path);
+  const fullTitle = p.absoluteTitle ?? `${p.title} · Raisebook`;
+  const image = {
+    url: ogPath(path),
+    width: 1200,
+    height: 630,
+    alt: `Raisebook share card: ${p.og.title} ${p.og.subtitle}`,
+  };
   return {
+    title: p.absoluteTitle ? { absolute: p.absoluteTitle } : p.title,
+    description: p.description,
     alternates: { canonical: path },
     openGraph: {
-      type: "website" as const,
+      type: "website",
       siteName: "Raisebook",
       locale: "en_US",
       url: path,
-      images: [{ url: image, width: 1200, height: 630, alt: "Raisebook" }],
+      title: fullTitle,
+      description: p.description,
+      images: [image],
     },
+    twitter: { card: "summary_large_image", title: fullTitle, description: p.description, images: [image] },
   };
 }

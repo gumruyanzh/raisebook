@@ -3,11 +3,13 @@ import Link from "next/link";
 
 import { AgentTranscript } from "@/components/marketing/AgentTranscript";
 import { Faq } from "@/components/marketing/Faq";
+import { JsonLd } from "@/components/marketing/JsonLd";
 import { HeroDesk } from "@/components/marketing/HeroDesk";
 import { ImportVignette } from "@/components/marketing/ImportVignette";
 import { PRIVACY_PROMISE } from "@/components/marketing/promise";
 import { RuledList, Section } from "@/components/marketing/Section";
 import { MCP_TOOL_COUNT, REPO_URL, SPONSOR_URL, pageMeta } from "@/components/marketing/site";
+import { faqNodes } from "@/components/marketing/seo/Blocks";
 import { claudeCodeSnippet } from "@/components/marketing/snippets";
 import {
   AgentTimeline,
@@ -16,13 +18,11 @@ import {
   TableVignette,
 } from "@/components/marketing/Vignettes";
 import { ButtonLink, CodeBlock, TextLink } from "@/components/ui";
+import { COMPARE_CHECKED_ON, COMPARISONS, OVERVIEW } from "@/lib/seo/competitors";
+import { HOME_FAQ } from "@/lib/seo/faq";
+import { faqPage, graph, organization, softwareApplication, sourceCode, webPage, website } from "@/lib/seo/schema";
 
-export const metadata: Metadata = {
-  title: { absolute: "Raisebook · The free fundraising CRM, built for founders and their agents" },
-  description:
-    "Track every investor through every round: stages, follow-ups, notes and commitments. Free forever, open source, private per workspace, with an MCP server so Claude Code, Codex or Cursor can work the pipeline with you.",
-  ...pageMeta("/"),
-};
+export const metadata: Metadata = pageMeta("/");
 
 const FACTS = [
   { k: "$0", v: "no paid tier, ever" },
@@ -40,105 +40,38 @@ const LIMITS: [string, string][] = [
   ["Export", "CSV and JSON, any time"],
 ];
 
-const FAQ = [
+const MORE: { title: string; body: string; href?: string; link?: string }[] = [
   {
-    q: "Is it really free?",
-    a: (
-      <p>
-        Yes. There is no paid tier, no seat price and no feature behind a paywall. The limits in
-        the table above are the same for everyone. Donations, if you choose to give, change
-        nothing about what you get.
-      </p>
-    ),
+    title: "Triage",
+    body: "New investors one at a time: decide with the number keys, undo a slip, and give each a fit score so the best rise to the top.",
+    href: "/seed-round-tracker",
+    link: "Track a seed round",
   },
   {
-    q: "Then how does it pay for itself?",
-    a: (
-      <p>
-        The costs are small: a server, a database and the email that delivers sign-in links.
-        The maintainer pays them today, and donations will cover them once they open. And because
-        the code is open, you can always run your own copy.
-      </p>
-    ),
+    title: "Meetings",
+    body: "Schedule from the investor's file and they move to Meeting. Today shows the day's meetings; afterwards, record the outcome and the next step.",
+    href: "/docs/meetings",
+    link: "Meetings",
   },
   {
-    q: "Can Raisebook see my investor list?",
-    a: (
-      <p>
-        Your workspace is stored on Raisebook&apos;s servers, so the people who run them could
-        technically read it, as with any hosted app. Raisebook never uses it: there is no investor
-        database, no feature that reads across workspaces, and no analytics. You can check that in
-        the code. If you want the data on your own machine, <Link href="/docs/self-hosting">self-host it</Link>.
-      </p>
-    ),
+    title: "Your calendar",
+    body: "Download any meeting as .ics, or subscribe from Google Calendar, Apple Calendar or Outlook with a private feed URL.",
+    href: "/docs/meetings",
+    link: "Calendar feed",
   },
   {
-    q: "Which agents can connect?",
-    a: (
-      <p>
-        Any MCP client that speaks streamable HTTP. Claude Code, Codex and Cursor have ready
-        snippets in <Link href="/docs/mcp">the MCP setup guide</Link>. Clients that only start
-        local servers connect through mcp-remote.
-      </p>
-    ),
+    title: "Investor research",
+    body: "A short, cited dossier per investor: recent deals, thesis, a way in, an opener, a risk. On your own OpenRouter key, only when you ask.",
+    href: "/ai-investor-research",
+    link: "Investor research",
   },
   {
-    q: "Do I need an agent to use it?",
-    a: (
-      <p>
-        No. The board, the table and the investor files work on their own. The agent is there for
-        the moments when typing &ldquo;log that call and remind me Friday&rdquo; is faster than
-        clicking.
-      </p>
-    ),
+    title: "On your phone",
+    body: "The pipeline, the board and Triage have a phone layout with touch-sized controls, for the walk between meetings.",
   },
   {
-    q: "What can an agent change? Can it delete things?",
-    a: (
-      <p>
-        With a write key it can add investors, move stages, log activity, set follow-ups and
-        record commitments. Over MCP it cannot delete anything, create keys or invite people. A
-        read-only key can only look. Every write shows on the timeline under the agent&apos;s
-        name.
-      </p>
-    ),
-  },
-  {
-    q: "Can I bring data from Airtable, Notion or Google Sheets?",
-    a: (
-      <p>
-        Export it as CSV and import that. You map columns, see what will be created, updated or
-        skipped, and only then write. <Link href="/docs/csv">CSV format</Link>.
-      </p>
-    ),
-  },
-  {
-    q: "Can my co-founder work in it too?",
-    a: (
-      <p>
-        Invite them by email as an editor, or add an advisor as a viewer. Each investor in a round
-        can have an owner, so you know who is on which conversation.
-      </p>
-    ),
-  },
-  {
-    q: "Will Raisebook ever email my investors?",
-    a: (
-      <p>
-        No. It never contacts anyone on your behalf. The only emails it sends are sign-in links and
-        workspace invites, to the people you enter.
-      </p>
-    ),
-  },
-  {
-    q: "What happens if I want to leave?",
-    a: (
-      <p>
-        Export the workspace as JSON and each round as CSV, then delete the workspace. Deletion is
-        immediate and permanent, and backups age out within 14 days.{" "}
-        <Link href="/docs/export">Export and delete</Link>.
-      </p>
-    ),
+    title: "Your team",
+    body: "Invite a co-founder as an editor and an advisor as a viewer. Sign in with an emailed link or with Google.",
   },
 ];
 
@@ -146,18 +79,28 @@ const FAQ = [
 export default function Landing() {
   return (
     <>
+      <JsonLd
+        data={graph(
+          organization(),
+          website(),
+          softwareApplication(),
+          sourceCode(),
+          webPage("/"),
+          faqPage(HOME_FAQ, "/"),
+        )}
+      />
       {/* ---------------- Hero ---------------- */}
       <section aria-labelledby="hero-title" className="overflow-hidden">
         <div className="gutter mx-auto grid max-w-site gap-x-40 gap-y-40 pt-48 pb-56 lg:grid-cols-12 lg:pt-80 lg:pb-80">
           <div className="min-w-0 lg:col-span-5 lg:pt-8">
-            <p className="t-label mb-18">Free forever · Open source · AGPL-3.0</p>
+            <p className="t-label mb-18">Free, open-source investor CRM · AGPL-3.0</p>
             <h1 id="hero-title" className="t-display-xl max-w-[12ch]">
               Run your raise from one ledger.
             </h1>
             <p className="t-body-l mt-18 max-w-[44ch] text-muted">
-              Raisebook tracks every investor through every round: stages, follow-ups, notes and
-              commitments. It&apos;s free forever, and your coding agent can work the pipeline with
-              you over MCP.
+              Raisebook is the free investor CRM for founders. It tracks every investor through
+              every round: stages, follow-ups, meetings, notes and commitments. Your coding agent can
+              work the pipeline with you over MCP.
             </p>
             <div className="mt-28 flex flex-wrap items-center gap-x-18 gap-y-12">
               <ButtonLink href="/signin" variant="primary" size="lg">
@@ -166,7 +109,8 @@ export default function Landing() {
               <TextLink href="/docs/mcp">Connect Claude Code →</TextLink>
             </div>
             <p className="t-body-s mt-24 text-muted">
-              Sign in with an email link, then try a sample workspace of fictional investors.
+              Sign in with an email link or Google, then try a sample workspace of fictional
+              investors.
             </p>
           </div>
           <div className="min-w-0 lg:col-span-7">
@@ -286,10 +230,38 @@ export default function Landing() {
         </div>
       </Section>
 
-      {/* ---------------- 03 Import ---------------- */}
+      {/* ---------------- 03 More ---------------- */}
+      <Section
+        id="more"
+        index="03"
+        note="Also in the box"
+        title="Triage, meetings, research, and your phone."
+        lede={
+          <p>
+            Everything a raise needs between the first email and the wire, and nothing behind a
+            paywall.
+          </p>
+        }
+      >
+        <ul className="m-0 grid list-none gap-x-24 gap-y-0 p-0 md:grid-cols-2 xl:grid-cols-3">
+          {MORE.map((m) => (
+            <li key={m.title} className="border-t border-line py-16">
+              <h3 className="t-display-xs">{m.title}</h3>
+              <p className="t-body-l mt-6 text-muted">{m.body}</p>
+              {m.href ? (
+                <p className="mt-6">
+                  <TextLink href={m.href}>{m.link} →</TextLink>
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      {/* ---------------- 04 Import ---------------- */}
       <Section
         id="import"
-        index="03"
+        index="04"
         note="Import"
         title="Bring the spreadsheet you already have."
       >
@@ -310,10 +282,10 @@ export default function Landing() {
         </div>
       </Section>
 
-      {/* ---------------- 04 Privacy ---------------- */}
+      {/* ---------------- 05 Privacy ---------------- */}
       <Section
         id="privacy"
-        index="04"
+        index="05"
         note="Privacy"
         title="The privacy promise."
         lede={
@@ -330,8 +302,8 @@ export default function Landing() {
         </p>
       </Section>
 
-      {/* ---------------- 05 Free forever ---------------- */}
-      <Section id="free" index="05" note="Free forever" title="Free forever. Here's how.">
+      {/* ---------------- 06 Free forever ---------------- */}
+      <Section id="free" index="06" note="Free forever" title="Free forever. Here's how.">
         <div className="grid gap-32 xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
           <div className="t-body-l flex max-w-[62ch] flex-col gap-16">
             <p>
@@ -375,10 +347,10 @@ export default function Landing() {
         </div>
       </Section>
 
-      {/* ---------------- 06 Open source ---------------- */}
+      {/* ---------------- 07 Open source ---------------- */}
       <Section
         id="source"
-        index="06"
+        index="07"
         note="Open source"
         title="Read the code that holds your data."
         lede={
@@ -403,10 +375,66 @@ export default function Landing() {
         />
       </Section>
 
-      {/* ---------------- 07 FAQ ---------------- */}
-      <Section id="faq" index="07" note="Questions" title="Questions founders ask.">
+      {/* ---------------- 08 Compare ---------------- */}
+      <Section
+        id="compare"
+        index="08"
+        note="Compare"
+        title="How it compares."
+        lede={
+          <p>
+            Raisebook is the free, open-source investor CRM: no paid tier, no investor cap below
+            20,000, and an MCP server on the free plan. It has no investor database and sends no
+            investor updates; the paid tools below add those.
+          </p>
+        }
+      >
+        <div className="max-w-[960px] overflow-x-auto rounded-md border border-line bg-surface">
+          <table className="w-full min-w-[640px] border-collapse text-13">
+            <caption className="sr-only">Investor CRMs at a glance, from each product&apos;s pricing page on {COMPARE_CHECKED_ON}</caption>
+            <thead>
+              <tr>
+                {["", "Lowest paid price", "Free plan", "Open source", "MCP server"].map((h) => (
+                  <th key={h} scope="col" className="t-th border-b border-line px-10 py-8 text-left text-muted">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {OVERVIEW.map(([name, ...cells]) => (
+                <tr key={name} className="[&:last-child>td]:border-b-0 [&:last-child>th]:border-b-0">
+                  <th scope="row" className="border-b border-line px-10 py-8 text-left font-semibold">
+                    {name}
+                  </th>
+                  {cells.map((c, i) => (
+                    <td key={i} className="border-b border-line px-10 py-8 align-top">
+                      {c}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="t-body-s mt-10 text-muted">
+          From each product&apos;s public pricing page on {COMPARE_CHECKED_ON}. Details and sources:{" "}
+          {COMPARISONS.map((c, i) => (
+            <span key={c.slug}>
+              {i > 0 ? ", " : ""}
+              <Link href={`/compare/${c.slug}`} className="link">
+                vs {c.name}
+              </Link>
+            </span>
+          ))}
+          .
+        </p>
+      </Section>
+
+      {/* ---------------- 09 FAQ ---------------- */}
+      <Section id="faq" index="09" note="Questions" title="Questions founders ask.">
         <div className="max-w-[860px]">
-          <Faq items={FAQ} />
+          <Faq items={faqNodes(HOME_FAQ)} />
         </div>
       </Section>
 

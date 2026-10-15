@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 
-import { pageMeta } from "@/components/marketing/site";
-
 import {
   A,
   C,
@@ -13,14 +11,10 @@ import {
   P,
   Ul,
 } from "@/components/marketing/docs/Prose";
+import { pageMeta } from "@/components/marketing/site";
 import { CodeBlock } from "@/components/ui";
 
-export const metadata: Metadata = {
-  title: "CSV import format",
-  description:
-    "How Raisebook reads a spreadsheet: accepted column names, list, date and money formats, dedupe and what happens to each row.",
-  ...pageMeta("/docs/csv"),
-};
+export const metadata: Metadata = pageMeta("/docs/csv");
 
 const CONTACT_FIELDS: [string, string, string][] = [
   ["name", "name, full name, investor, investor name, contact, person", "Required. Or first name + last name."],

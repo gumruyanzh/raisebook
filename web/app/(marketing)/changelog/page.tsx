@@ -1,15 +1,13 @@
 import type { Metadata } from "next";
 
+import { JsonLd } from "@/components/marketing/JsonLd";
 import { DocHeader } from "@/components/marketing/docs/Prose";
 import { AsideFacts, PageShell } from "@/components/marketing/PageShell";
 import { REPO_URL, pageMeta } from "@/components/marketing/site";
 import { Chip, TextLink } from "@/components/ui";
+import { pageGraph } from "@/lib/seo/schema";
 
-export const metadata: Metadata = {
-  title: "Changelog",
-  description: "What changed in Raisebook, newest first.",
-  ...pageMeta("/changelog"),
-};
+export const metadata: Metadata = pageMeta("/changelog");
 
 interface Entry {
   date: string;
@@ -136,47 +134,50 @@ const ENTRIES: Entry[] = [
 
 export default function Changelog() {
   return (
-    <PageShell
-      aside={
-        <AsideFacts
-          items={[
-            ["Latest", ENTRIES[0]!.version],
-            ["Source", <TextLink key="r" href={`${REPO_URL}/commits/main`} external>Commits</TextLink>],
-          ]}
+    <>
+      <JsonLd data={pageGraph("/changelog")} />
+      <PageShell
+        aside={
+          <AsideFacts
+            items={[
+              ["Latest", ENTRIES[0]!.version],
+              ["Source", <TextLink key="r" href={`${REPO_URL}/commits/main`} external>Commits</TextLink>],
+            ]}
+          />
+        }
+      >
+        <DocHeader
+          eyebrow="Changelog"
+          title="What changed"
+          lede={<p>Releases, newest first. Changes to the privacy page or the terms are listed here too.</p>}
         />
-      }
-    >
-      <DocHeader
-        eyebrow="Changelog"
-        title="What changed"
-        lede={<p>Releases, newest first. Changes to the privacy page or the terms are listed here too.</p>}
-      />
-      <ol className="m-0 list-none p-0">
-        {ENTRIES.map((e) => (
-          <li key={e.version} className="border-t border-line pt-18 pb-40">
-            <p className="flex flex-wrap items-baseline gap-x-12 gap-y-4">
-              <time dateTime={e.date} className="t-data text-muted">
-                {e.date}
-              </time>
-              <span className="t-data text-fg">v{e.version}</span>
-              {e.status ? <Chip tone="mode">{e.status}</Chip> : null}
-            </p>
-            <h2 id={`v${e.version}`} className="t-display-s mt-8 scroll-mt-24">
-              {e.title}
-            </h2>
-            {e.groups.map((g) => (
-              <section key={g.label} className="mt-18">
-                <h3 className="t-label mb-6">{g.label}</h3>
-                <ul className="t-body-l m-0 flex list-disc flex-col gap-6 pl-20 marker:text-faint">
-                  {g.items.map((it) => (
-                    <li key={it}>{it}</li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </li>
-        ))}
-      </ol>
-    </PageShell>
+        <ol className="m-0 list-none p-0">
+          {ENTRIES.map((e) => (
+            <li key={e.version} className="border-t border-line pt-18 pb-40">
+              <p className="flex flex-wrap items-baseline gap-x-12 gap-y-4">
+                <time dateTime={e.date} className="t-data text-muted">
+                  {e.date}
+                </time>
+                <span className="t-data text-fg">v{e.version}</span>
+                {e.status ? <Chip tone="mode">{e.status}</Chip> : null}
+              </p>
+              <h2 id={`v${e.version}`} className="t-display-s mt-8 scroll-mt-24">
+                {e.title}
+              </h2>
+              {e.groups.map((g) => (
+                <section key={g.label} className="mt-18">
+                  <h3 className="t-label mb-6">{g.label}</h3>
+                  <ul className="t-body-l m-0 flex list-disc flex-col gap-6 pl-20 marker:text-faint">
+                    {g.items.map((it) => (
+                      <li key={it}>{it}</li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </li>
+          ))}
+        </ol>
+      </PageShell>
+    </>
   );
 }

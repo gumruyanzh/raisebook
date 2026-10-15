@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 
-import { pageMeta } from "@/components/marketing/site";
-
 import {
   A,
   C,
@@ -13,14 +11,10 @@ import {
   P,
   Ul,
 } from "@/components/marketing/docs/Prose";
+import { pageMeta } from "@/components/marketing/site";
 import { Kbd, StagePill } from "@/components/ui";
 
-export const metadata: Metadata = {
-  title: "Getting started",
-  description:
-    "Set up Raisebook in a few minutes: sign in, create a workspace and a round, bring your investors, and work the pipeline from the board, the table or your agent.",
-  ...pageMeta("/docs"),
-};
+export const metadata: Metadata = pageMeta("/docs");
 
 const STAGES = [
   ["new", "New", "slate", "open"],

@@ -9,12 +9,16 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://raisebook.org"),
   title: {
-    default: "Raisebook · Free, open-source fundraising CRM for founders",
+    default: "Raisebook · Free, open-source investor CRM for founders",
     template: "%s · Raisebook",
   },
   description:
-    "Track every investor through every round: stages, follow-ups, notes and commitments. Free forever, open source, private per workspace, with an MCP server for your coding agent.",
+    "Raisebook is a free, open-source investor CRM (fundraising CRM) for startup founders. Track every investor through every round: stages, follow-ups, meetings, notes and commitments, with an MCP server for your coding agent.",
   applicationName: "Raisebook",
+  authors: [{ name: "Zhirayr Gumruyan" }],
+  creator: "Zhirayr Gumruyan",
+  publisher: "Raisebook",
+  category: "business",
   openGraph: {
     type: "website",
     siteName: "Raisebook",

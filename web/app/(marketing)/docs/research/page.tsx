@@ -1,14 +1,10 @@
 import type { Metadata } from "next";
 
 import { A, C, DocHeader, DocPagerFor, DocTable, H2, Note, P, Ul } from "@/components/marketing/docs/Prose";
+import { pageMeta } from "@/components/marketing/site";
 import { CodeBlock } from "@/components/ui";
 
-export const metadata: Metadata = {
-  title: "Investor research",
-  description:
-    "How Raisebook's investor research works: your own OpenRouter key, identity first, cited dossiers, presets and costs, the monthly limit, and save_dossier for agents.",
-  alternates: { canonical: "/docs/research" },
-};
+export const metadata: Metadata = pageMeta("/docs/research");
 
 const DOSSIER_EXAMPLE = `{
   "schema_version": 1,

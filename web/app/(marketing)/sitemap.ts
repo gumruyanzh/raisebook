@@ -1,24 +1,18 @@
 import type { MetadataRoute } from "next";
 
-import { DOCS_NAV } from "@/components/marketing/docs/nav";
 import { SITE_URL } from "@/components/marketing/site";
+import { PAGES } from "@/lib/seo/pages";
 
-/** Public pages only. The app, auth flows and /design are disallowed in robots.ts. */
+/**
+ * Every public page from the registry (lib/seo/pages.ts), with the date its text last
+ * changed. The app, auth flows and /design are disallowed in robots.ts.
+ */
 export default function sitemap(): MetadataRoute.Sitemap {
-  const lastModified = new Date("2026-10-14");
-  const paths = [
-    "/",
-    ...DOCS_NAV.map((n) => n.href).filter((h) => h.startsWith("/docs")),
-    "/privacy",
-    "/research-policy",
-    "/terms",
-    "/support",
-    "/changelog",
-  ];
-  return paths.map((p) => ({
-    url: `${SITE_URL}${p === "/" ? "" : p}`,
-    lastModified,
-    changeFrequency: p === "/" || p === "/changelog" ? "weekly" : "monthly",
-    priority: p === "/" ? 1 : p.startsWith("/docs") ? 0.7 : 0.5,
+  return PAGES.map((p) => ({
+    url: `${SITE_URL}${p.path === "/" ? "" : p.path}`,
+    lastModified: new Date(`${p.updated}T00:00:00Z`),
+    changeFrequency: p.path === "/" || p.path === "/changelog" ? "weekly" : "monthly",
+    priority:
+      p.path === "/" ? 1 : p.section === "product" || p.section === "compare" ? 0.8 : p.section === "guide" || p.section === "docs" ? 0.7 : 0.5,
   }));
 }

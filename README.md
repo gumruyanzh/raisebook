@@ -1,14 +1,27 @@
-# Raisebook
+# Raisebook: the free, open-source investor CRM for founders
 
-**Run your raise from one ledger.** Raisebook is a free, open-source fundraising CRM for
-startup founders. It tracks every investor through every round (stages, fit, follow-ups,
-notes and commitments) and ships an MCP server, so Claude Code, Codex, Cursor or any MCP
-client can work the pipeline with you.
+**Raisebook is a free, open-source investor CRM (fundraising CRM) for startup founders.** It
+tracks every investor through every round (stages, fit, follow-ups, meetings, notes and
+commitments) and ships an MCP server, so Claude Code, Codex, Cursor or any MCP client can work
+the pipeline with you.
 
 **[Start your raise at raisebook.org](https://raisebook.org)**, free, or self-host it.
-Licensed under AGPL-3.0.
+Licensed under AGPL-3.0. [Pricing](https://raisebook.org/pricing) ·
+[Docs](https://raisebook.org/docs) · [Compare](https://raisebook.org/compare) ·
+[FAQ](https://raisebook.org/faq) · [llms.txt](https://raisebook.org/llms.txt)
 
 ![A round in Raisebook: the ledger strip, and investors on a kanban board by stage](docs/img/board.png)
+
+## Who it's for
+
+Founders raising a pre-seed, seed or Series A round who have outgrown the investor
+spreadsheet: solo founders and small founding teams who want an investor pipeline with
+follow-ups and meetings, do not want to pay per seat, and do not want their investor list
+pooled into someone else's database. It also suits founders who work with an AI coding agent
+and want it to log calls and set follow-ups for them.
+
+It is not an investor database (you bring your list), it never emails investors for you, and
+it is built for founders raising money, not for VC firms managing deal flow.
 
 ## Free forever
 
@@ -61,7 +74,34 @@ The details are on [raisebook.org/privacy](https://raisebook.org/privacy).
 - **A sample workspace** with fictional investors, to try everything before your own data.
 - **CSV import** with column mapping, preview and dedupe. **CSV and JSON export** of a round,
   all investors or the whole workspace. Hard delete of anything, at any time.
-- **A REST API** under `/v1` and **an MCP server** at `/mcp` with 21 tools (no deletes).
+- **Investor research**: on demand and on your own OpenRouter key, a short dossier per
+  investor (recent deals, thesis, a way in, an opener, a risk) where every fact cites a
+  source, with a monthly spend limit per workspace and no markup. Agents can save their own
+  research with `save_dossier`.
+- **A phone layout** for the pipeline, board and triage.
+- **A REST API** under `/v1` and **an MCP server** at `/mcp` with 21 tools, 26 with research
+  enabled (no deletes).
+
+Limits per workspace, the same for everyone: 50 rounds, 20,000 investors, 20 members,
+20 API keys.
+
+## How it compares
+
+From each product's public pricing page on 2026-10-15; sources and details on
+[raisebook.org/compare](https://raisebook.org/compare).
+
+| | Lowest paid price | Free plan | Open source | MCP server |
+|---|---|---|---|---|
+| **Raisebook** | $0, no paid tier | Everything: 50 rounds, 20,000 investors, 20 members | Yes (AGPL-3.0) | Yes, free plan |
+| Foundersuite | $745/yr (Silver) | Basic: 75 investors per pipeline | No | Not listed |
+| Visible | $59/mo (Base, annual) | Starter: 2 pipelines, 100 update recipients | No | Yes |
+| Affinity | $2,000/user/yr | None listed | No | Not checked |
+| Attio | $35/seat/mo (Plus, annual) | Up to 3 seats | No | Yes |
+| folk | $24/member/mo (annual) | 14-day trial | No | Yes |
+
+Foundersuite includes an investor database, Visible adds investor updates and data rooms,
+Affinity is built for VC firms, and Attio and folk are general CRMs. Raisebook does the
+investor pipeline only, free and open source.
 
 ## Connect your agent (MCP quickstart)
 

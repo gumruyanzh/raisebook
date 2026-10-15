@@ -1,7 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { JsonLd } from "@/components/marketing/JsonLd";
 import { cn } from "@/lib/cn";
+import { pageGraph } from "@/lib/seo/schema";
 
 import { DOCS_NAV } from "./nav";
 
@@ -255,11 +257,19 @@ export function DocPager({
   );
 }
 
-/** Pager computed from the docs nav order. */
+/**
+ * Pager computed from the docs nav order. Every docs page ends with it, so it also carries the
+ * page's structured data (TechArticle + BreadcrumbList, from lib/seo/pages.ts).
+ */
 export function DocPagerFor({ href }: { href: string }) {
   const pages = DOCS_NAV.filter((n) => n.href.startsWith("/docs"));
   const i = pages.findIndex((n) => n.href === href);
-  return <DocPager prev={i > 0 ? pages[i - 1] : undefined} next={i >= 0 ? pages[i + 1] : undefined} />;
+  return (
+    <>
+      <JsonLd data={pageGraph(href)} />
+      <DocPager prev={i > 0 ? pages[i - 1] : undefined} next={i >= 0 ? pages[i + 1] : undefined} />
+    </>
+  );
 }
 
 /** Renders `backticked` spans of spec text as inline code. */
