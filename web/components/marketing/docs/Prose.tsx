@@ -207,20 +207,26 @@ export function DocTable({
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="[&:last-child>td]:border-b-0">
-              {r.map((cell, j) => (
-                <td
+            <tr key={i} className="[&:last-child>*]:border-b-0">
+              {r.map((cell, j) => {
+                // A blank first header means the first column labels the rows: render it as <th scope="row">.
+                const Cell = j === 0 && head[0] === "" ? "th" : "td";
+                return (
+                <Cell
                   key={j}
+                  scope={Cell === "th" ? "row" : undefined}
                   className={cn(
                     "border-b border-line px-10 py-8 align-top",
+                    Cell === "th" && "text-left font-normal",
                     j === 0 && monoFirst && "font-mono text-[12.5px] text-fg [overflow-wrap:anywhere]",
                     j === 0 && monoFirst && !widths && "whitespace-nowrap",
                     j > 0 && "text-fg",
                   )}
                 >
                   {cell}
-                </td>
-              ))}
+                </Cell>
+                );
+              })}
             </tr>
           ))}
         </tbody>

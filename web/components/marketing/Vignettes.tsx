@@ -40,7 +40,7 @@ export function AgentTimeline() {
   return (
     <div className="rounded-md border border-line bg-surface p-14">
       <p className="t-label mb-10">Timeline · Dana Whitfield</p>
-      <Timeline items={AGENT_TIMELINE} timeZone={TZ} now={NOW} currency={CURRENCY} />
+      <Timeline items={AGENT_TIMELINE} timeZone={TZ} now={NOW} currency={CURRENCY} dayHeading="h3" />
     </div>
   );
 }
@@ -69,7 +69,6 @@ export function CardVignette() {
         today={TODAY}
         nextStep={dana.nextStep}
         agentMark={dana.agentTip ? { tip: dana.agentTip } : null}
-        aria-label={`${dana.name}, ${dana.firm}. Example card.`}
       />
     </div>
   );

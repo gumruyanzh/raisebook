@@ -28,9 +28,9 @@ export const PAGES: PublicPage[] = [
   {
     path: "/",
     title: "Free investor CRM and fundraising pipeline tracker for founders",
-    absoluteTitle: "Raisebook · Free investor CRM and fundraising pipeline tracker for founders",
+    absoluteTitle: "Raisebook · Free investor CRM and fundraising tracker",
     description:
-      "Raisebook is a free, open-source investor CRM for startup founders. Track every investor through every round: stages, follow-ups, meetings, notes and commitments, with an MCP server so Claude Code, Codex or Cursor can work the pipeline with you.",
+      "Raisebook is a free, open-source investor CRM for founders: track investors through every round, with follow-ups, meetings and an MCP server for AI agents.",
     section: "home",
     updated: "2026-10-15",
     crumb: "Home",
@@ -45,7 +45,7 @@ export const PAGES: PublicPage[] = [
     path: "/investor-crm",
     title: "Investor CRM for founders",
     description:
-      "What an investor CRM does for a startup raise, what to track per investor, and how Raisebook, a free and open-source investor CRM, handles stages, follow-ups, meetings and commitments.",
+      "What an investor CRM does for a startup raise, what to track per investor, and how Raisebook, a free open-source investor CRM, handles it.",
     section: "product",
     updated: "2026-10-15",
     og: {
@@ -87,7 +87,7 @@ export const PAGES: PublicPage[] = [
     path: "/seed-round-tracker",
     title: "Track your seed round",
     description:
-      "How to track investors for a pre-seed or seed round: pipeline stages, the fields to keep, a follow-up cadence and meetings, and how to run it in Raisebook for free.",
+      "How to track investors for a pre-seed or seed round: pipeline stages, fields to keep, follow-ups and meetings, and how to run it free in Raisebook.",
     section: "guide",
     updated: "2026-10-15",
     og: {
@@ -101,7 +101,7 @@ export const PAGES: PublicPage[] = [
     path: "/ai-investor-research",
     title: "Investor research with AI",
     description:
-      "Raisebook researches the investors in your pipeline on your own OpenRouter key and writes short, cited dossiers: recent deals, thesis, a way in, an opener and a risk.",
+      "Raisebook researches investors in your pipeline on your own OpenRouter key and writes short, cited dossiers: recent deals, thesis, a way in and a risk.",
     section: "guide",
     updated: "2026-10-15",
     og: {
@@ -114,9 +114,10 @@ export const PAGES: PublicPage[] = [
   {
     path: "/fundraising-crm-mcp",
     title: "Use Raisebook from Claude Code, Codex or Cursor (MCP)",
+    absoluteTitle: "Fundraising CRM for Claude Code, Codex, Cursor · Raisebook",
     crumb: "Raisebook for AI agents",
     description:
-      "A fundraising CRM with an MCP server: connect Claude Code, Codex, Cursor or any MCP client and let it log calls, move stages, set follow-ups and schedule meetings. Free, with no delete tools.",
+      "A fundraising CRM with an MCP server: Claude Code, Codex or Cursor can log calls, move stages, set follow-ups and schedule meetings. Free, no delete tools.",
     section: "guide",
     updated: "2026-10-15",
     og: {
@@ -130,7 +131,7 @@ export const PAGES: PublicPage[] = [
     path: "/compare",
     title: "Compare investor CRMs",
     description:
-      "How Raisebook compares with Foundersuite, Visible, Affinity, Attio, folk and spreadsheets for tracking a fundraise: price, free-plan limits, open source, MCP and data ownership.",
+      "Raisebook compared with Foundersuite, Visible, Affinity, Attio, folk and spreadsheets for a fundraise: price, free-plan limits, open source, MCP and data.",
     section: "compare",
     updated: "2026-10-15",
     og: {
@@ -145,7 +146,7 @@ export const PAGES: PublicPage[] = [
     title: "Raisebook vs Foundersuite",
     absoluteTitle: "Raisebook vs Foundersuite: a free Foundersuite alternative",
     description:
-      "A free Foundersuite alternative: Raisebook vs Foundersuite on price, investor limits, investor database, open source, self-hosting and MCP, from each product's public pages.",
+      "A free Foundersuite alternative: Raisebook vs Foundersuite on price, investor limits, investor database, open source and MCP, from public pages.",
     section: "compare",
     updated: "2026-10-15",
     og: { eyebrow: "Compare", title: "Raisebook vs Foundersuite", subtitle: "Price, limits, open source and MCP, side by side." },
@@ -154,9 +155,9 @@ export const PAGES: PublicPage[] = [
   {
     path: "/compare/visible",
     title: "Raisebook vs Visible",
-    absoluteTitle: "Raisebook vs Visible: a free Visible.vc alternative for the investor pipeline",
+    absoluteTitle: "Raisebook vs Visible: a free Visible.vc alternative",
     description:
-      "A Visible.vc alternative for the investor pipeline: Raisebook vs Visible on price, free-plan limits, scope, open source and MCP, from each product's public pages.",
+      "A Visible.vc alternative for the investor pipeline: Raisebook vs Visible on price, free-plan limits, scope, open source and MCP, from public pages.",
     section: "compare",
     updated: "2026-10-15",
     og: { eyebrow: "Compare", title: "Raisebook vs Visible", subtitle: "Price, limits, scope and MCP, side by side." },
@@ -189,7 +190,7 @@ export const PAGES: PublicPage[] = [
     title: "Investor CRM vs spreadsheet or Notion template",
     absoluteTitle: "Investor CRM vs spreadsheet or Notion template · Raisebook",
     description:
-      "When an investor tracker spreadsheet or Notion/Airtable template stops working, and what a free investor CRM like Raisebook adds: stages, follow-ups, timeline, dedupe and meetings.",
+      "When an investor spreadsheet or Notion or Airtable template stops working, and what a free investor CRM adds: stages, follow-ups, timeline and dedupe.",
     section: "compare",
     updated: "2026-10-15",
     og: { eyebrow: "Compare", title: "Spreadsheet vs investor CRM", subtitle: "When the sheet stops keeping up, and what to move to." },
@@ -255,7 +256,7 @@ export const PAGES: PublicPage[] = [
     path: "/docs/meetings",
     title: "Meetings and the calendar feed",
     description:
-      "Schedule investor meetings in Raisebook, record outcomes and next steps, download .ics files, and subscribe from Google Calendar, Apple Calendar or Outlook with a private feed URL.",
+      "Schedule investor meetings in Raisebook, record outcomes and next steps, download .ics files, and subscribe from Google, Apple or Outlook calendars.",
     section: "docs",
     updated: "2026-10-15",
     og: { eyebrow: "Docs · Meetings", title: "Meetings and the calendar feed.", subtitle: "Schedule, record outcomes, subscribe from any calendar." },
@@ -275,7 +276,7 @@ export const PAGES: PublicPage[] = [
     path: "/docs/research",
     title: "Investor research",
     description:
-      "How Raisebook's investor research works: your own OpenRouter key, identity first, cited dossiers, presets and costs, the monthly limit, and save_dossier for agents.",
+      "How Raisebook's investor research works: your own OpenRouter key, identity first, cited dossiers, presets and costs, the monthly limit, and save_dossier.",
     section: "docs",
     updated: "2026-10-13",
     og: { eyebrow: "Docs · Research", title: "Investor research.", subtitle: "Cited dossiers on your own OpenRouter key." },
@@ -293,7 +294,7 @@ export const PAGES: PublicPage[] = [
   {
     path: "/docs/self-hosting",
     title: "Self-hosting",
-    description: "Run Raisebook on your own server with Docker Compose: Postgres, the API and MCP server, the web app and Caddy for TLS.",
+    description: "Run Raisebook on your own server with Docker Compose: Postgres, the API and MCP server, the web app and Caddy for TLS, all from one open-source repository.",
     section: "docs",
     updated: "2026-10-13",
     og: { eyebrow: "Docs · Self-hosting", title: "Run your own Raisebook.", subtitle: "Docker Compose: Postgres, API, web and Caddy." },
@@ -331,7 +332,7 @@ export const PAGES: PublicPage[] = [
     path: "/support",
     title: "Support",
     description:
-      "Raisebook is free forever. If it helps your raise, you can help pay for hosting. Donations never buy features.",
+      "Raisebook, the free investor CRM, is free forever. If it helps your raise, you can help pay for its hosting. Donations never buy features.",
     section: "about",
     updated: "2026-10-13",
     og: { eyebrow: "Support", title: "Keep Raisebook free.", subtitle: "Donations pay for hosting and never buy features." },

@@ -26,7 +26,10 @@ test("every registered page exists, once, with a unique share card", () => {
     assert.ok(pageFile(p.path), `no page file for ${p.path}`);
     assert.equal(pageForOgSlug(ogSlug(p.path))?.path, p.path);
     assert.match(p.updated, /^\d{4}-\d{2}-\d{2}$/);
-    assert.ok(p.description.length >= 50 && p.description.length <= 260, `${p.path} description length ${p.description.length}`);
+    // Search results cut descriptions past ~160 characters and titles past ~60.
+    assert.ok(p.description.length >= 120 && p.description.length <= 160, `${p.path} description length ${p.description.length}`);
+    const title = p.absoluteTitle ?? `${p.title} · Raisebook${p.section === "docs" && p.path !== "/docs" ? " docs" : ""}`;
+    assert.ok(title.length <= 60, `${p.path} title length ${title.length}`);
   }
 });
 

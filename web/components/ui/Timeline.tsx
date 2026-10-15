@@ -297,8 +297,11 @@ export function Timeline({
   loadRun,
   sentenceFor,
   className,
+  dayHeading: DayHeading = "h4",
 }: {
   items: Activity[];
+  /** Heading level of the day labels; marketing vignettes sit under an h2 and pass "h3". */
+  dayHeading?: "h3" | "h4";
   /** Workspace timezone for day groups and times. */
   timeZone?: string;
   withInvestor?: boolean;
@@ -392,7 +395,7 @@ export function Timeline({
       {groups.length === 0 ? <p className="t-body-s text-muted">{empty}</p> : null}
       {groups.map((g) => (
         <section key={g.day} aria-label={dayLabel(g.day, today)}>
-          <h4 className="t-label mb-6">{dayLabel(g.day, today)}</h4>
+          <DayHeading className="t-label mb-6">{dayLabel(g.day, today)}</DayHeading>
           <ol className="m-0 flex list-none flex-col gap-2 p-0">
             {g.entries.map((e) =>
               e.type === "one" ? (
