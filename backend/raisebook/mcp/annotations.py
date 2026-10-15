@@ -1,8 +1,10 @@
-"""Tool annotations (SPEC §6.1): every tool declares ``read_only(...)`` or ``write(...)``.
+"""Tool annotation helpers (SPEC §6.1).
 
-The MCP tests assert every registered tool carries annotations from here. No
-Raisebook tool is destructive: MCP exposes no deletes. ``openWorldHint`` is False:
-tools act only on the caller's own workspace.
+Tools spell out all four hints as a literal ``ToolAnnotations(...)`` in their decorator, so
+static scanners and MCP directories can read them without running the server; the MCP tests
+assert the values. No Raisebook tool is destructive: MCP exposes no deletes.
+``openWorldHint`` is False except for research_investor and match_identity, which reach the
+public web through the workspace's OpenRouter key. These helpers remain for test probes.
 """
 
 from __future__ import annotations

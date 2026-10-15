@@ -6,9 +6,9 @@ from __future__ import annotations
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 
 from raisebook.auth.scopes import canonical_order
-from raisebook.mcp.annotations import read_only
 from raisebook.mcp.tools._common import Clock, tool_call
 from raisebook.models.enums import LOGGABLE_ACTIVITY_KINDS
 from raisebook.services import rounds as rounds_svc
@@ -17,7 +17,15 @@ from raisebook.services.stages import stages_by_round
 
 
 def register(server: FastMCP) -> None:
-    @server.tool(annotations=read_only("Workspace overview"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Workspace overview",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def get_workspace(ctx: Context | None = None) -> dict[str, Any]:
         """Who am I and what's here: workspace name, timezone and today's date, your scopes and agent name, every round with its stage keys, and the allowed investor types and activity kinds. Call this first."""  # noqa: E501
         async with tool_call(ctx) as (db, ws):

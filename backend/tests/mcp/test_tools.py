@@ -89,6 +89,9 @@ DESCRIPTION_SNIPPETS = {
 }
 
 
+OPEN_WORLD = {"research_investor", "match_identity"}
+
+
 async def test_tool_list_annotations_and_descriptions(db: AsyncSession, mcp_rpc: Any) -> None:
     w = await world(db)
     r = await mcp_rpc(w.key, "tools/list", {})
@@ -101,7 +104,8 @@ async def test_tool_list_annotations_and_descriptions(db: AsyncSession, mcp_rpc:
     for name, t in tools.items():
         ann = t["annotations"]
         assert ann["destructiveHint"] is False, name
-        assert ann["openWorldHint"] is False, name
+        # Research tools reach the public web (through the workspace's OpenRouter key).
+        assert ann["openWorldHint"] is (name in OPEN_WORLD), name
         assert ann["readOnlyHint"] is (name in READ_ONLY), name
         if name in WRITE_IDEMPOTENT:
             assert ann["idempotentHint"] is True, name

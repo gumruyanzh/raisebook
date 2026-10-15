@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from raisebook.auth.scopes import SCOPE_READ, SCOPE_WRITE
@@ -18,7 +19,6 @@ from raisebook.config import get_settings
 from raisebook.core import ratelimit, refs
 from raisebook.core.errors import PayloadTooLarge
 from raisebook.mcp import shaping
-from raisebook.mcp.annotations import read_only, write
 from raisebook.mcp.tools._common import Clock, ToolError, tool_call
 from raisebook.schemas.data import ImportRequest
 from raisebook.services import exports, imports
@@ -30,7 +30,15 @@ DRY_RUN_ROWS = 50
 
 
 def register(server: FastMCP) -> None:
-    @server.tool(annotations=write("Import investors from CSV", idempotent=False))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Import investors from CSV",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        )
+    )
     async def import_investors_csv(
         csv: Annotated[
             str, Field(description="CSV text (at most 2 MB), first row = column headers.")
@@ -113,7 +121,15 @@ def register(server: FastMCP) -> None:
             done["dry_run"] = False
             return done
 
-    @server.tool(annotations=read_only("Export a round"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Export a round",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def export_round(
         round: Annotated[
             str | None,

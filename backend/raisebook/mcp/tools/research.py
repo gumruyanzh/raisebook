@@ -13,12 +13,12 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from raisebook.auth.scopes import SCOPE_WRITE
 from raisebook.core.refs import resolve_investor, resolve_round
 from raisebook.mcp import shaping
-from raisebook.mcp.annotations import read_only, write
 from raisebook.mcp.tools._args import InvestorArg, RoundOpt
 from raisebook.mcp.tools._common import Clock, parse_uuid, tool_call
 from raisebook.models.enums import ResearchKind
@@ -56,7 +56,15 @@ def _run_brief(r: dict[str, Any], investor: str | None = None) -> dict[str, Any]
 
 
 def register(server: FastMCP) -> None:
-    @server.tool(annotations=read_only("Read an investor's dossier"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Read an investor's dossier",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def get_dossier(
         investor: InvestorArg,
         version: Annotated[int | None, Field(ge=1, description="An older version.")] = None,
@@ -109,7 +117,15 @@ def register(server: FastMCP) -> None:
             result: dict[str, Any] = shaping.prune(out)
             return result
 
-    @server.tool(annotations=read_only("List research runs"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="List research runs",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def list_research_runs(
         investor: Annotated[
             str | None,
@@ -159,7 +175,15 @@ def register(server: FastMCP) -> None:
                 ]
             }
 
-    @server.tool(annotations=write("Research an investor"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Research an investor",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
     async def research_investor(
         investor: InvestorArg,
         kind: Annotated[
@@ -237,7 +261,15 @@ def register(server: FastMCP) -> None:
             )
             return out
 
-    @server.tool(annotations=write("Match an investor's identity"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Match an investor's identity",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    )
     async def match_identity(
         investor: InvestorArg,
         pick: Annotated[
@@ -309,7 +341,13 @@ def register(server: FastMCP) -> None:
             return out
 
     @server.tool(
-        annotations=write("Save a dossier you researched", idempotent=False),
+        annotations=ToolAnnotations(
+            title="Save a dossier you researched",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
         description=SAVE_DOSSIER_DESCRIPTION,
     )
     async def save_dossier(

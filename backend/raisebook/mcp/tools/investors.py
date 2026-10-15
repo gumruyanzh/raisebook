@@ -10,13 +10,13 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from raisebook.auth.scopes import SCOPE_WRITE
 from raisebook.core.errors import APIError
 from raisebook.core.refs import resolve_investor, resolve_round, resolve_stage, suggestions
 from raisebook.mcp import shaping
-from raisebook.mcp.annotations import read_only, write
 from raisebook.mcp.tools._args import (
     Amount,
     CheckNote,
@@ -193,7 +193,15 @@ async def _add_one(
 
 
 def register(server: FastMCP) -> None:
-    @server.tool(annotations=read_only("Search investors"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Search investors",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def search_investors(
         query: Annotated[
             str | None, Field(description="Words to match (all must match).", max_length=200)
@@ -306,7 +314,15 @@ def register(server: FastMCP) -> None:
                     out["suggestions"] = sugg
             return shaping.prune(out)  # type: ignore[no-any-return]
 
-    @server.tool(annotations=read_only("Get investor"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Get investor",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def get_investor(
         investor: InvestorArg,
         round: Annotated[
@@ -341,7 +357,16 @@ def register(server: FastMCP) -> None:
                 result["timeline_truncated"] = True
             return shaping.prune(result)  # type: ignore[no-any-return]
 
-    @server.tool(annotations=write("Add investor", idempotent=True), description=ADD_DESCRIPTION)
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Add investor",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=ADD_DESCRIPTION,
+    )
     async def add_investor(
         name: Annotated[str, Field(min_length=1, max_length=200)],
         firm: Str200 = None,
@@ -427,7 +452,14 @@ def register(server: FastMCP) -> None:
             )
 
     @server.tool(
-        annotations=write("Add investors", idempotent=True), description=ADD_MANY_DESCRIPTION
+        annotations=ToolAnnotations(
+            title="Add investors",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=ADD_MANY_DESCRIPTION,
     )
     async def add_investors(
         items: Annotated[list[InvestorItem], Field(min_length=1, max_length=50)],
@@ -483,7 +515,15 @@ def register(server: FastMCP) -> None:
             "results": results,
         }
 
-    @server.tool(annotations=write("Update investor", idempotent=False))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Update investor",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        )
+    )
     async def update_investor(
         investor: InvestorArg,
         set: Annotated[

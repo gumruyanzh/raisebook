@@ -9,13 +9,13 @@ from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from raisebook.auth.scopes import SCOPE_WRITE
 from raisebook.core.errors import NotFound
 from raisebook.core.refs import resolve_investor, resolve_round
 from raisebook.mcp import shaping
-from raisebook.mcp.annotations import read_only, write
 from raisebook.mcp.tools._args import DateArg, InvestorArg
 from raisebook.mcp.tools._common import Clock, parse_date, parse_uuid, tool_call
 from raisebook.schemas.meetings import MeetingOut
@@ -109,7 +109,15 @@ async def _meeting(db: Any, ws: Any, ref: str) -> Any:
 
 
 def register(server: FastMCP) -> None:
-    @server.tool(annotations=write("Schedule meeting", idempotent=True))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Schedule meeting",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def schedule_meeting(
         investor: InvestorArg,
         starts_at: TimeArg,
@@ -178,7 +186,15 @@ def register(server: FastMCP) -> None:
             out["created"] = res.created
             return out
 
-    @server.tool(annotations=read_only("List meetings"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="List meetings",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def list_meetings(
         when: Annotated[
             Literal["upcoming", "today", "week", "needs_outcome", "past", "all"],
@@ -246,7 +262,15 @@ def register(server: FastMCP) -> None:
                 "counts": {"returned": len(items), "needs_outcome": len(needs)},
             }
 
-    @server.tool(annotations=write("Update meeting", idempotent=True))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Update meeting",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def update_meeting(
         meeting_id: MeetingArg,
         starts_at: TimeOpt = None,
@@ -288,7 +312,15 @@ def register(server: FastMCP) -> None:
             res = await svc.update(db, ws, m, changes, now=now, note=note)
             return await _write_result(db, ws, res, now)
 
-    @server.tool(annotations=write("Complete meeting", idempotent=True))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Complete meeting",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def complete_meeting(
         meeting_id: MeetingArg,
         outcome: Annotated[

@@ -11,12 +11,12 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import BeforeValidator, Field
 
 from raisebook.auth.scopes import SCOPE_WRITE
 from raisebook.core.refs import resolve_investor, resolve_round
 from raisebook.mcp import shaping
-from raisebook.mcp.annotations import read_only, write
 from raisebook.mcp.tools._args import (
     Amount,
     DateArg,
@@ -46,7 +46,15 @@ def _past_warning(ws: Any, now: Any, on: Any, what: str) -> str | None:
 
 
 def register(server: FastMCP) -> None:
-    @server.tool(annotations=write("Add to round", idempotent=True))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Add to round",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def add_to_round(
         investor: InvestorArg,
         round: RoundArg = None,
@@ -97,7 +105,15 @@ def register(server: FastMCP) -> None:
                 out["warning"] = warning
             return out
 
-    @server.tool(annotations=write("Move stage", idempotent=True))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Move stage",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def move_stage(
         investor: InvestorArg,
         stage: Annotated[str, Field(description="Target stage key or label.", min_length=1)],
@@ -122,7 +138,15 @@ def register(server: FastMCP) -> None:
                 "to": shaping.stage_brief(stage_out(res.to_stage)),
             }
 
-    @server.tool(annotations=write("Log activity", idempotent=False))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Log activity",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        )
+    )
     async def log_activity(
         investor: InvestorArg,
         kind: LoggableKind,
@@ -166,7 +190,15 @@ def register(server: FastMCP) -> None:
             out = (await act_svc.present(db, ws, [row]))[0]
             return {"activity": shaping.activity(out), "duplicate": duplicate}
 
-    @server.tool(annotations=write("Set follow-up", idempotent=True))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Set follow-up",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def set_follow_up(
         investor: InvestorArg,
         round: RoundArg = None,
@@ -208,7 +240,15 @@ def register(server: FastMCP) -> None:
                 result["warning"] = warning
             return result
 
-    @server.tool(annotations=read_only("Due follow-ups"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Due follow-ups",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def list_due_follow_ups(
         round: Annotated[
             str | None, Field(description="Round id, slug or name. Omit for all open rounds.")
@@ -262,7 +302,15 @@ def register(server: FastMCP) -> None:
                 "counts": counts,
             }
 
-    @server.tool(annotations=write("Record commitment", idempotent=True))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Record commitment",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def record_commitment(
         investor: InvestorArg,
         amount: Annotated[

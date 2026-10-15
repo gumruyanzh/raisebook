@@ -6,12 +6,12 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from raisebook.auth.scopes import SCOPE_WRITE
 from raisebook.core.refs import resolve_round
 from raisebook.mcp import shaping
-from raisebook.mcp.annotations import read_only, write
 from raisebook.mcp.tools._args import Amount, DateArg
 from raisebook.mcp.tools._common import Clock, parse_date, tool_call
 from raisebook.services import rounds as rounds_svc
@@ -27,7 +27,15 @@ RoundArg = Annotated[
 
 
 def register(server: FastMCP) -> None:
-    @server.tool(annotations=read_only("List rounds"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="List rounds",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def list_rounds(
         status: Annotated[
             Literal["open", "closed", "all"], Field(description="Which rounds to list.")
@@ -61,7 +69,15 @@ def register(server: FastMCP) -> None:
                 ]
             }
 
-    @server.tool(annotations=read_only("Round summary"))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Round summary",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def get_round_summary(
         round: RoundArg = None, ctx: Context | None = None
     ) -> dict[str, Any]:
@@ -93,7 +109,15 @@ def register(server: FastMCP) -> None:
             out["stale"] = [_item(i) for i in out.get("stale", [])]
             return shaping.prune(out)  # type: ignore[no-any-return]
 
-    @server.tool(annotations=write("Create round", idempotent=True))
+    @server.tool(
+        annotations=ToolAnnotations(
+            title="Create round",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        )
+    )
     async def create_round(
         name: Annotated[
             str, Field(min_length=1, max_length=80, description='e.g. "Seed" or "Seed Extension"')
