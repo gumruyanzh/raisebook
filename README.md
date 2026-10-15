@@ -1,5 +1,7 @@
 # Raisebook: the free, open-source investor CRM for founders
 
+[![M8ven Verified](https://m8ven.ai/badge/mcp/gumruyanzh-raisebook-1bxu0o?variant=verified&v=c1ce95b2a161546abc067ae305ec022e)](https://m8ven.ai/mcp/gumruyanzh-raisebook-1bxu0o?s=readme)
+
 **Raisebook is a free, open-source investor CRM (fundraising CRM) for startup founders.** It
 tracks every investor through every round (stages, fit, follow-ups, meetings, notes and
 commitments) and ships an MCP server, so Claude Code, Codex, Cursor or any MCP client can work
